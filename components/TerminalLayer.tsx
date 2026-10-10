@@ -83,6 +83,7 @@ import { Button } from './ui/button';
 import { resolveScriptsSidePanelShortcutIntent } from '../application/state/resolveSnippetsShortcutIntent';
 import { resolveSidePanelToggleIntent } from '../application/state/resolveSidePanelToggleIntent';
 import { resolveAiSidePanelToggleIntent } from '../application/state/resolveAiSidePanelToggleIntent';
+import { canHostAiPanelForTab, resolveAiPanelTerminalTab } from '../application/state/resolveAiPanelTerminalTab';
 import { terminalLayerAreEqual } from './terminalLayerMemo';
 import { TerminalLayerTabBridge } from './terminalLayer/TerminalLayerTabBridge';
 import {
@@ -2082,13 +2083,75 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     ));
   }, []);
 
+  /**
+   * True when the AI side panel can actually render for `tabId`: the panel host
+   * needs an AI context, which only terminal sessions and workspaces provide.
+   */
+  const canShowAiPanelForTab = useCallback((tabId: string): boolean => (
+    canHostAiPanelForTab(tabId, {
+      sessions: sessionsRef.current,
+      workspaces: workspacesRef.current,
+    })
+  ), []);
+
+  /** Open the AI sub-panel for `tabId` without toggling it closed. */
+  const openAiPanelForTab = useCallback((tabId: string) => {
+    markSidePanelSubTabOpened(tabId, 'ai');
+    setSidePanelOpenTabs((prev) => (
+      prev.get(tabId) === 'ai' ? prev : new Map(prev).set(tabId, 'ai')
+    ));
+  }, [markSidePanelSubTabOpened, setSidePanelOpenTabs]);
+
+  // Set while the AI button had to create a local shell first: the panel opens
+  // as soon as that tab exists and can host it (see the effect below).
+  const pendingAiPanelOpenRef = useRef(false);
+
+  const surfaceTerminalForAiPanel = useCallback(() => {
+    const targetTabId = resolveAiPanelTerminalTab({
+      sessions: sessionsRef.current,
+      workspaces: workspacesRef.current,
+      activeWorkspaceId: activeWorkspaceRef.current?.id ?? null,
+      focusedSessionId: focusedSessionIdRef.current ?? null,
+      activeSessionId: activeSessionRef.current?.id ?? null,
+    });
+
+    if (targetTabId) {
+      activeTabStore.setActiveTabId(targetTabId);
+      openAiPanelForTab(targetTabId);
+      return;
+    }
+
+    // No terminal session at all — start a local shell and attach the panel to
+    // it once the tab shows up.
+    pendingAiPanelOpenRef.current = true;
+    onCreateLocalTerminal?.();
+  }, [onCreateLocalTerminal, openAiPanelForTab]);
+
+  useEffect(() => {
+    if (!pendingAiPanelOpenRef.current) return;
+    const tabId = activeTabIdRef.current;
+    if (!tabId || !canShowAiPanelForTab(tabId)) return;
+    pendingAiPanelOpenRef.current = false;
+    openAiPanelForTab(tabId);
+  }, [canShowAiPanelForTab, openAiPanelForTab, sessions, workspaces]);
+
   // Toggle the AI chat side panel from the top-bar button: open it (or switch
   // to it from another sub-panel), and close the side panel when AI is already
   // the open sub-panel. Unlike handleOpenAI (the rail switch), a second click
   // here dismisses the panel.
+  //
+  // The panel lives inside the terminal layer and needs a terminal/workspace AI
+  // context. From the Vaults view (activeTabId === 'vault') or another
+  // non-terminal tab, toggling only marked the panel "open" behind the vault
+  // surface — the button looked completely dead. Surface a terminal first.
   const handleToggleAiFromTopBar = useCallback(() => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return;
+
+    if (!canShowAiPanelForTab(tabId)) {
+      surfaceTerminalForAiPanel();
+      return;
+    }
 
     const intent = resolveAiSidePanelToggleIntent(
       sidePanelOpenTabsRef.current.get(tabId) ?? null,
@@ -2100,7 +2163,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     }
 
     handleSwitchSidePanelTab('ai');
-  }, [handleCloseSidePanel, handleSwitchSidePanelTab, sidePanelOpenTabsRef]);
+  }, [
+    canShowAiPanelForTab,
+    handleCloseSidePanel,
+    handleSwitchSidePanelTab,
+    sidePanelOpenTabsRef,
+    surfaceTerminalForAiPanel,
+  ]);
 
   // Execute snippet on the focused terminal session
   const handleSnippetClickForFocusedSession = useCallback((
