@@ -25,10 +25,10 @@ test("validateReleaseTag accepts only et binary release tags", () => {
   assert.throws(() => validateReleaseTag("et-bin-../bad"), /invalid et binary release tag/);
 });
 
-test("parseRepository falls back to the dedicated et binary repository", () => {
+test("parseRepository defaults to binaricat/Netcatty-et-bin (ignores GITHUB_REPOSITORY fork owner)", () => {
   assert.deepEqual(parseRepository({}), { owner: "binaricat", repo: "Netcatty-et-bin" });
   assert.deepEqual(parseRepository({ GITHUB_REPOSITORY: "owner/project" }), {
-    owner: "owner",
+    owner: "binaricat",
     repo: "Netcatty-et-bin",
   });
   assert.deepEqual(

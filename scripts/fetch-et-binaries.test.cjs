@@ -57,10 +57,10 @@ async function serveAssets(t, assets) {
   return `http://127.0.0.1:${server.address().port}`;
 }
 
-test("fetch-et-binaries defaults to the dedicated et binary repository", () => {
+test("fetch-et-binaries defaults to binaricat/Netcatty-et-bin (ignores GITHUB_REPOSITORY fork owner)", () => {
   assert.deepEqual(parseEtBinRepository({}), { owner: "binaricat", repo: "Netcatty-et-bin" });
   assert.deepEqual(parseEtBinRepository({ GITHUB_REPOSITORY: "owner/project" }), {
-    owner: "owner",
+    owner: "binaricat",
     repo: "Netcatty-et-bin",
   });
   assert.deepEqual(

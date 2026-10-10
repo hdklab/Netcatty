@@ -32,7 +32,11 @@ function validateReleaseTag(tag) {
 }
 
 function parseRepository(env) {
-  const owner = env.ET_BIN_OWNER || (env.GITHUB_REPOSITORY || "").split("/")[0] || "binaricat";
+  // Default to the upstream binary repository. Do NOT derive the owner from
+  // GITHUB_REPOSITORY — fork packaging would otherwise look for
+  // <fork-owner>/Netcatty-et-bin and fail to resolve a release. Override only
+  // via ET_BIN_OWNER/ET_BIN_REPO (same policy as resolve-mosh-bin-release).
+  const owner = env.ET_BIN_OWNER || "binaricat";
   const repo = env.ET_BIN_REPO || "Netcatty-et-bin";
   return { owner, repo };
 }
