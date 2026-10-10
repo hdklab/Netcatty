@@ -327,7 +327,8 @@ module.exports = {
     publish: [
         {
             provider: 'github',
-            owner: 'binaricat',
+            // Releases are published from this build's own repository (fork).
+            owner: 'hdklab',
             repo: 'Netcatty',
             releaseType: 'release'
         }

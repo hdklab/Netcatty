@@ -16,7 +16,12 @@ type AppInfo = {
   platform?: string;
 };
 
-const REPO_URL = "https://github.com/binaricat/Netcatty";
+/**
+ * Repository this build belongs to — every Settings > Application link
+ * (report a problem, community, source code, what's new) is derived from it, so
+ * a fork only has to change this one constant.
+ */
+const REPO_URL = "https://github.com/hdklab/Netcatty";
 const BUG_REPORT_TEMPLATE = "bug_report.yml";
 
 const mapIssuePlatform = (platform?: string) => {
