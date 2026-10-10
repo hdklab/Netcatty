@@ -1,6 +1,30 @@
 # Agents Overview
 
+Netcatty is a cross-platform (macOS/Windows/Linux) SSH client, SFTP browser and terminal workspace: an Electron main process plus a React 19 / Vite renderer with xterm.js terminals, node-pty PTYs, and an in-app AI agent ("Catty"). npm workspaces hold `packages/*` (plugin contract/SDK/CLI) and `examples/plugins/*`.
+
 This project is wired around three layers: domain (pure logic), application state (React hooks orchestrating the domain), and UI (components). Use this document as a quick guide for extending or reusing the codebase.
+
+## Setup & dev loop
+- Node **>= 22** (`engines` in package.json; CI pins Node 22) and npm.
+- `npm ci` — `postinstall` runs `patch-package`, `scripts/patch-xterm-*.cjs`, `electron-builder install-app-deps` and `scripts/rebuildPatchedNodePty.cjs`. Never hand-edit `node_modules`.
+- `npm run dev` — fetches prebuilt mosh/et binaries (`fetch:mosh:dev`, `fetch:et:dev`; needs network), runs `npm run lint`, then Vite on port **5173** (`--strictPort`) + Electron. A lint error aborts startup. `npm run dev:clean` clears the Vite cache first.
+
+## Build & test
+- `npm run lint` — ESLint, flat config in `eslint.config.js`.
+- `npm test` — `node --test --import tsx` over the glob list in package.json; `pretest` builds the `@netcatty/plugin-*` workspaces and runs the CodeBuddy SDK contract check.
+- `npm run build` — plugin packages + `vite build`.
+- Scoped suites: `npm run test:plugin-runtime`, `npm run test:plugin-runtime:electron`, `npm run test:sync-crdt`, `npm run test:plugin-contract`.
+- Live Electron suites (launch the real app; on headless Linux prefix with `xvfb-run -a ./node_modules/.bin/electron --no-sandbox`, as CI does): `npm run test:tray-panel-layout`, `npm run test:terminal-background-rendering`, `npm run test:local-file-drag:electron`, and the `test:xterm-*` family (e.g. `npm run test:xterm-foreground-intense`, `npm run test:xterm-macos-selection`).
+- Package: `npm run pack`, `npm run pack:dir`, `npm run pack:linux|mac|win`.
+- Codegen artifacts are committed and checked for drift: `npm run generate:capability-tools` (CI re-runs it and fails on a `cattyToolSpecs.json` diff), `npm run generate:codex-app-server-schema`, `npm run generate:plugin-contract` (each has a `check:*` counterpart).
+
+## Pitfalls
+- Do not hand-edit generated files: `infrastructure/ai/harness/generated/*ToolSpecs.json`, `electron/mcp/netcatty-mcp-server.cjs`, `packages/plugin-contract/schema/*`.
+- ESLint enforces the layering: `@typescript-eslint/no-explicit-any` is an **error**; `window.netcatty` (use `infrastructure/services/netcattyBridge.ts`), bare `localStorage`/`sessionStorage` (use `infrastructure/persistence/localStorageAdapter.ts`) and `components/**` importing `infrastructure/{persistence,services}` are banned. `electron/**` is linted only for `electron/bridges/**/*.cjs` (`no-undef`), so main-process code has no lint safety net beyond that.
+- Adding a UI string means adding the key to **every** locale in `application/i18n/locales/<locale>/` (en, zh-CN, zh-TW, ru, es); the `*Locales.test.ts` suites assert per-locale key parity.
+- `components/terminal/osc7Setup.test.ts` shells out to bash/zsh/fish and skips when a shell is missing — CI installs `fish` (+ `xvfb`) so that coverage actually runs.
+- The phase-2 plugin host under `electron/plugins/` is inert unless `NETCATTY_PLUGIN_DEV=1` is set at application launch.
+- Commit style follows the history: Conventional Commits with a lowercase scope — `feat(editor): …`, `fix(ssh): …`, `fix(#3591): …`, `chore: …`.
 
 ## Current Agents (Roles)
 - **Domain** (`domain/`): Models and pure helpers. Examples:
