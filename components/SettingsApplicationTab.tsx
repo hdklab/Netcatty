@@ -92,9 +92,11 @@ interface SettingsApplicationTabProps {
   installUpdate: UseUpdateCheckResult['installUpdate'];
   startDownload: UseUpdateCheckResult['startDownload'];
   isUpdateDemoMode: boolean;
+  /** False while the reserved self-hosted update source is unconfigured. */
+  updateSourceConfigured: boolean;
 }
 
-export default function SettingsApplicationTab({ updateState, checkNow, openReleasePage, installUpdate, startDownload, isUpdateDemoMode }: SettingsApplicationTabProps) {
+export default function SettingsApplicationTab({ updateState, checkNow, openReleasePage, installUpdate, startDownload, isUpdateDemoMode, updateSourceConfigured }: SettingsApplicationTabProps) {
   const { t } = useI18n();
   const { openExternal, getApplicationInfo } = useApplicationBackend();
   const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Netcatty", version: "" });
@@ -131,6 +133,16 @@ export default function SettingsApplicationTab({ updateState, checkNow, openRele
   };
 
   const handleCheckForUpdates = async () => {
+    // No self-hosted update source configured yet: don't claim the app is up to
+    // date, and never fall back to a cloud check.
+    if (!isUpdateDemoMode && !updateSourceConfigured) {
+      toast.info(
+        t('settings.update.sourceNotConfigured'),
+        t('settings.update.title'),
+      );
+      return;
+    }
+
     // In demo mode, allow checking even for dev builds
     if (!isUpdateDemoMode && (!appInfo.version || appInfo.version === '0.0.0')) {
       // Dev build - just open releases page

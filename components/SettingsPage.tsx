@@ -319,7 +319,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
     const { t } = useI18n();
     const { request, clearFocus, openSearch } = useSettingsFocus();
     const { notifyRendererReady, closeSettingsWindow, onWindowCommandCloseRequested } = useWindowControls();
-    const { updateState, checkNow, installUpdate, openReleasePage, startDownload, isUpdateDemoMode } = useUpdateCheck({
+    const { updateState, checkNow, installUpdate, openReleasePage, startDownload, isUpdateDemoMode, updateSourceConfigured } = useUpdateCheck({
         autoUpdateEnabled: settings.autoUpdateEnabled,
         // Install blocked by unsaved editors in the main window — surface a toast
         // here so a click from the Settings window isn't a silent no-op (#1215).
@@ -527,6 +527,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                                 installUpdate={installUpdate}
                                 startDownload={startDownload}
                                 isUpdateDemoMode={isUpdateDemoMode}
+                                updateSourceConfigured={updateSourceConfigured}
                             />
                         </SettingsLazyTab>
                     )}
@@ -694,6 +695,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                                 installUpdate={installUpdate}
                                 openReleasePage={openReleasePage}
                                 startDownload={startDownload}
+                                updateSourceConfigured={updateSourceConfigured}
                             />
                         </SettingsLazyTab>
                     )}

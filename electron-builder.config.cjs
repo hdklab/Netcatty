@@ -65,6 +65,10 @@ module.exports = {
         // (terminalFlowAck.cjs). Must ship beside electron/ in app.asar.
         'infrastructure/config/terminalFlowConstants.cjs',
         'infrastructure/config/terminalFlowConstants.json',
+        // autoUpdateBridge.cjs resolves the reserved self-hosted update feed from
+        // here at startup (the same file the renderer imports for its checks).
+        'infrastructure/config/selfHostedEndpoints.cjs',
+        'infrastructure/config/selfHostedEndpoints.json',
         // Renderer and Mosh's main-process bootstrap share the same
         // fail-closed prompt classifier at runtime.
         'domain/terminalPromptSecurity.shared.cjs',

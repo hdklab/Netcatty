@@ -53,6 +53,37 @@ declare global {
     getAutoUpdate?(): Promise<{ enabled: boolean }>;
     setAutoUpdate?(enabled: boolean): Promise<{ success: boolean }>;
 
+    // Self-hosted update source (Settings > System > Software Update)
+    getUpdateSource?(): Promise<{
+      updateServerUrl: string | null;
+      releasesPageUrl: string | null;
+      source: 'env' | 'config' | 'default' | 'none';
+      envOverride: boolean;
+      storedUpdateServerUrl: string;
+      storedReleasesPageUrl: string;
+      defaultUpdateServerUrl: string;
+      defaultReleasesPageUrl: string;
+    }>;
+    setUpdateSource?(config: {
+      updateServerUrl: string;
+      releasesPageUrl: string;
+    }): Promise<{
+      success: boolean;
+      error?: string;
+      updateServerUrl?: string | null;
+      releasesPageUrl?: string | null;
+      source?: 'env' | 'config' | 'default' | 'none';
+      envOverride?: boolean;
+      storedUpdateServerUrl?: string;
+      storedReleasesPageUrl?: string;
+    }>;
+    onUpdateSourceChanged?(cb: (config: {
+      updateServerUrl: string | null;
+      releasesPageUrl: string | null;
+      source: 'env' | 'config' | 'default' | 'none';
+      envOverride: boolean;
+    }) => void): () => void;
+
     // SSH diagnostic logs
     getSshDebugLogInfo?(): Promise<{
       enabled: boolean;

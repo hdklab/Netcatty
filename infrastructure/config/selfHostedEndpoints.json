@@ -1,0 +1,5 @@
+{
+  "_comment": "FACTORY DEFAULTS for the self-hosted update/config endpoints. Operators normally configure the source in Settings > System > Software Update (persisted in <userData>/self-hosted-update.json) or with the NETCATTY_UPDATE_SERVER_URL override; values here apply only when neither is set. While no source is configured, Netcatty never contacts the cloud (GitHub) for updates and offers no release-page link. See docs/self-hosted-update-and-config-server.md for the file layout the server must serve.",
+  "updateServerUrl": null,
+  "releasesPageUrl": null
+}

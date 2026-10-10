@@ -56,6 +56,7 @@ const updateAvailableListeners = new Set();
 const updateNotAvailableListeners = new Set();
 const updateErrorListeners = new Set();
 const updateNeedsSaveListeners = new Set();
+const updateSourceChangedListeners = new Set();
 const terminalPopupConfigState = {
   pending: null,
   // Keep the last delivered payload so StrictMode remount (unsubscribe →
@@ -762,6 +763,18 @@ ipcRenderer.on("netcatty:update:error", (_event, payload) => {
   });
 });
 
+// Fired when the self-hosted update source is saved in Settings, so every
+// window's renderer store tracks the same source without a restart.
+ipcRenderer.on("netcatty:update:source-changed", (_event, payload) => {
+  updateSourceChangedListeners.forEach((cb) => {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("Update source changed callback failed", err);
+    }
+  });
+});
+
 // Update can't install yet because there are unsaved editors (#1215).
 ipcRenderer.on("netcatty:update:needs-save", () => {
   updateNeedsSaveListeners.forEach((cb) => {
@@ -895,6 +908,7 @@ const api = createPreloadApi({
   updateNotAvailableListeners,
   updateErrorListeners,
   updateNeedsSaveListeners,
+  updateSourceChangedListeners,
   terminalPopupConfigState,
   editorOpenTabState,
   portForwardStatusListeners,

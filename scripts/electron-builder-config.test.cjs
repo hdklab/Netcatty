@@ -31,6 +31,22 @@ test("build.files includes shared terminal flow constants for main process", () 
   );
 });
 
+test("build.files includes the reserved self-hosted endpoints for main process", () => {
+  assert.ok(
+    config.files.includes("infrastructure/config/selfHostedEndpoints.cjs"),
+    "autoUpdateBridge.cjs resolves the reserved self-hosted update feed at packaged startup",
+  );
+  assert.ok(
+    config.files.includes("infrastructure/config/selfHostedEndpoints.json"),
+    "selfHostedEndpoints.cjs requires its sibling JSON at packaged startup",
+  );
+  const endpoints = require("../infrastructure/config/selfHostedEndpoints.cjs");
+  // The reservation is intentionally inert: no update source (and therefore no
+  // cloud update check) until the operator fills these in.
+  assert.equal(typeof endpoints.updateServerUrl === "string" || endpoints.updateServerUrl === null, true);
+  assert.equal(typeof endpoints.releasesPageUrl === "string" || endpoints.releasesPageUrl === null, true);
+});
+
 test("build.files includes the prompt classifier required by Mosh", () => {
   assert.ok(
     config.files.includes("domain/terminalPromptSecurity.shared.cjs"),

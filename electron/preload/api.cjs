@@ -12,6 +12,7 @@ function createPreloadApi(ctx) {
   const closedTerminalDataSessions = ctx.closedTerminalDataSessions || null;
   const globalSftpTransferListeners = ctx.globalSftpTransferListeners || new Set();
   const pluginContributionsChangedListeners = ctx.pluginContributionsChangedListeners || new Set();
+  const updateSourceChangedListeners = ctx.updateSourceChangedListeners || new Set();
   const uploadStageControllers = new Map();
   // Lightweight test contexts may omit this map; default so closeSession never throws.
   if (!ctx.moshSessionReadyListeners) {
@@ -1804,6 +1805,14 @@ function createPreloadApi(ctx) {
   getUpdateStatus: () => ipcRenderer.invoke("netcatty:update:getStatus"),
   setAutoUpdate: (enabled) => ipcRenderer.invoke("netcatty:update:setAutoUpdate", { enabled }),
   getAutoUpdate: () => ipcRenderer.invoke("netcatty:update:getAutoUpdate"),
+  // Self-hosted update source configured in Settings > System (persisted in
+  // userData; takes effect immediately, no restart).
+  getUpdateSource: () => ipcRenderer.invoke("netcatty:update:getUpdateSource"),
+  setUpdateSource: (config) => ipcRenderer.invoke("netcatty:update:setUpdateSource", config),
+  onUpdateSourceChanged: (cb) => {
+    updateSourceChangedListeners.add(cb);
+    return () => updateSourceChangedListeners.delete(cb);
+  },
   onUpdateAvailable: (cb) => {
     updateAvailableListeners.add(cb);
     return () => updateAvailableListeners.delete(cb);

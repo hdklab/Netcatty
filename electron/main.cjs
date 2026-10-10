@@ -1519,8 +1519,10 @@ if (!gotLock) {
       notifyColdStartIntentsSettled(win);
 
       // Trigger auto-update check 5 s after window creation.
-      // startAutoCheck() is a no-op on unsupported platforms (for example Linux
-      // Snap or an unmarked development build).
+      // startAutoCheck() is a no-op when the platform/package format can't
+      // auto-update (Linux Snap, unmarked development build) and while the
+      // reserved self-hosted update source is unconfigured — the cloud feed is
+      // never used as a fallback.
       getAutoUpdateBridge().startAutoCheck(5000);
 
       // Settings prewarm is opt-in: a hidden BrowserWindow holds a full renderer.

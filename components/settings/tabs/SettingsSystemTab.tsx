@@ -9,6 +9,7 @@ import type { AppLockSettings, AppLockSettingsChangeError, AppLockTimeoutMinutes
 import { getCredentialProtectionAvailability } from "../../../infrastructure/services/credentialProtection";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import type { UpdateState } from '../../../application/state/useUpdateCheck';
+import { useUpdateSourceConfig } from '../../../application/state/useUpdateSourceConfig';
 import { SessionLogFormat, keyEventToString } from "../../../domain/models";
 import type { HttpNetworkProxyMode, HttpNetworkProxySettings } from "../../../domain/httpNetworkProxy";
 import { Button } from "../../ui/button";
@@ -135,6 +136,9 @@ interface SettingsSystemTabProps {
   setAutoUpdateEnabled: (enabled: boolean) => void;
   // Unified update state — from useUpdateCheck hook in SettingsPageContent
   updateState: UpdateState;
+  // Reserved self-hosted update source: while unconfigured the app never checks
+  // the cloud, so no download page exists to open.
+  updateSourceConfigured: boolean;
   checkNow: () => Promise<unknown>;
   installUpdate: () => void;
   openReleasePage: () => void;
@@ -188,12 +192,62 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   autoUpdateEnabled,
   setAutoUpdateEnabled,
   updateState,
+  updateSourceConfigured,
   checkNow,
   installUpdate,
   openReleasePage,
   startDownload,
 }) => {
   const { t } = useI18n();
+  // Self-hosted update source (Settings > System): saved here and applied by
+  // the main process immediately — no restart. An env override pins the inputs.
+  // Declared after `t` — the save handler below uses it in its dependency list.
+  const {
+    config: updateSourceConfig,
+    save: saveUpdateSource,
+  } = useUpdateSourceConfig();
+  const [updateServerDraft, setUpdateServerDraft] = useState('');
+  const [releasesPageDraft, setReleasesPageDraft] = useState('');
+  const [updateSourceSaving, setUpdateSourceSaving] = useState(false);
+  const [updateSourceError, setUpdateSourceError] = useState<string | null>(null);
+  const [updateSourceSaved, setUpdateSourceSaved] = useState(false);
+  const updateSourcePinned = updateSourceConfig.envOverride;
+
+  // Keep the drafts in step with the effective source: mount hydration, a save
+  // from another window, or the source-changed broadcast.
+  useEffect(() => {
+    setUpdateServerDraft(updateSourceConfig.updateServerUrl ?? '');
+    setReleasesPageDraft(updateSourceConfig.releasesPageUrl ?? '');
+  }, [updateSourceConfig.updateServerUrl, updateSourceConfig.releasesPageUrl]);
+
+  const submitUpdateSource = useCallback(async (updateServerUrl: string, releasesPageUrl: string) => {
+    setUpdateSourceSaving(true);
+    setUpdateSourceError(null);
+    setUpdateSourceSaved(false);
+    const result = await saveUpdateSource({
+      updateServerUrl: updateServerUrl.trim(),
+      releasesPageUrl: releasesPageUrl.trim(),
+    });
+    setUpdateSourceSaving(false);
+    if (!result.success) {
+      setUpdateSourceError(result.error === 'invalidUrl'
+        ? t('settings.update.server.invalid')
+        : t('settings.update.server.saveFailed'));
+      return;
+    }
+    setUpdateSourceSaved(true);
+  }, [saveUpdateSource, t]);
+
+  const handleSaveUpdateSource = useCallback(() => {
+    void submitUpdateSource(updateServerDraft, releasesPageDraft);
+  }, [releasesPageDraft, submitUpdateSource, updateServerDraft]);
+
+  const handleClearUpdateSource = useCallback(() => {
+    setUpdateServerDraft('');
+    setReleasesPageDraft('');
+    void submitUpdateSource('', '');
+  }, [submitUpdateSource]);
+
   const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
 
   const [tempDirInfo, setTempDirInfo] = useState<TempDirInfo | null>(null);
@@ -533,6 +587,11 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                       {updateState.error || t('settings.update.error')}
                     </p>
                   )}
+                  {updateState.manualCheckStatus === 'unconfigured' && (
+                    <p className="text-sm text-muted-foreground">
+                      {t('settings.update.sourceNotConfigured')}
+                    </p>
+                  )}
                 </>
               )}
 
@@ -565,8 +624,9 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   </Button>
                 )}
 
-                {/* Open releases — shown on download error */}
-                {updateState.autoDownloadStatus === 'error' && (
+                {/* Open the download page — shown on download error, and only
+                    once a self-hosted source exists to open (#cloud cancelled) */}
+                {updateSourceConfigured && updateState.autoDownloadStatus === 'error' && (
                   <Button variant="ghost" size="sm" onClick={openReleasePage}>
                     <ExternalLink size={14} className="mr-1.5" />
                     {t('settings.update.manualDownload')}
@@ -582,8 +642,9 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   </Button>
                 )}
 
-                {/* Open releases — fallback for unsupported platforms or check errors */}
-                {updateState.autoDownloadStatus === 'idle' &&
+                {/* Open the download page — fallback for unsupported platforms or check errors */}
+                {updateSourceConfigured &&
+                  updateState.autoDownloadStatus === 'idle' &&
                   (updateState.manualCheckStatus === 'available' || updateState.manualCheckStatus === 'error' || (updateState.manualCheckStatus === 'idle' && updateState.hasUpdate)) && (
                   <Button variant="ghost" size="sm" onClick={openReleasePage}>
                     <ExternalLink size={14} className="mr-1.5" />
@@ -610,7 +671,74 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   {'　'}
                 </span>
               )}
-              {t('settings.update.hint')}
+              {updateSourceConfigured
+                ? t('settings.update.hint')
+                : t('settings.update.sourceNotConfigured')}
+            </SettingHint>
+
+          <SectionHeader title={t('settings.update.server.title')} />
+            <SettingCard className="space-y-4 py-4">
+              <SettingRow
+                anchorId="system-update-server"
+                label={t('settings.update.server.updateUrl')}
+                description={t('settings.update.server.updateUrl.desc')}
+              >
+                <input
+                  type="text"
+                  value={updateServerDraft}
+                  onChange={(event) => setUpdateServerDraft(event.target.value)}
+                  placeholder={t('settings.update.server.updateUrl.placeholder')}
+                  className="w-64 h-9 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
+                  spellCheck={false}
+                  autoComplete="off"
+                  disabled={updateSourcePinned || updateSourceSaving}
+                />
+              </SettingRow>
+              <SettingRow
+                label={t('settings.update.server.releasesUrl')}
+                description={t('settings.update.server.releasesUrl.desc')}
+              >
+                <input
+                  type="text"
+                  value={releasesPageDraft}
+                  onChange={(event) => setReleasesPageDraft(event.target.value)}
+                  placeholder={t('settings.update.server.releasesUrl.placeholder')}
+                  className="w-64 h-9 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
+                  spellCheck={false}
+                  autoComplete="off"
+                  disabled={updateSourcePinned || updateSourceSaving}
+                />
+              </SettingRow>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <Button
+                  size="sm"
+                  onClick={handleSaveUpdateSource}
+                  disabled={updateSourcePinned || updateSourceSaving}
+                >
+                  {updateSourceSaving ? t('settings.update.server.saving') : t('settings.update.server.save')}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClearUpdateSource}
+                  disabled={updateSourcePinned || updateSourceSaving}
+                >
+                  {t('settings.update.server.clear')}
+                </Button>
+                {updateSourceError && (
+                  <span className="text-xs text-destructive">{updateSourceError}</span>
+                )}
+                {!updateSourceError && updateSourceSaved && (
+                  <span className="text-xs text-green-600 dark:text-green-400">
+                    {t('settings.update.server.saved')}
+                  </span>
+                )}
+              </div>
+            </SettingCard>
+            <SettingHint>
+              {updateSourcePinned
+                ? t('settings.update.server.envOverride')
+                : t('settings.update.server.hint')}
             </SettingHint>
 
           <SectionHeader title={t("settings.autoLaunch.title")} />

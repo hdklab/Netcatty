@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { checkForUpdates, getReleaseUrl, type ReleaseInfo, type UpdateCheckResult } from '../../infrastructure/services/updateService';
+import { checkForUpdates, type ReleaseInfo, type UpdateCheckResult } from '../../infrastructure/services/updateService';
+import { useUpdateSourceConfig } from './useUpdateSourceConfig';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { STORAGE_KEY_UPDATE_DISMISSED_VERSION, STORAGE_KEY_UPDATE_LAST_CHECK, STORAGE_KEY_UPDATE_LATEST_RELEASE, STORAGE_KEY_AUTO_UPDATE_ENABLED, STORAGE_KEY_DEBUG_UPDATE_DEMO } from '../../infrastructure/config/storageKeys';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
@@ -15,12 +16,17 @@ const STARTUP_CHECK_DELAY_MS = 8000;
 // Enable demo mode for development (set via localStorage: localStorage.setItem('debug.updateDemo', '1'))
 const IS_UPDATE_DEMO_MODE = localStorageAdapter.readString(STORAGE_KEY_DEBUG_UPDATE_DEMO) === '1';
 
+// The self-hosted update source is reactive: it hydrates from the main process
+// and follows saves made in Settings (see useUpdateSourceConfig). While it is
+// unconfigured the app never contacts the cloud for updates: the startup/manual
+// checks stay inert and no release link is offered.
+
 // Debug logging for update checks (no-op in production)
 const debugLog = (..._args: unknown[]) => {};
 
 export type AutoDownloadStatus = 'idle' | 'downloading' | 'ready' | 'error';
 
-export type ManualCheckStatus = 'idle' | 'checking' | 'available' | 'up-to-date' | 'error';
+export type ManualCheckStatus = 'idle' | 'checking' | 'available' | 'up-to-date' | 'error' | 'unconfigured';
 
 export interface UpdateState {
   isChecking: boolean;
@@ -45,6 +51,10 @@ export interface UseUpdateCheckResult {
   installUpdate: () => void;
   startDownload: () => void;
   isUpdateDemoMode: boolean;
+  /** True once a self-hosted update source is configured (cloud checks stay off until then). */
+  updateSourceConfigured: boolean;
+  /** Download page on the configured self-hosted server ('' while unconfigured). */
+  releasePageUrl: string;
 }
 
 /**
@@ -55,6 +65,7 @@ export interface UseUpdateCheckResult {
  */
 export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?: boolean; onNeedsSave?: () => void }): UseUpdateCheckResult {
   const enabled = options?.enabled !== false;
+  const { configured: updateSourceConfigured, releasesPageUrl: releasePageUrl } = useUpdateSourceConfig();
   // Accept auto-update toggle from the caller (e.g. useSettingsState) so it
   // reacts immediately in the same window. Falls back to reading localStorage
   // when no caller provides the value (e.g. in non-settings contexts).
@@ -184,16 +195,16 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
     if (!enabled) return;
     const bridge = netcattyBridge.get();
 
-    // When electron-updater confirms no update in its feed, don't write
-    // STORAGE_KEY_UPDATE_LAST_CHECK — that would throttle the GitHub API
-    // fallback for an hour.  Let performCheck write it on success so the
-    // GitHub check can still discover releases not yet in the updater feed.
+    // When the updater's feed confirms no update, don't write
+    // STORAGE_KEY_UPDATE_LAST_CHECK — that would throttle the metadata fallback
+    // for an hour.  Let performCheck write it on success so the metadata check
+    // can still discover releases not yet in the updater feed.
     const cleanupNotAvailable = bridge?.onUpdateNotAvailable?.(() => {
-      // No-op for now — the GitHub fallback will handle lastCheckedAt.
+      // No-op for now — the release-metadata fallback will handle lastCheckedAt.
     });
 
     const cleanupAvailable = bridge?.onUpdateAvailable?.((info) => {
-      // Cancel any pending startup GitHub API check — electron-updater is
+      // Cancel any pending startup release-metadata check — electron-updater is
       // now authoritative and we don't want a duplicate toast.
       if (startupCheckTimeoutRef.current) {
         clearTimeout(startupCheckTimeoutRef.current);
@@ -218,7 +229,7 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
         autoDownloadStatus: shouldTrackDownload ? 'downloading' : prev.autoDownloadStatus,
         downloadPercent: shouldTrackDownload ? 0 : prev.downloadPercent,
         downloadError: shouldTrackDownload ? null : prev.downloadError,
-        // Use electron-updater's version if GitHub API hasn't resolved yet or
+        // Use electron-updater's version if the metadata check hasn't resolved yet or
         // if the updater reports a different version than the cached release.
         latestRelease: (!prev.latestRelease || prev.latestRelease.version !== info.version) ? {
           version: info.version,
@@ -318,7 +329,7 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
             tagName: 'v1.0.0',
             name: 'Netcatty v1.0.0',
             body: 'Demo release for testing update notification',
-            htmlUrl: 'https://github.com/binaricat/Netcatty/releases',
+            htmlUrl: releasePageUrl,
             publishedAt: new Date().toISOString(),
             assets: [],
           },
@@ -373,7 +384,7 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
     } finally {
       isCheckingRef.current = false;
     }
-  }, []);
+  }, [releasePageUrl]);
 
   const checkNow = useCallback(async (): Promise<UpdateCheckResult | null> => {
     if (!enabled) return null;
@@ -428,7 +439,7 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
       return null;
     }
 
-    // Delegate to performCheck (GitHub API) — completely independent of
+    // Delegate to performCheck (self-hosted release metadata) — completely independent of
     // electron-updater's startAutoCheck() in the main process.
     // performCheck sets isCheckingRef, isChecking, hasUpdate, latestRelease.
     const result = await performCheck(effectiveVersion);
@@ -440,8 +451,13 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
     const dismissedVersion = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
     const isAvailable = result !== null && !result.error && result.hasUpdate &&
       result.latestRelease?.version !== dismissedVersion;
-    const nextStatus: ManualCheckStatus =
-      result === null || result.error ? 'error' : isAvailable ? 'available' : 'up-to-date';
+    const nextStatus: ManualCheckStatus = updateSourceConfigured
+      ? result === null || result.error
+        ? 'error'
+        : isAvailable
+          ? 'available'
+          : 'up-to-date'
+      : 'unconfigured';
 
     setUpdateState((prev) => ({
       ...prev,
@@ -455,12 +471,12 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
       }, 5000);
     } else if ((nextStatus === 'available' || nextStatus === 'error') && autoDownloadStatusRef.current === 'idle') {
       // Trigger electron-updater as a fallback. This covers two cases:
-      // 1. 'available': GitHub found an update but electron-updater hasn't
-      //    started a download yet — kick it off.
-      // 2. 'error': GitHub API failed (blocked/rate-limited), but the
-      //    electron-updater feed may still be reachable. Without this,
-      //    environments where api.github.com is blocked would never attempt
-      //    the auto-download path.
+      // 1. 'available': the metadata check found an update but electron-updater
+      //    hasn't started a download yet — kick it off.
+      // 2. 'error': the metadata check failed (unreachable server, bad file),
+      //    but the electron-updater feed may still be reachable. Without this,
+      //    environments where the metadata endpoint is blocked would never
+      //    attempt the auto-download path.
       void netcattyBridge.get()?.checkForUpdate?.().then((res) => {
         if (res?.error && res?.supported !== false) {
           // Surface actual download-feed errors; unsupported platforms
@@ -475,7 +491,7 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
           // Another check is already in flight — don't change status; the
           // in-flight check will resolve via IPC events.
         } else if (nextStatus === 'error' && res?.available) {
-          // GitHub API failed but electron-updater found an update.
+          // The metadata check failed but electron-updater found an update.
           // Respect dismissed versions before surfacing.
           const dismissed = localStorageAdapter.readString(STORAGE_KEY_UPDATE_DISMISSED_VERSION);
           if (res.version && res.version === dismissed) {
@@ -489,7 +505,7 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
             }));
           }
         } else if (nextStatus === 'error' && !res?.error && !res?.available) {
-          // GitHub API failed but electron-updater says no update available.
+          // The metadata check failed but electron-updater says no update available.
           // Clear the error status so Settings doesn't stay stuck in error state.
           setUpdateState((prev) => ({
             ...prev,
@@ -505,7 +521,7 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
     }
 
     return result;
-  }, [enabled, performCheck]);
+  }, [enabled, performCheck, updateSourceConfigured]);
 
   const dismissUpdate = useCallback(() => {
     if (updateState.latestRelease?.version) {
@@ -518,9 +534,10 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
   }, [updateState.latestRelease?.version]);
 
   const openReleasePage = useCallback(async () => {
-    const url = updateState.latestRelease
-      ? getReleaseUrl(updateState.latestRelease.version)
-      : getReleaseUrl();
+    // No configured self-hosted release page yet — there is no cloud page to
+    // fall back to, so the request stays a no-op.
+    const url = releasePageUrl;
+    if (!url) return;
 
     try {
       const bridge = netcattyBridge.get();
@@ -532,7 +549,7 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
       // Fallback to window.open
     }
     window.open(url, '_blank', 'noopener,noreferrer');
-  }, [updateState.latestRelease]);
+  }, [releasePageUrl]);
 
   const installUpdate = useCallback(() => {
     if (!enabled) return;
@@ -678,7 +695,7 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
         return;
       }
       // If electron-updater's auto-check already started a download, skip the
-      // redundant GitHub API check to avoid duplicate toast notifications.
+      // redundant release-metadata check to avoid duplicate toast notifications.
       if (autoDownloadStatusRef.current !== 'idle') {
         debugLog('Skipping startup check — auto-download already active');
         return;
@@ -704,7 +721,7 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
           return;
         }
       } catch {
-        // Bridge unavailable — fall through to GitHub check
+        // Bridge unavailable — fall through to the release-metadata check
       }
       debugLog('=== Delayed check triggered ===');
       void performCheck(updateState.currentVersion);
@@ -731,5 +748,7 @@ export function useUpdateCheck(options?: { autoUpdateEnabled?: boolean; enabled?
     installUpdate,
     startDownload,
     isUpdateDemoMode: IS_UPDATE_DEMO_MODE,
+    updateSourceConfigured,
+    releasePageUrl,
   };
 }

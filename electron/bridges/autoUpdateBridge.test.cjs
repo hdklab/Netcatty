@@ -24,13 +24,19 @@ const ELECTRON_UPDATER_ID = "electron-updater";
  * assert on their interactions. Restores Module._load and the bridge cache on
  * exit so tests stay isolated.
  */
-async function withMocks({ autoUpdater, autoUpdaterExports, windowManager, globalShortcutBridge, dirtyEditorGuard, browserWindows } = {}, fn) {
+async function withMocks({ autoUpdater, autoUpdaterExports, windowManager, globalShortcutBridge, dirtyEditorGuard, browserWindows, userDataPath } = {}, fn) {
   const fakeAutoUpdater = autoUpdater || {
     autoDownload: true,
     autoInstallOnAppQuit: false,
     logger: undefined,
     on() {},
     quitAndInstall() {},
+    // The bridge only calls this once a self-hosted update source is resolved;
+    // recording it lets tests assert which feed electron-updater was pointed at.
+    feedUrl: null,
+    setFeedURL(options) {
+      this.feedUrl = options;
+    },
   };
   const fakeWindowManager = windowManager || {
     calls: [],
@@ -81,7 +87,7 @@ async function withMocks({ autoUpdater, autoUpdaterExports, windowManager, globa
     // broadcastToAllWindows don't throw. getPath returns a throwaway dir; the
     // pref read falls back to its default when the file is absent.
     const fakeApp = {
-      getPath: () => path.join("/", "tmp", "nc-autoupdate-test"),
+      getPath: () => userDataPath || path.join("/", "tmp", "nc-autoupdate-test"),
       getVersion: () => "1.1.17",
     };
     bridge.init({
@@ -254,6 +260,30 @@ async function withLinuxPackageEnvironment({ packageType, appImage }, fn) {
 }
 
 /**
+ * Point the bridge at (or away from) the reserved self-hosted update source for
+ * one test body. The bridge resolves the source on every call, so a test can
+ * flip between "cloud source cancelled" and "self-hosted feed configured" —
+ * `null` restores the unconfigured (cancelled) state.
+ */
+async function withUpdateSource(url, fn) {
+  const previous = process.env.NETCATTY_UPDATE_SERVER_URL;
+  if (url === null || url === undefined) {
+    delete process.env.NETCATTY_UPDATE_SERVER_URL;
+  } else {
+    process.env.NETCATTY_UPDATE_SERVER_URL = url;
+  }
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.NETCATTY_UPDATE_SERVER_URL;
+    } else {
+      process.env.NETCATTY_UPDATE_SERVER_URL = previous;
+    }
+  }
+}
+
+/**
  * Minimal ipcMain stand-in that captures the handlers the bridge registers so a
  * test can invoke a single channel directly.
  */
@@ -292,6 +322,10 @@ test("allows the update check to reach electron-updater for a packaged Linux deb
     autoInstallOnAppQuit: false,
     logger: undefined,
     on() {},
+    feedUrl: null,
+    setFeedURL(options) {
+      this.feedUrl = options;
+    },
     checkForUpdates() {
       checkCalls += 1;
       return Promise.resolve({
@@ -310,11 +344,137 @@ test("allows the update check to reach electron-updater for a packaged Linux deb
       const ipcMain = makeIpcMain();
       bridge.registerHandlers(ipcMain);
 
-      const result = await ipcMain.invoke("netcatty:update:check");
-      assert.equal(checkCalls, 1);
-      assert.equal(result.supported, true);
-      assert.equal(result.available, true);
-      assert.equal(result.version, "1.1.18");
+      await withUpdateSource("http://update.local/netcatty/", async () => {
+        const result = await ipcMain.invoke("netcatty:update:check");
+        assert.equal(checkCalls, 1);
+        assert.equal(result.supported, true);
+        assert.equal(result.available, true);
+        assert.equal(result.version, "1.1.18");
+      });
+    });
+  });
+});
+
+test("points electron-updater at the self-hosted generic feed", async () => {
+  await withUpdateSource("http://update.local/netcatty/", async () => {
+    await withMocks({}, async ({ bridge, fakeAutoUpdater }) => {
+      // getAutoUpdater() runs during init(), so the feed swap happens at startup.
+      assert.equal(bridge.readSelfHostedUpdateUrl(), "http://update.local/netcatty");
+      assert.equal(bridge.isUpdateSourceConfigured(), true);
+
+      // The base URL is used as an electron-updater "generic" feed, replacing
+      // the cloud provider baked into app-update.yml (trailing slash trimmed so
+      // manifest paths concatenate cleanly).
+      assert.deepEqual(fakeAutoUpdater.feedUrl, {
+        provider: "generic",
+        url: "http://update.local/netcatty",
+      });
+    });
+  });
+});
+
+test("update check stays offline while no self-hosted source is configured", async () => {
+  let checkCalls = 0;
+  const autoUpdater = {
+    autoDownload: true,
+    autoInstallOnAppQuit: false,
+    logger: undefined,
+    on() {},
+    feedUrl: null,
+    setFeedURL(options) {
+      this.feedUrl = options;
+    },
+    checkForUpdates() {
+      checkCalls += 1;
+      return Promise.resolve({ updateInfo: { version: "1.1.18" } });
+    },
+  };
+
+  await withLinuxPackageEnvironment({ packageType: "deb" }, async () => {
+    await withMocks({ autoUpdater }, async ({ bridge, fakeAutoUpdater }) => {
+      const ipcMain = makeIpcMain();
+      bridge.registerHandlers(ipcMain);
+
+      await withUpdateSource(null, async () => {
+        assert.equal(bridge.isUpdateSourceConfigured(), false);
+        assert.equal(bridge.readSelfHostedUpdateUrl(), null);
+
+        const result = await ipcMain.invoke("netcatty:update:check");
+        assert.equal(result.available, false);
+        assert.equal(result.supported, false);
+        assert.match(result.error, /self-hosted update source/i);
+
+        // No cloud fallback: the updater must never be asked to fetch a feed.
+        assert.equal(checkCalls, 0);
+        assert.equal(fakeAutoUpdater.feedUrl, null);
+      });
+    });
+  });
+});
+
+test("download handler refuses while no self-hosted source is configured", async () => {
+  let downloadCalls = 0;
+  const autoUpdater = {
+    autoDownload: true,
+    autoInstallOnAppQuit: false,
+    logger: undefined,
+    on() {},
+    feedUrl: null,
+    setFeedURL(options) {
+      this.feedUrl = options;
+    },
+    downloadUpdate() {
+      downloadCalls += 1;
+      return Promise.resolve();
+    },
+  };
+
+  await withMocks({ autoUpdater }, async ({ bridge }) => {
+    const ipcMain = makeIpcMain();
+    bridge.registerHandlers(ipcMain);
+
+    await withUpdateSource(null, async () => {
+      const result = await ipcMain.invoke("netcatty:update:download");
+      assert.equal(result.success, false);
+      assert.match(result.error, /self-hosted update source/i);
+      assert.equal(downloadCalls, 0);
+    });
+  });
+});
+
+test("auto-check only runs once a self-hosted source is configured", async () => {
+  let checkCalls = 0;
+  const autoUpdater = {
+    autoDownload: true,
+    autoInstallOnAppQuit: false,
+    logger: undefined,
+    on() {},
+    feedUrl: null,
+    setFeedURL(options) {
+      this.feedUrl = options;
+    },
+    checkForUpdates() {
+      checkCalls += 1;
+      return Promise.resolve({ updateInfo: { version: "1.1.18" } });
+    },
+  };
+
+  await withLinuxPackageEnvironment({ packageType: "deb" }, async () => {
+    await withMocks({ autoUpdater }, async ({ bridge }) => {
+      await withUpdateSource(null, async () => {
+        bridge.startAutoCheck(1);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        assert.equal(checkCalls, 0, "cancelled cloud source must not auto-check");
+      });
+
+      await withUpdateSource("http://update.local/netcatty", async () => {
+        bridge.startAutoCheck(1);
+        const deadline = Date.now() + 2000;
+        while (checkCalls === 0 && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assert.equal(checkCalls, 1, "configured self-hosted source must auto-check");
+      });
     });
   });
 });
@@ -874,5 +1034,127 @@ test("install handler installs directly when no main window is reachable", async
     );
   } finally {
     global.setTimeout = originalSetTimeout;
+  }
+});
+
+// ── Self-hosted update source (Settings > System) ───────────────────────────
+
+test("update source validation accepts http(s) URLs and clears on empty input", async () => {
+  await withMocks({}, async ({ bridge }) => {
+    assert.deepEqual(
+      bridge.validateUpdateSourceInput({ updateServerUrl: "https://updates.example/nc/", releasesPageUrl: "" }),
+      { ok: true, updateServerUrl: "https://updates.example/nc", releasesPageUrl: null },
+    );
+    assert.deepEqual(
+      bridge.validateUpdateSourceInput({ updateServerUrl: "", releasesPageUrl: "http://lan.local/nc" }),
+      { ok: true, updateServerUrl: null, releasesPageUrl: "http://lan.local/nc" },
+    );
+    for (const bad of ["ftp://updates.example", "updates.example", "https://", "https:///path"]) {
+      assert.deepEqual(
+        bridge.validateUpdateSourceInput({ updateServerUrl: bad, releasesPageUrl: "" }),
+        { ok: false, error: "invalidUrl" },
+        bad,
+      );
+    }
+  });
+});
+
+test("saving the update source persists it and applies the feed without a restart", async () => {
+  const userDataPath = fs.mkdtempSync(path.join(tempDirBridge.getTempDir(), "nc-update-source-"));
+  const autoUpdater = {
+    autoDownload: true,
+    autoInstallOnAppQuit: false,
+    logger: undefined,
+    on() {},
+    feedUrl: null,
+    setFeedURL(options) {
+      this.feedUrl = options;
+    },
+    checkForUpdates() {
+      return Promise.resolve({ updateInfo: { version: "1.1.18" } });
+    },
+  };
+  const broadcastWindow = makeBroadcastWindow();
+
+  try {
+    await withMocks({ autoUpdater, userDataPath, browserWindows: [broadcastWindow] }, async ({ bridge, fakeAutoUpdater }) => {
+      const ipcMain = makeIpcMain();
+      bridge.registerHandlers(ipcMain);
+
+      await withUpdateSource(null, async () => {
+        const before = await ipcMain.invoke("netcatty:update:getUpdateSource");
+        assert.equal(before.updateServerUrl, null);
+        assert.equal(before.storedUpdateServerUrl, "");
+
+        const saved = await ipcMain.invoke("netcatty:update:setUpdateSource", {
+          updateServerUrl: "https://updates.example/nc/",
+          releasesPageUrl: "",
+        });
+        assert.equal(saved.success, true);
+        assert.equal(saved.updateServerUrl, "https://updates.example/nc");
+        assert.equal(saved.source, "config");
+
+        // Persisted for the next launch…
+        const stored = JSON.parse(fs.readFileSync(path.join(userDataPath, "self-hosted-update.json"), "utf8"));
+        assert.deepEqual(stored, { updateServerUrl: "https://updates.example/nc", releasesPageUrl: null });
+
+        // …resolved as the effective source, and pushed into the live updater.
+        assert.equal(bridge.readSelfHostedUpdateUrl(), "https://updates.example/nc");
+        assert.equal(bridge.isUpdateSourceConfigured(), true);
+        assert.deepEqual(fakeAutoUpdater.feedUrl, {
+          provider: "generic",
+          url: "https://updates.example/nc",
+        });
+
+        // Every window learns about the change immediately.
+        assert.ok(
+          broadcastWindow.sentChannels.includes("netcatty:update:source-changed"),
+          "the source change must be broadcast to all windows",
+        );
+
+        // Invalid input is rejected and leaves the stored config untouched.
+        const rejected = await ipcMain.invoke("netcatty:update:setUpdateSource", {
+          updateServerUrl: "ftp://updates.example",
+          releasesPageUrl: "",
+        });
+        assert.deepEqual(rejected, { success: false, error: "invalidUrl" });
+        assert.equal(bridge.readSelfHostedUpdateUrl(), "https://updates.example/nc");
+
+        // Clearing removes the source (and therefore the update checks).
+        const cleared = await ipcMain.invoke("netcatty:update:setUpdateSource", {
+          updateServerUrl: "",
+          releasesPageUrl: "",
+        });
+        assert.equal(cleared.success, true);
+        assert.equal(bridge.isUpdateSourceConfigured(), false);
+      });
+    });
+  } finally {
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
+});
+
+test("NETCATTY_UPDATE_SERVER_URL overrides the saved update source", async () => {
+  const userDataPath = fs.mkdtempSync(path.join(tempDirBridge.getTempDir(), "nc-update-source-"));
+  try {
+    await withMocks({ userDataPath }, async ({ bridge }) => {
+      const ipcMain = makeIpcMain();
+      bridge.registerHandlers(ipcMain);
+      await ipcMain.invoke("netcatty:update:setUpdateSource", {
+        updateServerUrl: "https://saved.example/nc",
+        releasesPageUrl: "https://saved.example/nc/download",
+      });
+
+      await withUpdateSource("https://env.example/nc", async () => {
+        const resolved = bridge.resolveUpdateSource();
+        assert.equal(resolved.updateServerUrl, "https://env.example/nc");
+        assert.equal(resolved.source, "env");
+        assert.equal(resolved.envOverride, true);
+        // The saved download page still applies — only the feed URL is pinned.
+        assert.equal(resolved.releasesPageUrl, "https://saved.example/nc/download");
+      });
+    });
+  } finally {
+    fs.rmSync(userDataPath, { recursive: true, force: true });
   }
 });

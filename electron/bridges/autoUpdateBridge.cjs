@@ -5,10 +5,20 @@
  * install-on-quit. Designed around a "prompt" model: the renderer asks to
  * check, then explicitly triggers download and install.
  *
+ * Update source: the operator's own server. It resolves from, in order,
+ * NETCATTY_UPDATE_SERVER_URL (launch-time override), the in-app configuration in
+ * <userData>/self-hosted-update.json (Settings > System > Software Update), and
+ * the factory defaults in infrastructure/config/selfHostedEndpoints.json. It is
+ * consumed as an electron-updater "generic" feed, which replaces the cloud
+ * release feed baked into app-update.yml. While no source is configured, cloud
+ * (GitHub) auto-update stays cancelled — no feed is contacted for checks or
+ * downloads. The server-side layout is documented in
+ * docs/self-hosted-update-and-config-server.md.
+ *
  * Linux packages use electron-updater's package-manager path when the
  * electron-builder package-type marker is present. Unmarked Linux builds
  * (including snap and development runs) get a graceful fallback so the
- * renderer can offer a manual "open GitHub releases" link.
+ * renderer can offer a manual download link.
  */
 
 let _deps = null;
@@ -48,6 +58,150 @@ function writeAutoUpdatePreference(enabled) {
 }
 
 const SUPPORTED_LINUX_PACKAGE_TYPES = new Set(["deb", "rpm", "pacman"]);
+
+/** Trim a configured base URL and drop trailing slashes; null when blank. */
+function normalizeBaseUrl(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().replace(/\/+$/, "");
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** Factory defaults shipped with the app (no user configuration). */
+function readShippedSelfHostedEndpoints() {
+  try {
+    return require("../../infrastructure/config/selfHostedEndpoints.cjs") || {};
+  } catch (err) {
+    console.warn("[AutoUpdate] Failed to read shipped self-hosted endpoints:", err?.message || err);
+    return {};
+  }
+}
+
+/** Path of the in-app update source configuration (userData JSON). */
+function selfHostedConfigPath() {
+  const { app } = _deps?.electronModule || {};
+  if (!app?.getPath) return null;
+  const path = require("path");
+  return path.join(app.getPath("userData"), "self-hosted-update.json");
+}
+
+/** Configuration written from Settings, or {} when unreadable/unset. */
+function readStoredSelfHostedConfig() {
+  const file = selfHostedConfigPath();
+  if (!file) return {};
+  try {
+    const fs = require("fs");
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object") return {};
+    return {
+      updateServerUrl: normalizeBaseUrl(parsed.updateServerUrl) ?? null,
+      releasesPageUrl: normalizeBaseUrl(parsed.releasesPageUrl) ?? null,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** Persist the Settings configuration. `null` clears an entry. */
+function writeStoredSelfHostedConfig({ updateServerUrl = null, releasesPageUrl = null } = {}) {
+  const file = selfHostedConfigPath();
+  if (!file) return false;
+  try {
+    const fs = require("fs");
+    fs.writeFileSync(
+      file,
+      JSON.stringify(
+        { updateServerUrl: normalizeBaseUrl(updateServerUrl), releasesPageUrl: normalizeBaseUrl(releasesPageUrl) },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    return true;
+  } catch (err) {
+    console.warn("[AutoUpdate] Failed to write update source config:", err?.message || err);
+    return false;
+  }
+}
+
+/**
+ * Validate the two URLs coming from Settings. Empty strings clear an entry;
+ * anything else must be an absolute http(s) URL.
+ */
+function validateUpdateSourceInput(payload) {
+  const input = payload && typeof payload === "object" ? payload : {};
+  const normalized = {};
+  for (const key of ["updateServerUrl", "releasesPageUrl"]) {
+    const raw = typeof input[key] === "string" ? input[key].trim() : "";
+    if (!raw) {
+      normalized[key] = null;
+      continue;
+    }
+    // Require an explicit authority right after the scheme: WHATWG URL parsing
+    // happily turns `https:///path` into host "path", which is never what an
+    // update feed URL means.
+    if (!/^https?:\/\/[^\s/?#]+/i.test(raw)) return { ok: false, error: "invalidUrl" };
+    try {
+      new URL(raw);
+    } catch {
+      return { ok: false, error: "invalidUrl" };
+    }
+    normalized[key] = normalizeBaseUrl(raw);
+  }
+  return { ok: true, ...normalized };
+}
+
+/**
+ * Effective update source: NETCATTY_UPDATE_SERVER_URL wins over the in-app
+ * configuration, which wins over the shipped factory defaults. `null` means
+ * "not configured" — the cloud source is cancelled, never used as a fallback.
+ */
+function resolveUpdateSource() {
+  const shipped = readShippedSelfHostedEndpoints();
+  const stored = readStoredSelfHostedConfig();
+  const fromEnv = normalizeBaseUrl(process.env.NETCATTY_UPDATE_SERVER_URL);
+  const shippedUpdateUrl = normalizeBaseUrl(shipped.updateServerUrl);
+  const shippedPageUrl = normalizeBaseUrl(shipped.releasesPageUrl);
+  const storedUpdateUrl = stored.updateServerUrl ?? null;
+  const storedPageUrl = stored.releasesPageUrl ?? null;
+
+  const updateServerUrl = fromEnv ?? storedUpdateUrl ?? shippedUpdateUrl ?? null;
+  const releasesPageUrl = storedPageUrl ?? shippedPageUrl ?? null;
+  const source = fromEnv
+    ? "env"
+    : (storedUpdateUrl || storedPageUrl ? "config" : (shippedUpdateUrl ? "default" : "none"));
+
+  return { updateServerUrl, releasesPageUrl, source, envOverride: Boolean(fromEnv) };
+}
+
+/**
+ * Base URL of the operator's self-hosted update feed (null when unset).
+ */
+function readSelfHostedUpdateUrl() {
+  return resolveUpdateSource().updateServerUrl;
+}
+
+/** True once a self-hosted update feed is configured. */
+function isUpdateSourceConfigured() {
+  return readSelfHostedUpdateUrl() !== null;
+}
+
+/**
+ * Apply a changed feed to the already-resolved updater so a save in Settings
+ * takes effect without restarting the app. Clearing the URL leaves the old
+ * provider in place on purpose — the source gates keep it inert.
+ */
+function applySelfHostedFeedChange(updater) {
+  const target = updater ?? _autoUpdater;
+  if (!target || typeof target.setFeedURL !== "function") return;
+  const url = readSelfHostedUpdateUrl();
+  if (!url) return;
+  try {
+    target.setFeedURL({ provider: "generic", url });
+    console.log("[AutoUpdate] Using self-hosted update feed:", url);
+  } catch (err) {
+    console.warn("[AutoUpdate] Failed to apply update feed:", err?.message || err);
+  }
+}
 
 /**
  * Identify the Linux package format written by electron-builder into the
@@ -109,6 +263,10 @@ function getAutoUpdater() {
     autoUpdater.autoInstallOnAppQuit = false;
     // Silence the default electron-log transport (we log ourselves).
     autoUpdater.logger = null;
+    // Point electron-updater at the operator's own feed, replacing the cloud
+    // provider baked into app-update.yml. Skipped while the source is
+    // unconfigured, in which case nothing below ever contacts a feed.
+    applySelfHostedFeedChange(autoUpdater);
     _autoUpdater = autoUpdater;
     return autoUpdater;
   } catch (err) {
@@ -208,6 +366,12 @@ let _autoCheckTimer = null;
 function startAutoCheck(delayMs = 5000) {
   if (!isAutoUpdateSupported()) {
     console.log("[AutoUpdate] Platform does not support auto-update, skipping auto-check");
+    return;
+  }
+  if (!isUpdateSourceConfigured()) {
+    // Cloud (GitHub) auto-update is cancelled until the reserved self-hosted
+    // update feed is configured — never fall back to the packaged cloud feed.
+    console.log("[AutoUpdate] No self-hosted update source configured, skipping auto-check");
     return;
   }
   // Cancel any existing timer to avoid duplicate concurrent checks
@@ -429,6 +593,16 @@ function registerHandlers(ipcMain) {
       };
     }
 
+    if (!isUpdateSourceConfigured()) {
+      // Cloud (GitHub) auto-update is cancelled and the reserved self-hosted
+      // feed is still unconfigured: there is nothing to check against.
+      return {
+        available: false,
+        supported: false,
+        error: "No self-hosted update source configured.",
+      };
+    }
+
     const updater = getAutoUpdater();
     if (!updater) {
       return {
@@ -499,6 +673,9 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:update:download", async () => {
     if (_isDownloading) {
       return { success: true };
+    }
+    if (!isUpdateSourceConfigured()) {
+      return { success: false, error: "No self-hosted update source configured." };
     }
     const updater = getAutoUpdater();
     if (!updater) {
@@ -639,6 +816,45 @@ function registerHandlers(ipcMain) {
     return { success: true };
   });
 
+  // ---- Update source (self-hosted server) configuration --------------------
+  const describeUpdateSource = () => {
+    const shipped = readShippedSelfHostedEndpoints();
+    const stored = readStoredSelfHostedConfig();
+    const effective = resolveUpdateSource();
+    return {
+      ...effective,
+      // Editable values shown in Settings (empty string = not stored).
+      storedUpdateServerUrl: stored.updateServerUrl ?? "",
+      storedReleasesPageUrl: stored.releasesPageUrl ?? "",
+      // Factory defaults, so the UI can explain where a value comes from.
+      defaultUpdateServerUrl: normalizeBaseUrl(shipped.updateServerUrl) ?? "",
+      defaultReleasesPageUrl: normalizeBaseUrl(shipped.releasesPageUrl) ?? "",
+    };
+  };
+
+  ipcMain.handle("netcatty:update:getUpdateSource", () => describeUpdateSource());
+
+  ipcMain.handle("netcatty:update:setUpdateSource", (_event, payload) => {
+    const validation = validateUpdateSourceInput(payload);
+    if (!validation.ok) {
+      return { success: false, error: validation.error };
+    }
+    if (!writeStoredSelfHostedConfig({
+      updateServerUrl: validation.updateServerUrl,
+      releasesPageUrl: validation.releasesPageUrl,
+    })) {
+      return { success: false, error: "writeFailed" };
+    }
+
+    // Apply immediately: a new URL switches the feed without a restart, a
+    // cleared URL makes every entry point inert through the source gates.
+    applySelfHostedFeedChange();
+    const described = describeUpdateSource();
+    broadcastToAllWindows("netcatty:update:source-changed", described);
+    console.log("[AutoUpdate] Update source saved:", described.source);
+    return { success: true, ...described };
+  });
+
   console.log("[AutoUpdate] Handlers registered");
 }
 
@@ -646,6 +862,12 @@ module.exports = {
   init,
   registerHandlers,
   isAutoUpdateSupported,
+  isUpdateSourceConfigured,
+  readSelfHostedUpdateUrl,
+  resolveUpdateSource,
+  validateUpdateSourceInput,
+  readStoredSelfHostedConfig,
+  writeStoredSelfHostedConfig,
   startAutoCheck,
   cancelPendingInstall,
 };

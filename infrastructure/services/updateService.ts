@@ -2,18 +2,153 @@
  * Update Service
  *
  * Combines two update mechanisms:
- * 1. GitHub API-based version comparison (used by useUpdateCheck for notification banner)
+ * 1. Self-hosted release metadata check (used by useUpdateCheck for the banner)
  * 2. electron-updater bridge (used by SettingsSystemTab for download/install)
+ *
+ * The cloud (GitHub Releases) source is intentionally gone: updates come from
+ * the self-hosted endpoints reserved in infrastructure/config/selfHostedEndpoints.json.
+ * While those endpoints are unset nothing is checked and no cloud request is
+ * made, so the app cannot silently upgrade from GitHub. The contract the server
+ * has to serve is documented in docs/self-hosted-update-and-config-server.md.
  */
 
 import { netcattyBridge } from "./netcattyBridge";
+import selfHostedEndpoints from "../config/selfHostedEndpoints.json";
 
 // ================================
-// Part 1: GitHub API Version Check
+// Part 1: Self-hosted Release Metadata Check
 // ================================
 
-const GITHUB_API_URL = 'https://api.github.com/repos/binaricat/Netcatty/releases/latest';
-const RELEASES_PAGE_URL = 'https://github.com/binaricat/Netcatty/releases';
+/** Trim a configured URL and strip trailing slashes; null when unset/blank. */
+function normalizeBaseUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().replace(/\/+$/, "");
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export type UpdateSourceOrigin = 'env' | 'config' | 'default' | 'none';
+
+export interface UpdateSourceConfig {
+  /** electron-updater feed base for the self-hosted update server (null = unconfigured). */
+  updateServerUrl: string | null;
+  /** Human-facing download page on the self-hosted server (null = unconfigured). */
+  releasesPageUrl: string | null;
+  /** Where the effective URL comes from — shown in Settings. */
+  source: UpdateSourceOrigin;
+  /** True when NETCATTY_UPDATE_SERVER_URL overrides the in-app configuration. */
+  envOverride: boolean;
+}
+
+/**
+ * Factory defaults. The app resolves the effective source in the main process
+ * (env override → in-app configuration → these defaults) and hydrates this
+ * store from `netcatty:update:getUpdateSource`; a save in Settings updates it
+ * immediately through the returned config and the source-changed broadcast.
+ */
+const DEFAULT_UPDATE_SOURCE: UpdateSourceConfig = {
+  updateServerUrl: normalizeBaseUrl(selfHostedEndpoints.updateServerUrl),
+  releasesPageUrl: normalizeBaseUrl(selfHostedEndpoints.releasesPageUrl),
+  source: normalizeBaseUrl(selfHostedEndpoints.updateServerUrl) ? 'default' : 'none',
+  envOverride: false,
+};
+
+let updateSource: UpdateSourceConfig = DEFAULT_UPDATE_SOURCE;
+const updateSourceListeners = new Set<() => void>();
+
+/** Current (hydrated) update source. */
+export function getUpdateSourceConfig(): UpdateSourceConfig {
+  return updateSource;
+}
+
+/** Subscribe to source changes; returns the unsubscribe function. */
+export function subscribeUpdateSource(listener: () => void): () => void {
+  updateSourceListeners.add(listener);
+  return () => {
+    updateSourceListeners.delete(listener);
+  };
+}
+
+/** Apply a source snapshot (hydrated from main, or returned by a save). */
+export function applyUpdateSourceConfig(next: Partial<UpdateSourceConfig> | null | undefined): void {
+  if (!next) return;
+  const updateServerUrl = next.updateServerUrl === undefined
+    ? updateSource.updateServerUrl
+    : normalizeBaseUrl(next.updateServerUrl);
+  const releasesPageUrl = next.releasesPageUrl === undefined
+    ? updateSource.releasesPageUrl
+    : normalizeBaseUrl(next.releasesPageUrl);
+  updateSource = {
+    updateServerUrl,
+    releasesPageUrl,
+    source: next.source ?? updateSource.source,
+    envOverride: next.envOverride ?? updateSource.envOverride,
+  };
+  for (const listener of updateSourceListeners) listener();
+}
+
+let hydrationPromise: Promise<void> | null = null;
+
+/**
+ * Read the effective source from the main process once per window. Safe to call
+ * from every consumer — the promise is shared.
+ */
+export function ensureUpdateSourceHydrated(): Promise<void> {
+  if (!hydrationPromise) {
+    hydrationPromise = (async () => {
+      const bridge = netcattyBridge.get();
+      if (!bridge?.getUpdateSource) return;
+      try {
+        applyUpdateSourceConfig(await bridge.getUpdateSource());
+      } catch (err) {
+        console.warn('[updateService] Failed to read the update source:', err);
+      }
+    })();
+  }
+  return hydrationPromise;
+}
+
+/** Persist a new self-hosted source (Settings) and apply it to the live store. */
+export async function saveUpdateSourceConfig(input: {
+  updateServerUrl: string;
+  releasesPageUrl: string;
+}): Promise<{ success: boolean; error?: string }> {
+  const bridge = netcattyBridge.get();
+  if (!bridge?.setUpdateSource) return { success: false, error: 'bridgeUnavailable' };
+  try {
+    const result = await bridge.setUpdateSource(input);
+    if (result?.success) applyUpdateSourceConfig(result);
+    return { success: Boolean(result?.success), error: result?.error };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'unknown' };
+  }
+}
+
+/**
+ * Track source saves made in another window (Settings) so a check started here
+ * uses the same source without a restart. Returns the unsubscribe function.
+ */
+export function subscribeUpdateSourceChanges(): () => void {
+  const bridge = netcattyBridge.get();
+  return bridge?.onUpdateSourceChanged?.((config) => applyUpdateSourceConfig(config)) ?? (() => {});
+}
+
+/**
+ * True once a self-hosted update source is configured. While false every update
+ * entry point (startup check, manual check, release links) stays inert instead
+ * of falling back to the cloud.
+ */
+export function isUpdateSourceConfigured(): boolean {
+  return updateSource.updateServerUrl !== null;
+}
+
+/**
+ * Reserved release-metadata path on the self-hosted server. The file keeps the
+ * shape of GitHub's `releases/latest` payload so the parsing below stays
+ * unchanged: { tag_name, name, body, html_url, published_at, assets[] }.
+ */
+export function buildReleaseMetadataUrl(baseUrl: string): string {
+  return `${normalizeBaseUrl(baseUrl) ?? ""}/latest.json`;
+}
 
 export interface ReleaseInfo {
   version: string;       // e.g. "1.0.0" (without 'v' prefix)
@@ -70,17 +205,36 @@ export function compareVersions(a: string, b: string): number {
 }
 
 /**
- * Check for updates via GitHub API (compares version strings).
+ * Check for updates against the configured self-hosted release metadata.
  * Used by useUpdateCheck for the notification banner.
+ *
+ * With no configured source this returns "no update" without any network call —
+ * the cloud path is cancelled, not merely deprioritized.
  */
 export async function checkForUpdates(currentVersion: string): Promise<UpdateCheckResult> {
+  return checkForUpdatesAgainst(getUpdateSourceConfig().updateServerUrl, currentVersion);
+}
+
+/**
+ * Source-explicit variant of checkForUpdates. `baseUrl === null` means the
+ * cloud source is cancelled and the reserved self-hosted source is still
+ * unconfigured, so no request is made at all.
+ */
+export async function checkForUpdatesAgainst(
+  baseUrl: string | null,
+  currentVersion: string,
+): Promise<UpdateCheckResult> {
+  if (!baseUrl) {
+    return { hasUpdate: false, currentVersion, latestRelease: null };
+  }
+
   try {
-    const response = await fetch(GITHUB_API_URL, {
-      headers: { Accept: 'application/vnd.github.v3+json' },
+    const response = await fetch(buildReleaseMetadataUrl(baseUrl), {
+      headers: { Accept: 'application/json' },
     });
 
     if (!response.ok) {
-      throw new Error(`GitHub API returned ${response.status}`);
+      throw new Error(`Update server returned ${response.status}`);
     }
 
     const data = await response.json();
@@ -114,13 +268,12 @@ export async function checkForUpdates(currentVersion: string): Promise<UpdateChe
 }
 
 /**
- * Get release page URL for a specific version
+ * Human-facing download page of the configured self-hosted update source.
+ * Returns '' while no source is configured — callers must not open anything
+ * in that state (there is no cloud page to fall back to).
  */
-export function getReleaseUrl(version?: string): string {
-  if (version) {
-    return `${RELEASES_PAGE_URL}/tag/v${version.replace(/^v/i, '')}`;
-  }
-  return RELEASES_PAGE_URL;
+export function getReleasesPageUrl(): string {
+  return getUpdateSourceConfig().releasesPageUrl ?? '';
 }
 
 /**
@@ -212,12 +365,4 @@ export function onError(
   cb: (payload: { error: string }) => void,
 ): (() => void) | undefined {
   return netcattyBridge.get()?.onUpdateError?.(cb);
-}
-
-/** Returns the GitHub Releases page URL, optionally for a specific version tag. */
-export function getReleasesUrl(version?: string): string {
-  if (version) {
-    return `${RELEASES_PAGE_URL}/tag/v${version}`;
-  }
-  return `${RELEASES_PAGE_URL}/latest`;
 }

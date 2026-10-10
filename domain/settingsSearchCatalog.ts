@@ -842,6 +842,14 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     sectionKey: "settings.update.title",
   },
   {
+    id: "system-update-server",
+    tab: "system",
+    labelKey: "settings.update.server.title",
+    descriptionKey: "settings.update.server.hint",
+    sectionKey: "settings.update.server.title",
+    keywords: ["server", "feed", "self-hosted", "更新源", "自建更新", "更新服务器"],
+  },
+  {
     id: "system-auto-launch",
     tab: "system",
     labelKey: "settings.autoLaunch.enabled",
