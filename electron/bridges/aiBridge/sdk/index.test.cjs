@@ -9,7 +9,7 @@ const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 const mimoDriver = require("./mimoDriver.cjs");
 
 test("registry exposes SDK backends", () => {
-  assert.deepEqual(listBackends().sort(), ["claude", "codebuddy", "codex", "copilot", "cursor", "grok", "mimo", "opencode"]);
+  assert.deepEqual(listBackends().sort(), ["claude", "codebuddy", "codex", "copilot", "cursor", "dsh", "grok", "mimo", "opencode"]);
 });
 
 test("getDriver returns a driver with runTurn", () => {

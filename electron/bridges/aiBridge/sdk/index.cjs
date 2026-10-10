@@ -19,6 +19,7 @@ const opencode = require("./opencodeDriver.cjs");
 const grok = require("./grokDriver.cjs");
 const grokAcp = require("./grokAcpDriver.cjs");
 const mimo = require("./mimoDriver.cjs");
+const dsh = require("./dshDriver.cjs");
 const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 
 function hasCodebuddyQueryOnlyOptions(options) {
@@ -424,6 +425,20 @@ const DRIVER_REGISTRY = {
         binPath: ctx.binPath,
         cwd: ctx.cwd,
         abortController: ctx.abortController,
+        signal: ctx.abortController?.signal || ctx.signal,
+      });
+    },
+  },
+  // DeepSeek Harness (dsh) — one-shot `dsh headless` CLI path. See dshDriver.cjs
+  // for what is intentionally not mapped yet (resume, tool events, attachments).
+  dsh: {
+    async runTurn(ctx) {
+      return dsh.runDshTurn({
+        prompt: ctx.prompt,
+        cwd: ctx.cwd,
+        env: ctx.env,
+        binPath: ctx.binPath,
+        emitter: ctx.emitter,
         signal: ctx.abortController?.signal || ctx.signal,
       });
     },

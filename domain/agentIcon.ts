@@ -23,6 +23,7 @@ export type AgentIconKey =
   | 'codebuddy'
   | 'grok'
   | 'mimo'
+  | 'dsh'
   | 'terminal'
   | 'plus';
 
@@ -126,6 +127,12 @@ export const AGENT_ICON_VISUALS: Record<AgentIconKey, AgentIconVisual> = {
   mimo: {
     src: '/ai/agents/mimo.svg',
     badgeClassName: 'border-orange-500/22 bg-orange-500/12',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert opacity-90',
+  },
+  dsh: {
+    // DeepSeek Harness has no separate mark; reuse the bundled DeepSeek logo.
+    src: '/ai/providers/deepseek.svg',
+    badgeClassName: 'border-blue-500/22 bg-blue-500/12',
     imageClassName: 'object-contain dark:brightness-0 dark:invert opacity-90',
   },
   terminal: {

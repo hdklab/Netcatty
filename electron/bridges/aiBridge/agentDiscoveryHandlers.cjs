@@ -109,6 +109,8 @@ function registerAgentDiscoveryHandlers(ctx) {
         description: "xAI's Grok Build coding agent CLI", sdkBackend: "grok", args: [] },
       { command: "mimo", name: "MiMo Code", icon: "mimo",
         description: "Xiaomi's MiMo Code CLI, an OpenCode fork", sdkBackend: "mimo", args: [] },
+      { command: "dsh", name: "DeepSeek Harness", icon: "dsh",
+        description: "DeepSeek's open-source agent harness (dsh)", sdkBackend: "dsh", args: [] },
     ];
 
     const shellEnv = await getShellEnv();
@@ -163,6 +165,14 @@ function registerAgentDiscoveryHandlers(ctx) {
           auth = { authenticated: true, authSource: "mimo-config" };
         } else if (agent.command === "grok") {
           auth = probeGrokAuth({ env: shellEnv });
+        } else if (agent.command === "dsh") {
+          // dsh resolves DEEPSEEK_API_KEY from the environment it is launched
+          // with first, then from its own credentials store
+          // ($DSH_HOME/.credentials.yaml) which is not probed here — the local
+          // file is write-only and a missing env key must not block discovery.
+          auth = shellEnv.DEEPSEEK_API_KEY
+            ? { authenticated: true, authSource: "env" }
+            : { authenticated: false, authSource: null };
         }
       } catch { /* auth probe is best-effort */ }
 
