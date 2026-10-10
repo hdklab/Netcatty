@@ -47,6 +47,17 @@ module.exports = {
     // and run ensure-node-pty-linux.sh before packaging, so the rebuild is
     // redundant but harmless there.
     npmRebuild: true,
+    // The legacy ("0.0.0") AppImage toolset ships a runtime that dlopen()s
+    // libfuse.so.2, so the artifact refuses to start on any distro that dropped
+    // FUSE 2 — Ubuntu 24.04+/26.04, Debian 13, Fedora 41+ — with
+    // "error loading libfuse.so.2". The 1.0.3 toolset emits an AppImage with the
+    // static runtime, which mounts itself without libfuse2 and starts on both
+    // old and new distros. Keep AppRun's own "unshare -Ur" sandbox fallback in
+    // mind: it appends --no-sandbox where unprivileged user namespaces are
+    // blocked (e.g. Ubuntu's AppArmor restriction), so callers need no flag.
+    toolsets: {
+        appimage: '1.0.3'
+    },
     directories: {
         buildResources: 'build',
         output: 'release'

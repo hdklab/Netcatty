@@ -278,6 +278,19 @@ test("linux packaging includes an Arch Linux pacman package target", () => {
   );
 });
 
+test("AppImage packaging uses the static-runtime toolset", () => {
+  // The legacy "0.0.0" toolset embeds an AppImage runtime that dlopen()s
+  // libfuse.so.2, so the artifact cannot start on distros that dropped FUSE 2
+  // (Ubuntu 24.04+/26.04, Debian 13, Fedora 41+); it only prints
+  // "error loading libfuse.so.2". The 1.0.x toolsets ship the static runtime,
+  // which mounts itself without libfuse2 and still works on older distros.
+  assert.equal(
+    config.toolsets?.appimage,
+    "1.0.3",
+    "AppImage output must use the static-runtime toolset so it launches without libfuse2",
+  );
+});
+
 test("rpm packaging disables generated build-id symlinks", () => {
   assert.deepEqual(
     config.rpm?.fpm,
