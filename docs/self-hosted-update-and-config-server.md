@@ -100,6 +100,28 @@ serve them over plain HTTP(S) (a static file server is enough).
    app with `NETCATTY_UPDATE_SERVER_URL=https://updates.example/netcatty`.
    The saved configuration also serves as the default for the next launch.
 
+## Publishing a new version (release flow)
+
+The feed is whatever the newest GitHub Release of `hdklab/Netcatty` carries, so a
+release *is* the update — no server step, no manual upload:
+
+```bash
+git tag -a v1.1.86 -m "release: v1.1.86" && git push origin v1.1.86
+```
+
+- The tag must match `v<major>.<minor>.<patch>` (`build-packages` triggers on it);
+  CI stamps that version into `package.json` for the build, so the tag is the
+  single source of truth.
+- The `release` job then attaches every installer plus `latest.yml`,
+  `latest-linux.yml`, `latest-linux-arm64.yml`, `latest-mac.yml` (electron-builder)
+  and `latest.json` (the GitHub `releases/latest` API shape the in-app check
+  reads). Upgrades only work once those yml/json assets are on the release — an
+  installer-only release is not a feed.
+- A local `package.json` version that lags the tag is expected (CI injects it);
+  installed apps read the release version, not the repo one.
+- macOS artifacts are unsigned, so macOS does not auto-update; Linux
+  (AppImage/deb/rpm/pacman) and Windows do.
+
 ## Config / vault storage
 
 No code change is needed for "save my configuration on my own server": Settings →

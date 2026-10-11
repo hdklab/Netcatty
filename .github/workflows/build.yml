@@ -788,8 +788,15 @@ jobs:
     # Only release on a strict v<MAJOR>.<MINOR>.<PATCH>[-pre] tag.
     # Manual workflow_dispatch can publish only when it is run from one
     # of those tags. PRs and branch pushes skip this job.
+    #
+    # always(): a single platform leg failing (the fork's macOS packaging does)
+    # used to skip this job entirely, so a tag produced no release at all and
+    # nothing could ever upgrade. Publishing what the healthy legs produced is
+    # strictly better; the latest.json step below still refuses to publish an
+    # asset-less release.
     if: |
-      startsWith(github.ref, 'refs/tags/v')
+      always()
+      && startsWith(github.ref, 'refs/tags/v')
       && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release))
     permissions:
       contents: write
