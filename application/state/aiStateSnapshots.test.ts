@@ -511,3 +511,82 @@ test('writeSessionsForStorage makes a final attempt with only the newest session
     });
   }
 });
+
+function installFakeAIBridge(sdkCleanups: string[]) {
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      netcatty: {
+        aiSdkAgentCleanup: async (chatSessionId: string) => {
+          sdkCleanups.push(chatSessionId);
+          return { ok: true };
+        },
+      },
+      dispatchEvent: () => true,
+    },
+  });
+  return () => {
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: previousWindow,
+    });
+  };
+}
+
+test('cleanupSdkAgentSessions leaves a chat whose turn is still running alone', async () => {
+  const { cleanupSdkAgentSessions } = await import('./aiStateSnapshots');
+  const { globalAgentRuntime } = await import('../../infrastructure/ai/harness/globalAgentRuntime');
+
+  const sdkCleanups: string[] = [];
+  const restoreWindow = installFakeAIBridge(sdkCleanups);
+  const originalHasActiveTurn = globalAgentRuntime.hasActiveTurn;
+  globalAgentRuntime.hasActiveTurn = (chatSessionId: string) => chatSessionId === 'chat-running';
+
+  try {
+    // `aiSdkAgentCleanup` aborts the chat's in-flight stream, so the running chat
+    // keeps its agent session while an idle one is still collected.
+    cleanupSdkAgentSessions(['chat-running', 'chat-idle']);
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    assert.deepEqual(sdkCleanups, ['chat-idle']);
+  } finally {
+    globalAgentRuntime.hasActiveTurn = originalHasActiveTurn;
+    restoreWindow();
+  }
+});
+
+test('orphan cleanup keeps a mid-turn chat whose scope target disappeared', async () => {
+  const {
+    cleanupOrphanedAISessions,
+    setLatestAISessionsSnapshot,
+    setLatestAIActiveSessionMapSnapshot,
+  } = await import('./aiStateSnapshots');
+  const { globalAgentRuntime } = await import('../../infrastructure/ai/harness/globalAgentRuntime');
+
+  const sdkCleanups: string[] = [];
+  const restoreWindow = installFakeAIBridge(sdkCleanups);
+  const originalHasActiveTurn = globalAgentRuntime.hasActiveTurn;
+  globalAgentRuntime.hasActiveTurn = (chatSessionId: string) => chatSessionId === 'chat-running';
+
+  try {
+    // Both chats point at a target that is no longer live — the shape produced by
+    // opening/reconnecting a terminal while the agent is answering. The running
+    // one must survive the pass; the idle one is still collected.
+    setLatestAISessionsSnapshot([
+      makeSession('chat-running', 2, [{ id: 'm1', role: 'user', content: 'hi', timestamp: 2 }]),
+      makeSession('chat-idle', 1, [{ id: 'm2', role: 'user', content: 'hi', timestamp: 1 }]),
+    ]);
+    setLatestAIActiveSessionMapSnapshot({});
+
+    cleanupOrphanedAISessions(new Set<string>());
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    assert.deepEqual(sdkCleanups, ['chat-idle']);
+  } finally {
+    globalAgentRuntime.hasActiveTurn = originalHasActiveTurn;
+    setLatestAISessionsSnapshot([]);
+    setLatestAIActiveSessionMapSnapshot({});
+    restoreWindow();
+  }
+});

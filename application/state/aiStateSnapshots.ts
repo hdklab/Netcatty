@@ -50,7 +50,13 @@ export type PanelViewByScope = Partial<Record<string, AIPanelView>>;
 export function cleanupSdkAgentSessions(sessionIds: string[]) {
   const bridge = getAIBridge();
   if (sessionIds.length === 0) return;
+  const runtime = getAgentRuntime();
   for (const sessionId of sessionIds) {
+    // `aiSdkAgentCleanup` aborts every in-flight stream of that chat, so a chat
+    // whose turn is still running must be left alone: the turn would die with an
+    // empty assistant message and its answer would never reach the panel. It is
+    // collected by a later pass, once the turn has settled.
+    if (runtime.hasActiveTurn(sessionId)) continue;
     void bridge?.aiSdkAgentCleanup?.(sessionId).catch(() => {});
   }
 }
@@ -101,6 +107,25 @@ export function cleanupOrphanedAISessions(activeTargetIds: Set<string>) {
     if (!isScopeKeyActive(scopeKey, activeTargetIds)) continue;
     activeSessionIds.add(sessionId);
   }
+
+  // Same protection for a chat whose agent turn has not finished yet. Opening or
+  // reconnecting a terminal flips `activeTargetIds`, which is enough to make a
+  // chat scoped to a target that dropped out of the set look orphaned — and the
+  // cleanup that follows aborts the running turn, so the user's question gets no
+  // answer at all. Keep such a chat until its turn settles.
+  const runtime = getAgentRuntime();
+  for (const session of currentSessions) {
+    if (runtime.hasActiveTurn(session.id)) activeSessionIds.add(session.id);
+  }
+
+  // Residual risk: a chat skipped above is only collected by the *next* pass, i.e.
+  // when the live target set changes again (a terminal opened/closed) or on the
+  // next launch — nothing re-runs this effect just because a turn ended, so its
+  // agent session can outlive the orphaned chat until then. Do not "fix" that with
+  // a deferred retry built from this call's `activeTargetIds`: a chat that was
+  // meanwhile resumed into a terminal missing from that stale snapshot would look
+  // orphaned again and lose its agent session mid-use. A retry would have to take
+  // the live id set from the caller (TerminalLayerSupport).
 
   const nextSessionCleanup = pruneInactiveScopedSessions(
     currentSessions,
