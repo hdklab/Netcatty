@@ -496,6 +496,23 @@ declare global {
       }>,
       uploadCommand?: string,
     ): Promise<{ success: boolean; error?: string }>;
+    /** Whether an external `lftp` is available for FTP/FTPS uploads. */
+    ftpCapabilities?(): Promise<{ lftp: boolean; lftpPath: string | null }>;
+    /**
+     * Upload dropped files into `remoteDir` over FTP/FTPS via lftp. Files may
+     * carry a local `path` or in-memory `data` (staged in the app temp dir).
+     */
+    ftpUpload?(payload: {
+      host: string;
+      port?: number;
+      user?: string;
+      password?: string;
+      secure?: boolean;
+      insecure?: boolean;
+      remoteDir?: string;
+      timeoutMs?: number;
+      files: Array<{ path?: string; name: string; remoteName?: string; data?: ArrayBuffer | string }>;
+    }): Promise<{ ok: boolean; code?: string; error?: string }>;
     onZmodemOverwriteRequest?(
       sessionId: string,
       cb: (payload: { sessionId: string; requestId: string; filename: string }) => void

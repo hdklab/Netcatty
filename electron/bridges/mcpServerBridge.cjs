@@ -2024,6 +2024,7 @@ function getBuiltinRpcHandlerRegistry() {
       "sftp.write": handleSftpWrite,
       "sftp.download": handleSftpDownload,
       "sftp.upload": handleSftpUpload,
+      "ftp.upload": handleFtpUpload,
       "sftp.mkdir": handleSftpMkdir,
       "sftp.delete": handleSftpDelete,
       "sftp.rename": handleSftpRename,
@@ -2378,6 +2379,9 @@ const {
 // ── Handler: exec ──
 
 const { createExecHandlerApi } = require("./mcpServerBridge/execHandlers.cjs");
+
+const { createFtpHandlerApi } = require("./mcpServerBridge/ftpHandlers.cjs");
+const { handleFtpUpload } = createFtpHandlerApi();
 const execHandlerApi = createExecHandlerApi({
   get sessions() { return sessions; },
   get commandTimeoutMs() { return commandTimeoutMs; },

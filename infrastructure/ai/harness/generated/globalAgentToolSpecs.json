@@ -2303,5 +2303,69 @@
       "bypassesChatCancel": false
     },
     "agentKind": "global"
+  },
+  {
+    "capabilityId": "ftp.upload",
+    "toolName": "ftp_upload",
+    "rpcMethod": "netcatty/ftp/upload",
+    "localExecution": false,
+    "description": "Upload local files into a remote directory over FTP/FTPS using the external lftp client (for hosts without SFTP).",
+    "inputShape": {
+      "host": {
+        "type": "string",
+        "optional": false,
+        "description": "FTP/FTPS server hostname or IP."
+      },
+      "port": {
+        "type": "string",
+        "optional": true,
+        "description": "FTP port (default 21)."
+      },
+      "user": {
+        "type": "string",
+        "optional": true,
+        "description": "FTP username. Omit for anonymous."
+      },
+      "password": {
+        "type": "string",
+        "optional": true,
+        "description": "FTP password."
+      },
+      "secure": {
+        "type": "string",
+        "optional": true,
+        "description": "\"true\" for FTPS (explicit TLS)."
+      },
+      "insecure": {
+        "type": "string",
+        "optional": true,
+        "description": "\"true\" to skip TLS certificate verification (self-signed devices)."
+      },
+      "remoteDir": {
+        "type": "string",
+        "optional": true,
+        "description": "Remote directory to upload into; defaults to the login directory."
+      },
+      "files": {
+        "type": "string",
+        "optional": false,
+        "description": "Local file paths: a JSON array, or comma/newline separated."
+      },
+      "timeoutMs": {
+        "type": "string",
+        "optional": true,
+        "description": "Transfer timeout in milliseconds."
+      }
+    },
+    "policy": {
+      "write": true,
+      "sensitiveRead": false,
+      "longRunning": true,
+      "requiresChatSession": true,
+      "bypassesObserverBlock": false,
+      "bypassesApproval": false,
+      "bypassesChatCancel": false
+    },
+    "agentKind": "global"
   }
 ]

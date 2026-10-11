@@ -25,6 +25,7 @@ const MCP_BRIDGE_BUILTIN_CAPABILITY_IDS = [
   "sftp.stat",
   "sftp.chmod",
   "sftp.home",
+  "ftp.upload",
   "session.cancel",
   "terminal.start",
   "terminal.poll",

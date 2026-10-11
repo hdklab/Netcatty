@@ -241,12 +241,84 @@ function getCapabilities() {
   return { lftp: Boolean(lftpPath), lftpPath: lftpPath || null };
 }
 
+/**
+ * Resolve the local file a drop entry refers to. The renderer either hands over
+ * a real path (OS drag) or the bytes it got from a portal/virtual drop; the
+ * second case is materialised into the app temp directory so lftp has something
+ * to `put`, and the caller is told to clean it up afterwards.
+ */
+function materializeDropFile(file, stagingDir) {
+  const direct = typeof file?.path === 'string' ? file.path.trim() : '';
+  if (direct && fs.existsSync(direct)) {
+    return { localPath: direct, cleanup: false };
+  }
+  const data = file?.data;
+  if (!data) return null;
+  let buffer;
+  if (Buffer.isBuffer(data)) buffer = data;
+  else if (data instanceof ArrayBuffer) buffer = Buffer.from(data);
+  else if (ArrayBuffer.isView(data)) buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  else if (typeof data === 'string') buffer = Buffer.from(data, 'base64');
+  else return null;
+
+  const safeName = path.basename(String(file?.name || 'drop.bin')).replace(/[^\w.-]/g, '_') || 'drop.bin';
+  const stagedPath = path.join(stagingDir, `nc-ftp-${process.pid}-${Date.now()}-${safeName}`);
+  fs.writeFileSync(stagedPath, buffer, { mode: 0o600 });
+  return { localPath: stagedPath, cleanup: true };
+}
+
+/** IPC surface used by the renderer's terminal drag-and-drop path. */
+function registerHandlers(ipcMain) {
+  ipcMain.handle('netcatty:ftp:capabilities', () => getCapabilities());
+  ipcMain.handle('netcatty:ftp:upload', async (_event, payload = {}) => {
+    const incoming = Array.isArray(payload.files) ? payload.files : [];
+    if (incoming.length === 0) {
+      return { ok: false, code: 'no-files', error: 'No files to upload' };
+    }
+    const stagingDir = path.join(resolveTempDir(), 'netcatty-ftp-staging');
+    const staged = [];
+    try {
+      const files = [];
+      for (const file of incoming) {
+        const resolved = materializeDropFile(file, stagingDir);
+        if (!resolved) {
+          return { ok: false, code: 'no-file-data', error: `could not read ${file?.name || 'dropped file'}` };
+        }
+        if (resolved.cleanup) staged.push(resolved.localPath);
+        files.push({ localPath: resolved.localPath, remoteName: file?.remoteName || file?.name });
+      }
+      return await uploadFiles({
+        host: payload.host,
+        port: payload.port,
+        user: payload.user,
+        password: payload.password,
+        secure: payload.secure,
+        insecure: payload.insecure,
+        remoteDir: payload.remoteDir,
+        timeoutMs: payload.timeoutMs,
+        files,
+      });
+    } catch (error) {
+      return { ok: false, code: 'unexpected', error: redact(error?.message || String(error)) };
+    } finally {
+      for (const stagedPath of staged) {
+        try {
+          fs.unlinkSync(stagedPath);
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+  });
+}
+
 module.exports = {
   configure,
+  registerHandlers,
   findLftp,
   buildLftpScript,
   uploadFiles,
   getCapabilities,
   redact,
-  _internal: { quote, redact, isExecutable },
+  _internal: { quote, redact, isExecutable, materializeDropFile },
 };

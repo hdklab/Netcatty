@@ -248,6 +248,16 @@ export interface Host {
   telnetIdentityId?: string; // Reference to a Telnet-specific reusable identity
   telnetUsername?: string; // Telnet-specific username
   telnetPassword?: string; // Telnet-specific password
+  // FTP/FTPS transfers for sessions that have no SFTP of their own (telnet,
+  // serial, local): a file dropped on the terminal is uploaded with the
+  // external `lftp` client straight into the terminal's current directory.
+  ftpEnabled?: boolean; // Allow FTP/FTPS uploads for this host
+  ftpPort?: number; // FTP port (default 21; implicit FTPS is often 990)
+  ftpSecure?: boolean; // Use FTPS (explicit TLS) instead of plain FTP
+  ftpInsecure?: boolean; // Skip certificate verification (self-signed devices)
+  ftpIdentityId?: string; // Reusable identity for the FTP login
+  ftpUsername?: string; // FTP user; falls back to the telnet/login user when empty
+  ftpPassword?: string; // FTP password; falls back to the telnet/login password when empty
   // Serial-specific configuration (for protocol='serial' hosts)
   serialConfig?: SerialConfig;
   // SFTP specific configuration
@@ -446,6 +456,13 @@ export interface GroupConfig {
   telnetIdentityId?: string;
   telnetUsername?: string;
   telnetPassword?: string;
+  ftpEnabled?: boolean;
+  ftpPort?: number;
+  ftpSecure?: boolean;
+  ftpInsecure?: boolean;
+  ftpIdentityId?: string;
+  ftpUsername?: string;
+  ftpPassword?: string;
   theme?: string;
   themeOverride?: boolean;
   fontFamily?: string;

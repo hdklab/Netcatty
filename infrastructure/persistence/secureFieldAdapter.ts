@@ -298,6 +298,7 @@ export async function encryptHostSecrets(host: Host): Promise<Host> {
   const out = { ...host };
   out.password = await encryptField(out.password);
   out.telnetPassword = await encryptField(out.telnetPassword);
+  out.ftpPassword = await encryptField(out.ftpPassword);
   if (out.proxyConfig?.password) {
     out.proxyConfig = { ...out.proxyConfig, password: await encryptField(out.proxyConfig.password) };
   }
@@ -308,6 +309,7 @@ export async function decryptHostSecrets(host: Host): Promise<Host> {
   const out = { ...host };
   out.password = persistDecryptedSecret(out.password, await decryptField(out.password));
   out.telnetPassword = persistDecryptedSecret(out.telnetPassword, await decryptField(out.telnetPassword));
+  out.ftpPassword = persistDecryptedSecret(out.ftpPassword, await decryptField(out.ftpPassword));
   if (out.proxyConfig?.password) {
     out.proxyConfig = {
       ...out.proxyConfig,
@@ -359,6 +361,7 @@ export async function encryptGroupConfigSecrets(config: GroupConfig): Promise<Gr
   const out = { ...config };
   out.password = await encryptField(out.password);
   out.telnetPassword = await encryptField(out.telnetPassword);
+  out.ftpPassword = await encryptField(out.ftpPassword);
   if (out.proxyConfig?.password) {
     out.proxyConfig = { ...out.proxyConfig, password: await encryptField(out.proxyConfig.password) };
   }
@@ -369,6 +372,7 @@ export async function decryptGroupConfigSecrets(config: GroupConfig): Promise<Gr
   const out = { ...config };
   out.password = persistDecryptedSecret(out.password, await decryptField(out.password));
   out.telnetPassword = persistDecryptedSecret(out.telnetPassword, await decryptField(out.telnetPassword));
+  out.ftpPassword = persistDecryptedSecret(out.ftpPassword, await decryptField(out.ftpPassword));
   if (out.proxyConfig?.password) {
     out.proxyConfig = {
       ...out.proxyConfig,

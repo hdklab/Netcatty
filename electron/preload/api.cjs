@@ -691,6 +691,14 @@ function createPreloadApi(ctx) {
       uploadCommand,
     });
   },
+  // External `lftp` transfers (FTP/FTPS) for sessions that have no SFTP of
+  // their own; used by the terminal drag-and-drop path.
+  ftpCapabilities: () => {
+    return ipcRenderer.invoke("netcatty:ftp:capabilities");
+  },
+  ftpUpload: (payload) => {
+    return ipcRenderer.invoke("netcatty:ftp:upload", payload);
+  },
   onZmodemOverwriteRequest: (sessionId, cb) => {
     if (!zmodemOverwriteListeners.has(sessionId)) zmodemOverwriteListeners.set(sessionId, new Set());
     zmodemOverwriteListeners.get(sessionId).add(cb);

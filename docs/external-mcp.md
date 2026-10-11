@@ -109,13 +109,28 @@ hermes mcp list        # netcatty ✓ enabled
 `portforward` · `all`
 
 展开后新增（`all` 实测，输出约 50+ 条，此处为前缀部分）：
-`list_attachments`、`read_attachment`、`sftp_stat/home/mkdir/delete/rename/chmod`、
+`list_attachments`、`read_attachment`、`ftp_upload`、`sftp_stat/home/mkdir/delete/rename/chmod`、
 `host_get`、`vault_hosts_create/update/delete/import`、`host_notes_get/set`、
 `vault_identities_list`、`vault_proxy_profiles_list`、`vault_groups_list/create/update/delete`、
 `vault_notes_list/get/create/update/delete/import`、
 `snippets_list/get/run/create/update/delete`、`scripts_list/get/create` …
 
 > 完整清单以 `load_netcatty_tools {"toolset":"all"}` 的返回为准。
+
+#### `ftp_upload`（toolset `sftp_advanced`）
+
+给**没有 SFTP 的主机**（telnet / 串口设备）用的 FTP/FTPS 上传，走本机外部命令 `lftp`：
+
+```
+ftp_upload { host, port?, user?, password?, secure?, insecure?, remoteDir?, files, timeoutMs? }
+```
+
+- `files`：本地文件路径，支持 JSON 数组或逗号/换行分隔（上传的是**本机**文件，主进程直接读盘）。
+- `secure: "true"` → FTPS（显式 TLS）；自签证书再传 `insecure: "true"`。
+- **凭据必须显式传**：保险箱里的主机密码在渲染层，主进程按设计读不到（`vault_hosts_list`
+  也只返回元数据）。要么在参数里给 `user/password`，要么在应用里用终端拖拽（那条路能读到保险箱）。
+- 本机没装 `lftp` 时返回 `{ ok:false, code:"lftp-not-found" }`。
+- 该能力 `policy.write = true`：确认模式会请求批准，观察模式直接拒绝。
 
 ## 6. 本次实测记录（本机，应用为 `release/linux-unpacked` 打包版）
 

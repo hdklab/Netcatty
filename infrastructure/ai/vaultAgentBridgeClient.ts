@@ -77,6 +77,7 @@ import type {
 const SENSITIVE_HOST_KEYS = new Set([
   'password',
   'telnetPassword',
+  'ftpPassword',
   'privateKey',
   'passphrase',
 ]);
@@ -246,6 +247,12 @@ const SAFE_GROUP_CONFIG_KEYS = [
   'telnetPort',
   'telnetIdentityId',
   'telnetUsername',
+  'ftpEnabled',
+  'ftpPort',
+  'ftpSecure',
+  'ftpInsecure',
+  'ftpIdentityId',
+  'ftpUsername',
   'theme',
   'themeOverride',
   'fontFamily',

@@ -67,6 +67,7 @@ import {
   HostDetailsSection,
   EnvVarsPanel,
   ProxyPanel,
+  HostDetailsSettingRow,
 } from "./host-details";
 import { HostNotesEditor } from "./host/HostNotesEditor";
 import { HostDetailsScriptsSection } from "./host/HostDetailsScriptsSection";
@@ -193,6 +194,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
 
   const [showPassword, setShowPassword] = useState(false);
   const [showTelnetPassword, setShowTelnetPassword] = useState(false);
+  const [showFtpPassword, setShowFtpPassword] = useState(false);
   const [showAlgorithmOverrides, setShowAlgorithmOverrides] = useState(false);
   const [showNotesEditor, setShowNotesEditor] = useState(() => Boolean(initialData?.notes?.trim()));
   const [pluginConnectionValid, setPluginConnectionValid] = useState(true);
@@ -1336,6 +1338,82 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           >
             <Plus size={14} />
             {t("hostDetails.telnet.add")}
+          </Button>
+        )}
+
+        {form.ftpEnabled ? (
+          <HostDetailsSection icon={<Plus size={14} className="text-muted-foreground" />} title="FTP">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex-1 min-w-0 h-12 flex items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 px-3">
+                <span className="truncate text-sm font-medium leading-5 text-foreground">
+                  {t("hostDetails.ftp.on")}
+                </span>
+                <div className="ml-auto w-1/2 min-w-0 flex items-center gap-2 justify-end">
+                  <Input
+                    type="number"
+                    value={form.ftpPort ?? ""}
+                    placeholder="21"
+                    onChange={(e) => update("ftpPort", parseOptionalPortInput(e.target.value))}
+                    className="h-8 flex-1 min-w-0 text-center"
+                  />
+                  <span className="text-xs text-muted-foreground">{t("hostDetails.port")}</span>
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                onClick={() => update("ftpEnabled", false)}
+              >
+                <X size={14} />
+              </Button>
+            </div>
+
+            <HostDetailsSettingRow label={t("hostDetails.ftp.secure")}>
+              <Switch
+                checked={Boolean(form.ftpSecure)}
+                onCheckedChange={(checked) => update("ftpSecure", checked)}
+              />
+            </HostDetailsSettingRow>
+            <HostDetailsSettingRow label={t("hostDetails.ftp.insecure")}>
+              <Switch
+                checked={Boolean(form.ftpInsecure)}
+                onCheckedChange={(checked) => update("ftpInsecure", checked)}
+              />
+            </HostDetailsSettingRow>
+
+            <Input
+              value={form.ftpUsername ?? ""}
+              placeholder={t("hostDetails.ftp.username")}
+              onChange={(e) => update("ftpUsername", e.target.value)}
+              className="h-10"
+            />
+            <div className="relative">
+              <Input
+                type={showFtpPassword ? "text" : "password"}
+                value={form.ftpPassword ?? ""}
+                placeholder={t("hostDetails.ftp.password")}
+                onChange={(e) => update("ftpPassword", e.target.value)}
+                className="h-10 pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowFtpPassword(!showFtpPassword)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showFtpPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">{t("hostDetails.ftp.hint")}</p>
+          </HostDetailsSection>
+        ) : (
+          <Button
+            variant="ghost"
+            className="w-full h-10 justify-start gap-2 border border-dashed border-border/60"
+            onClick={() => update("ftpEnabled", true)}
+          >
+            <Plus size={14} />
+            {t("hostDetails.ftp.add")}
           </Button>
         )}
       </AsidePanelContent>

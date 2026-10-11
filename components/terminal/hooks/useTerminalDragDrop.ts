@@ -13,6 +13,7 @@ import {
   type ZmodemDragDropFile,
 } from "../../../lib/zmodemDragDrop";
 import { extractDropEntries, type DropEntry } from "../../../lib/sftpFileUtils";
+import { resolveFtpDropPlan, supportsFtpDragDrop } from "../../../lib/ftpDragDrop";
 import type { Host, TerminalSession } from "../../../types";
 import { resolveSftpReuseSourceSessionId } from "../../../application/state/terminalConnectionReuse";
 import {
@@ -56,6 +57,19 @@ interface UseTerminalDragDropOptions {
       files: ZmodemDragDropFile[],
       uploadCommand?: string,
     ) => Promise<{ success: boolean; error?: string }>;
+    /** Whether an external `lftp` is usable on this machine (FTP/FTPS drops). */
+    ftpCapabilities?: () => Promise<{ lftp: boolean; lftpPath: string | null }>;
+    /** Upload dropped files over FTP/FTPS into the terminal's current directory. */
+    ftpUpload?: (payload: {
+      host: string;
+      port?: number;
+      user?: string;
+      password?: string;
+      secure?: boolean;
+      insecure?: boolean;
+      remoteDir?: string;
+      files: Array<{ path?: string; name: string; remoteName?: string; data?: ArrayBuffer }>;
+    }) => Promise<{ ok: boolean; code?: string; error?: string }>;
   };
   isSensitiveInput?: () => boolean;
   rzMissingFallbackTimeoutMs?: number;
@@ -243,25 +257,8 @@ export async function handleTerminalDropEntries({
     return;
   }
 
-  const requiresSftpForDirectoryDrop = dropEntries.some((entry) => (
-    entry.isDirectory || /[\\/]/.test(entry.relativePath)
-  ));
-
-  if (
-    requiresSftpForDirectoryDrop
-    && onOpenSftp
-    && supportsZmodemDragDropSftpFallback(host)
-  ) {
-    await openSftpForTerminalDrop({
-      dropEntries,
-      host,
-      onOpenSftp,
-      resolveSftpInitialPath,
-      resolvedLoginUsername,
-      resolvedSudoPassword,
-      sessionId,
-    });
-  } else if (supportsZmodemTerminalDragDrop(host, isNetworkDevice)) {
+  /** ZMODEM (`rz`) upload, plus its SFTP fallback when the server lacks rz. */
+  const uploadViaZmodem = async () => {
     const files = await buildZmodemDragDropFiles(dropEntries);
     if (files.length === 0) {
       throw new Error("No files to upload");
@@ -319,6 +316,66 @@ export async function handleTerminalDropEntries({
         });
       }
     }
+  };
+
+  const requiresSftpForDirectoryDrop = dropEntries.some((entry) => (
+    entry.isDirectory || /[\\/]/.test(entry.relativePath)
+  ));
+
+  if (
+    requiresSftpForDirectoryDrop
+    && onOpenSftp
+    && supportsZmodemDragDropSftpFallback(host)
+  ) {
+    await openSftpForTerminalDrop({
+      dropEntries,
+      host,
+      onOpenSftp,
+      resolveSftpInitialPath,
+      resolvedLoginUsername,
+      resolvedSudoPassword,
+      sessionId,
+    });
+  } else if (
+    !requiresSftpForDirectoryDrop
+    && supportsFtpDragDrop(host)
+    && host.ftpEnabled
+    && terminalBackend.ftpUpload
+  ) {
+    // FTP/FTPS via the external `lftp` client: the file lands in the terminal's
+    // tracked current directory. Falls through to ZMODEM when the plan is not
+    // usable (no cwd yet, no lftp, no host) so the drop is never silently lost.
+    const initialPath = await resolveSftpInitialPath({ requireActiveShellCwd: true }).catch(() => undefined);
+    const capabilities = await terminalBackend.ftpCapabilities?.().catch(() => undefined);
+    const plan = resolveFtpDropPlan({
+      host,
+      remoteDir: initialPath,
+      lftpAvailable: Boolean(capabilities?.lftp),
+      credentials: { username: resolvedLoginUsername, password: resolvedSudoPassword ?? host.password },
+    });
+    if (plan.ok) {
+      const ftpFiles = await buildZmodemDragDropFiles(dropEntries);
+      if (ftpFiles.length === 0) {
+        throw new Error("No files to upload");
+      }
+      const result = await terminalBackend.ftpUpload({
+        ...plan.plan,
+        files: ftpFiles.map((file) => ({
+          path: file.path,
+          name: file.name,
+          remoteName: file.remoteName,
+          data: file.data,
+        })),
+      });
+      if (!result.ok) {
+        throw new Error(result.error || "FTP upload failed");
+      }
+      return;
+    }
+    return await uploadViaZmodem();
+  } else if (supportsZmodemTerminalDragDrop(host, isNetworkDevice)) {
+    await uploadViaZmodem();
+
   } else if (onOpenSftp) {
     await openSftpForTerminalDrop({
       dropEntries,

@@ -38,6 +38,7 @@ test("builtin write methods match legacy mcpServerBridge write set", () => {
     "netcatty/sftp/delete",
     "netcatty/sftp/rename",
     "netcatty/sftp/chmod",
+    "netcatty/ftp/upload",
     "netcatty/jobStart",
     "netcatty/jobStop",
   ];

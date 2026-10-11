@@ -459,6 +459,7 @@ function createBridgeRegistrar(context) {
     sshBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     sftpBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     localFsBridge.registerHandlers(ipcMain);
+    require("../bridges/ftpBridge.cjs").registerHandlers(ipcMain);
     require("../bridges/localFileDragBridge.cjs").registerHandlers(ipcMain, {
       getWindows: () => getWindowManager().getAppContentWindows?.() || [],
       nativeImage: electronModule.nativeImage,

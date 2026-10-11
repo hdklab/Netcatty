@@ -31,6 +31,7 @@ const DEFERRED_MCP_TOOLSETS = Object.freeze({
     "read_attachment",
   ]),
   sftp_advanced: Object.freeze([
+    "ftp_upload",
     "sftp_stat",
     "sftp_home",
     "sftp_mkdir",

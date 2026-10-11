@@ -37,6 +37,7 @@ import {
   toolDepsFromContext,
   type CattyToolContext,
 } from './cattyRuntimeContext';
+import { normalizeFtpUploadFiles } from '../../../lib/ftpDragDrop';
 
 type FieldShape = {
   type: string;
@@ -207,6 +208,54 @@ async function executeLocalCattyCapability(ctx: LocalExecutionContext): Promise<
   const resolveContext = () => (typeof deps.context === 'function' ? deps.context() : deps.context);
 
   switch (spec.capabilityId) {
+    case 'ftp.upload': {
+      // FTP/FTPS transfer through the external lftp client. The bridge runs in
+      // the main process, so the payload is forwarded over IPC; credentials are
+      // whatever the caller supplied (the vault is not readable from here).
+      const params = args as {
+        host?: string;
+        port?: number | string;
+        user?: string;
+        password?: string;
+        secure?: boolean | string;
+        insecure?: boolean | string;
+        remoteDir?: string;
+        timeoutMs?: number | string;
+        files?: unknown;
+      };
+      const host = typeof params.host === 'string' ? params.host.trim() : '';
+      if (!host) return { error: 'host is required.' };
+      const files = normalizeFtpUploadFiles(params.files);
+      if (files.length === 0) {
+        return { error: 'files must list at least one local path.' };
+      }
+      const bridge = deps.bridge as
+        | { ftpUpload?: (payload: Record<string, unknown>) => Promise<{ ok: boolean; code?: string; error?: string }> }
+        | undefined;
+      if (!bridge?.ftpUpload) {
+        return { error: 'FTP upload is unavailable in this environment.' };
+      }
+      const asBool = (value: unknown) => value === true || String(value ?? '').toLowerCase() === 'true';
+      const asNumber = (value: unknown) => {
+        const num = Number(value);
+        return Number.isFinite(num) && num > 0 ? num : undefined;
+      };
+      const result = await bridge.ftpUpload({
+        host,
+        port: asNumber(params.port),
+        user: typeof params.user === 'string' && params.user.trim() ? params.user.trim() : undefined,
+        password: typeof params.password === 'string' ? params.password : undefined,
+        secure: asBool(params.secure),
+        insecure: asBool(params.insecure),
+        remoteDir: typeof params.remoteDir === 'string' ? params.remoteDir : undefined,
+        timeoutMs: asNumber(params.timeoutMs),
+        files,
+      });
+      if (!result?.ok) {
+        return { error: result?.error || 'FTP upload failed.' };
+      }
+      return { ok: true, uploaded: files.length, remoteDir: params.remoteDir ?? null };
+    }
     case 'harness.tool_output.read': {
       const { handleId, mode, maxChars, offset, query } = args as {
         handleId: string;

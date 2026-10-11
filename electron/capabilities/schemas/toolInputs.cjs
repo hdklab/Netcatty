@@ -59,6 +59,17 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     localPath: { type: "string", description: "Local file path to upload." },
     remotePath: { type: "string", description: "Remote destination path." },
   },
+  "ftp.upload": {
+    host: { type: "string", description: "FTP/FTPS server hostname or IP." },
+    port: { type: "string", optional: true, description: "FTP port (default 21)." },
+    user: { type: "string", optional: true, description: "FTP username. Omit for anonymous." },
+    password: { type: "string", optional: true, description: "FTP password." },
+    secure: { type: "string", optional: true, description: "\"true\" for FTPS (explicit TLS)." },
+    insecure: { type: "string", optional: true, description: "\"true\" to skip TLS certificate verification (self-signed devices)." },
+    remoteDir: { type: "string", optional: true, description: "Remote directory to upload into; defaults to the login directory." },
+    files: { type: "string", description: "Local file paths: a JSON array, or comma/newline separated." },
+    timeoutMs: { type: "string", optional: true, description: "Transfer timeout in milliseconds." },
+  },
   "sftp.mkdir": {
     sessionId: { type: "string", description: "SFTP session ID." },
     path: { type: "string", description: "Remote directory path to create." },
