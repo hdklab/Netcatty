@@ -84,6 +84,22 @@ declare global {
       envOverride: boolean;
     }) => void): () => void;
 
+    /**
+     * Read `<updateServerUrl>/latest.json`. The main process performs the
+     * request because feed hosts generally refuse the renderer's cross-origin
+     * fetch (no Access-Control-Allow-Origin), even though the file is
+     * reachable. Only the effective configured source is allowed.
+     */
+    fetchUpdateMetadata?(input: { baseUrl?: string }): Promise<{
+      ok: boolean;
+      /** HTTP status of the feed response, when one was received. */
+      status?: number;
+      /** Parsed latest.json payload (present when ok). */
+      data?: unknown;
+      /** Failure reason (present when !ok). */
+      error?: string;
+    }>;
+
     // SSH diagnostic logs
     getSshDebugLogInfo?(): Promise<{
       enabled: boolean;

@@ -216,6 +216,42 @@ export async function checkForUpdates(currentVersion: string): Promise<UpdateChe
 }
 
 /**
+ * Read the release manifest (`<baseUrl>/latest.json`).
+ *
+ * The main process performs the request whenever the bridge is available: feed
+ * hosts generally answer without an Access-Control-Allow-Origin header (the
+ * factory GitHub release-asset URL does not), so the renderer's own fetch is
+ * blocked by CORS even though the file is reachable. Browsers and unit tests
+ * without the bridge fall back to fetch.
+ */
+async function readReleaseMetadata(baseUrl: string): Promise<unknown> {
+  const bridge = netcattyBridge.get();
+  if (bridge?.fetchUpdateMetadata) {
+    const result = await bridge.fetchUpdateMetadata({ baseUrl });
+    if (!result?.ok) throw new Error(result?.error || 'Update check failed');
+    return result.data;
+  }
+
+  const response = await fetch(buildReleaseMetadataUrl(baseUrl), {
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(`Update server returned ${response.status}`);
+  }
+  return response.json();
+}
+
+/** Release metadata as served on the wire (GitHub `releases/latest` shape). */
+interface ReleaseMetadataPayload {
+  tag_name?: unknown;
+  name?: unknown;
+  body?: unknown;
+  html_url?: unknown;
+  published_at?: unknown;
+  assets?: Array<{ name?: unknown; browser_download_url?: unknown; size?: unknown }>;
+}
+
+/**
  * Source-explicit variant of checkForUpdates. `baseUrl === null` means the
  * cloud source is cancelled and the reserved self-hosted source is still
  * unconfigured, so no request is made at all.
@@ -229,28 +265,20 @@ export async function checkForUpdatesAgainst(
   }
 
   try {
-    const response = await fetch(buildReleaseMetadataUrl(baseUrl), {
-      headers: { Accept: 'application/json' },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Update server returned ${response.status}`);
-    }
-
-    const data = await response.json();
-    const latestVersion = (data.tag_name as string).replace(/^v/i, '');
+    const data = (await readReleaseMetadata(baseUrl)) as ReleaseMetadataPayload;
+    const latestVersion = String(data.tag_name).replace(/^v/i, '');
 
     const latestRelease: ReleaseInfo = {
       version: latestVersion,
-      tagName: data.tag_name,
-      name: data.name || data.tag_name,
-      body: data.body || '',
-      htmlUrl: data.html_url,
-      publishedAt: data.published_at,
-      assets: (data.assets || []).map((a: { name: string; browser_download_url: string; size: number }) => ({
-        name: a.name,
-        browserDownloadUrl: a.browser_download_url,
-        size: a.size,
+      tagName: String(data.tag_name),
+      name: String(data.name || data.tag_name),
+      body: typeof data.body === 'string' ? data.body : '',
+      htmlUrl: String(data.html_url ?? ''),
+      publishedAt: String(data.published_at ?? ''),
+      assets: (data.assets ?? []).map((a) => ({
+        name: String(a.name ?? ''),
+        browserDownloadUrl: String(a.browser_download_url ?? ''),
+        size: Number(a.size ?? 0),
       })),
     };
 

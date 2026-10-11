@@ -24,7 +24,7 @@ const ELECTRON_UPDATER_ID = "electron-updater";
  * assert on their interactions. Restores Module._load and the bridge cache on
  * exit so tests stay isolated.
  */
-async function withMocks({ autoUpdater, autoUpdaterExports, windowManager, globalShortcutBridge, dirtyEditorGuard, browserWindows, userDataPath } = {}, fn) {
+async function withMocks({ autoUpdater, autoUpdaterExports, windowManager, globalShortcutBridge, dirtyEditorGuard, browserWindows, userDataPath, net } = {}, fn) {
   const fakeAutoUpdater = autoUpdater || {
     autoDownload: true,
     autoInstallOnAppQuit: false,
@@ -96,6 +96,9 @@ async function withMocks({ autoUpdater, autoUpdaterExports, windowManager, globa
         // browserWindows lets a test observe broadcastToAllWindows (used by the
         // needs-save notice). Defaults to none.
         BrowserWindow: { getAllWindows: () => browserWindows || [] },
+        // net.fetch is the main process's CORS-free HTTP client, used for the
+        // release manifest; tests supply a fake to assert on the request.
+        ...(net ? { net } : {}),
       },
     });
     // Await so the Module._load patch stays installed for the *entire* test
@@ -1267,5 +1270,125 @@ test("NETCATTY_UPDATE_SERVER_URL overrides the saved update source", async () =>
     });
   } finally {
     fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The renderer cannot read the release manifest itself: feed hosts (including
+ * the factory GitHub release-asset URL) answer without an
+ * Access-Control-Allow-Origin header, so the browser blocks the response. The
+ * main process fetches it through net.fetch instead and returns the payload.
+ */
+test("reads latest.json in the main process so the renderer never hits CORS", async () => {
+  const calls = [];
+  const net = {
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          tag_name: "v9.9.9",
+          name: "Netcatty v9.9.9",
+          body: "notes",
+          html_url: "http://update.local/netcatty/",
+          published_at: "2026-01-01T00:00:00Z",
+          assets: [],
+        }),
+      };
+    },
+  };
+
+  await withUpdateSource("http://update.local/netcatty/", async () => {
+    await withMocks({ net }, async ({ bridge }) => {
+      const ipcMain = makeIpcMain();
+      bridge.registerHandlers(ipcMain);
+
+      const result = await ipcMain.invoke("netcatty:update:fetchReleaseMetadata", {
+        baseUrl: "http://update.local/netcatty",
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.status, 200);
+      assert.equal(result.data.tag_name, "v9.9.9");
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].url, "http://update.local/netcatty/latest.json");
+      assert.equal(calls[0].options.headers.Accept, "application/json");
+
+      // No baseUrl means "the effective source", not "any URL".
+      const implicit = await ipcMain.invoke("netcatty:update:fetchReleaseMetadata", {});
+      assert.equal(implicit.ok, true);
+      assert.equal(calls.length, 2);
+    });
+  });
+});
+
+test("the metadata handler refuses a source it was not configured with", async () => {
+  let fetchCalls = 0;
+  const net = { fetch: async () => { fetchCalls += 1; throw new Error("must not be called"); } };
+
+  await withUpdateSource("http://update.local/netcatty", async () => {
+    await withMocks({ net }, async ({ bridge }) => {
+      const ipcMain = makeIpcMain();
+      bridge.registerHandlers(ipcMain);
+
+      // The renderer must not be able to aim the main process at arbitrary URLs.
+      const refused = await ipcMain.invoke("netcatty:update:fetchReleaseMetadata", {
+        baseUrl: "http://127.0.0.1:8080/admin",
+      });
+      assert.deepEqual(refused, { ok: false, error: "unsupportedUpdateSource" });
+      assert.equal(fetchCalls, 0);
+    });
+  });
+});
+
+test("the metadata handler stays offline while no source is configured", async () => {
+  let fetchCalls = 0;
+  const net = { fetch: async () => { fetchCalls += 1; throw new Error("must not be called"); } };
+
+  await withUpdateSource(null, async () => {
+    await withMocks({ net }, async ({ bridge }) => {
+      const ipcMain = makeIpcMain();
+      bridge.registerHandlers(ipcMain);
+
+      const result = await ipcMain.invoke("netcatty:update:fetchReleaseMetadata", {});
+      assert.deepEqual(result, { ok: false, error: "unconfigured" });
+      assert.equal(fetchCalls, 0);
+    });
+  });
+});
+
+test("a failing feed surfaces an error instead of throwing", async () => {
+  const responders = {
+    missing: { ok: false, status: 404, text: async () => "not found" },
+    broken: { ok: true, status: 200, text: async () => "<html>not json</html>" },
+    noTag: { ok: true, status: 200, text: async () => JSON.stringify({ name: "no tag" }) },
+    offline: null,
+  };
+  const net = {
+    fetch: async (url) => {
+      const key = /missing/.test(url) ? "missing" : /broken/.test(url) ? "broken" : /noTag/.test(url) ? "noTag" : "offline";
+      const response = responders[key];
+      if (!response) throw new Error("getaddrinfo ENOTFOUND");
+      return response;
+    },
+  };
+
+  for (const [base, pattern] of [
+    ["http://update.local/missing", /404/],
+    ["http://update.local/broken", /not valid JSON/],
+    ["http://update.local/noTag", /missing tag_name/],
+    ["http://update.local/offline", /ENOTFOUND/],
+  ]) {
+    await withUpdateSource(base, async () => {
+      await withMocks({ net }, async ({ bridge }) => {
+        const ipcMain = makeIpcMain();
+        bridge.registerHandlers(ipcMain);
+
+        const result = await ipcMain.invoke("netcatty:update:fetchReleaseMetadata", {});
+        assert.equal(result.ok, false, `${base} must fail`);
+        assert.match(result.error, pattern);
+      });
+    });
   }
 });

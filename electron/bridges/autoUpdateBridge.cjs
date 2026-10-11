@@ -222,6 +222,75 @@ function applySelfHostedFeedChange(updater) {
 }
 
 /**
+ * Release manifest (latest.json) reading.
+ *
+ * The renderer drives the update banner from this file, but fetching it from the
+ * renderer is unreliable: feed hosts commonly answer without an
+ * Access-Control-Allow-Origin header (the factory GitHub release-asset URL does
+ * not), so the request is blocked by CORS/opaque-response rules even though the
+ * file itself is fine. The main process has no such restriction, so it performs
+ * the request and hands back only the parsed payload.
+ */
+const RELEASE_METADATA_TIMEOUT_MS = 15000;
+const RELEASE_METADATA_MAX_BYTES = 2 * 1024 * 1024;
+
+/** fetch() implementation available in the main process. */
+function resolveMetadataFetch() {
+  const net = _deps?.electronModule?.net;
+  if (net && typeof net.fetch === "function") return net.fetch.bind(net);
+  if (typeof fetch === "function") return fetch;
+  return null;
+}
+
+function describeMetadataError(err) {
+  if (err?.name === "AbortError" || err?.name === "TimeoutError") {
+    return `Release metadata request timed out after ${RELEASE_METADATA_TIMEOUT_MS}ms`;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * GET `<baseUrl>/latest.json` and return { ok, status, data } — never throws, so
+ * the renderer can keep reporting errors as update-check failures.
+ */
+async function fetchReleaseMetadata(baseUrl) {
+  const doFetch = resolveMetadataFetch();
+  if (!doFetch) return { ok: false, error: "fetchUnavailable" };
+
+  const url = `${baseUrl}/latest.json`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RELEASE_METADATA_TIMEOUT_MS);
+  try {
+    const response = await doFetch(url, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    const status = Number.isSafeInteger(response?.status) ? response.status : 0;
+    if (response?.ok !== true) {
+      return { ok: false, status, error: `Update server returned ${status}` };
+    }
+    const text = await response.text();
+    if (text.length > RELEASE_METADATA_MAX_BYTES) {
+      return { ok: false, status, error: "Release metadata is unexpectedly large" };
+    }
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { ok: false, status, error: "Release metadata is not valid JSON" };
+    }
+    if (!data || typeof data !== "object" || typeof data.tag_name !== "string") {
+      return { ok: false, status, error: "Release metadata is missing tag_name" };
+    }
+    return { ok: true, status, data };
+  } catch (err) {
+    return { ok: false, error: describeMetadataError(err) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Identify the Linux package format written by electron-builder into the
  * packaged resources directory. AppImage does not have this marker; its
  * runtime exposes the APPIMAGE environment variable instead.
@@ -913,6 +982,19 @@ function registerHandlers(ipcMain) {
 
   ipcMain.handle("netcatty:update:getUpdateSource", () => describeUpdateSource());
 
+  // The renderer cannot read the manifest itself (CORS), so the main process
+  // fetches it. Only the effective source is reachable from here: the renderer
+  // must not be able to point the main process at arbitrary URLs.
+  ipcMain.handle("netcatty:update:fetchReleaseMetadata", async (_event, payload) => {
+    const effective = readSelfHostedUpdateUrl();
+    if (!effective) return { ok: false, error: "unconfigured" };
+    const requested = normalizeBaseUrl(payload?.baseUrl);
+    if (requested && requested !== effective) {
+      return { ok: false, error: "unsupportedUpdateSource" };
+    }
+    return fetchReleaseMetadata(effective);
+  });
+
   ipcMain.handle("netcatty:update:setUpdateSource", (_event, payload) => {
     const validation = validateUpdateSourceInput(payload);
     if (!validation.ok) {
@@ -941,6 +1023,7 @@ module.exports = {
   // exported for tests: the retry wrapper and its error summariser
   checkForUpdatesWithRetry,
   describeUpdateError,
+  fetchReleaseMetadata,
   init,
   registerHandlers,
   isAutoUpdateSupported,

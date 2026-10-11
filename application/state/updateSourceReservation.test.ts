@@ -152,3 +152,77 @@ test('an unreachable self-hosted source reports an error instead of throwing', a
     },
   );
 });
+
+/**
+ * Install (or clear) a fake `window.netcatty` for one test body so the bridge
+ * path of the manifest reader can be exercised in Node.
+ */
+async function withBridge(
+  bridge: { fetchUpdateMetadata?: (input: { baseUrl?: string }) => Promise<unknown> } | null,
+  fn: () => Promise<void>,
+): Promise<void> {
+  const scope = globalThis as unknown as { window?: unknown };
+  const previous = scope.window;
+  scope.window = bridge ? { netcatty: bridge } : undefined;
+  try {
+    await fn();
+  } finally {
+    scope.window = previous;
+  }
+}
+
+/**
+ * Feed hosts commonly answer without Access-Control-Allow-Origin (the factory
+ * GitHub release-asset URL does not), so the renderer's own fetch is blocked
+ * even though the manifest is reachable. Main does the request instead.
+ */
+test('the release manifest is read through the main process bridge when available', async () => {
+  const requests: Array<{ baseUrl?: string }> = [];
+
+  await withStubbedFetch(
+    () => {
+      throw new Error('the renderer must not fetch the manifest itself');
+    },
+    async (rendererFetches) => {
+      await withBridge(
+        {
+          fetchUpdateMetadata: async (input) => {
+            requests.push(input);
+            return { ok: true, status: 200, data: SELF_HOSTED_METADATA };
+          },
+        },
+        async () => {
+          const result = await checkForUpdatesAgainst('http://update.local/netcatty', '1.0.0');
+
+          assert.deepEqual(requests, [{ baseUrl: 'http://update.local/netcatty' }]);
+          assert.deepEqual(rendererFetches, [], 'no CORS-prone renderer fetch');
+          assert.equal(result.hasUpdate, true);
+          assert.equal(result.latestRelease?.version, '9.9.9');
+          assert.equal(result.latestRelease?.name, 'Netcatty v9.9.9');
+        },
+      );
+    },
+  );
+});
+
+test('a bridge failure is reported as an update-check error', async () => {
+  await withBridge(
+    { fetchUpdateMetadata: async () => ({ ok: false, status: 404, error: 'Update server returned 404' }) },
+    async () => {
+      const result = await checkForUpdatesAgainst('http://update.local/netcatty', '1.0.0');
+      assert.equal(result.hasUpdate, false);
+      assert.equal(result.latestRelease, null);
+      assert.match(result.error ?? '', /404/);
+    },
+  );
+});
+
+test('falls back to the renderer fetch when the bridge exposes no metadata reader', async () => {
+  await withStubbedFetch(() => okResponse(SELF_HOSTED_METADATA), async (calls) => {
+    await withBridge({}, async () => {
+      const result = await checkForUpdatesAgainst('http://update.local/netcatty', '1.0.0');
+      assert.deepEqual(calls, ['http://update.local/netcatty/latest.json']);
+      assert.equal(result.hasUpdate, true);
+    });
+  });
+});

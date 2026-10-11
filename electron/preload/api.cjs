@@ -1819,6 +1819,9 @@ function createPreloadApi(ctx) {
   // Self-hosted update source configured in Settings > System (persisted in
   // userData; takes effect immediately, no restart).
   getUpdateSource: () => ipcRenderer.invoke("netcatty:update:getUpdateSource"),
+  // The release manifest is read in the main process: feed hosts commonly
+  // refuse the renderer's cross-origin fetch (no Access-Control-Allow-Origin).
+  fetchUpdateMetadata: (input) => ipcRenderer.invoke("netcatty:update:fetchReleaseMetadata", input),
   setUpdateSource: (config) => ipcRenderer.invoke("netcatty:update:setUpdateSource", config),
   onUpdateSourceChanged: (cb) => {
     updateSourceChangedListeners.add(cb);
