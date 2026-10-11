@@ -75,6 +75,15 @@ test('estimated usage counts the assistant answer, not just the prompt', () => {
   assert.equal(resolveEstimatedUsageFallback('12345678', true, 'ok'), null);
 });
 
+test('estimated usage stops undercounting Chinese prompts', () => {
+  const usage = resolveEstimatedUsageFallback('你好世界你好世界', false, '好的');
+  assert.ok(usage, 'usage fallback expected');
+  // One token per CJK character, not ceil(chars / 4).
+  assert.equal(usage.inputTokens, 8);
+  assert.equal(usage.outputTokens, 2);
+  assert.equal(usage.totalTokens, 10);
+});
+
 test('plan updates replace the same activity across tool message boundaries', async () => {
   let onEvent: ((event: Record<string, unknown>) => void) | undefined;
   let onDone: (() => void) | undefined;

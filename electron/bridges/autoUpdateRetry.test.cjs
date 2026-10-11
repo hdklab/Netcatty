@@ -43,4 +43,21 @@ test("errors carry the HTTP status or error code when the updater provides one",
 
   assert.equal(describeUpdateError(new Error("plain")), "plain");
   assert.equal(describeUpdateError(undefined), "Unknown update check error");
+
+  // electron-updater's real "release not published yet" shape: no statusCode,
+  // and the raw 404 plus a stack trace stuffed into the message.
+  const channelError = new Error(
+    'Cannot find channel "latest-linux.yml" update info: HttpError: 404 Not Found\n' +
+      "    at GenericProvider.getLatestVersion (/app/node_modules/electron-updater/out/providers/GenericProvider.js:26:23)",
+  );
+  channelError.code = "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND";
+  const described = describeUpdateError(channelError);
+  assert.match(described, /latest-\*\.yml/, "says which metadata is missing");
+  assert.match(described, /HTTP 404/, "keeps the status even though the error carries none");
+  assert.ok(!described.includes("at GenericProvider"), "the stack never reaches the UI");
+
+  // Multi-line messages are reduced to their first line whatever the code.
+  const multiline = new Error("boom\n    at somewhere.js:1:1");
+  multiline.code = "ERR_SOMETHING";
+  assert.equal(describeUpdateError(multiline), "boom (ERR_SOMETHING)");
 });

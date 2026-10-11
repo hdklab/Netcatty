@@ -84,7 +84,13 @@ function selfHostedConfigPath() {
   return path.join(app.getPath("userData"), "self-hosted-update.json");
 }
 
-/** Configuration written from Settings, or {} when unreadable/unset. */
+/**
+ * Configuration written from Settings, or {} when unreadable/unset.
+ *
+ * `stored: true` means the operator saved the form — even if they cleared both
+ * fields. That is an explicit decision and has to outrank the shipped factory
+ * feed, otherwise "Clear" silently puts the cloud source back.
+ */
 function readStoredSelfHostedConfig() {
   const file = selfHostedConfigPath();
   if (!file) return {};
@@ -93,6 +99,7 @@ function readStoredSelfHostedConfig() {
     const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
     if (!parsed || typeof parsed !== "object") return {};
     return {
+      stored: true,
       updateServerUrl: normalizeBaseUrl(parsed.updateServerUrl) ?? null,
       releasesPageUrl: normalizeBaseUrl(parsed.releasesPageUrl) ?? null,
     };
@@ -152,8 +159,10 @@ function validateUpdateSourceInput(payload) {
 
 /**
  * Effective update source: NETCATTY_UPDATE_SERVER_URL wins over the in-app
- * configuration, which wins over the shipped factory defaults. `null` means
- * "not configured" — the cloud source is cancelled, never used as a fallback.
+ * configuration, which wins over the shipped factory defaults. A saved
+ * configuration always beats the factory defaults — saving it with an empty feed
+ * URL means "updates off", and `null` then means "not configured", so the cloud
+ * source is cancelled and never used as a fallback.
  */
 function resolveUpdateSource() {
   const shipped = readShippedSelfHostedEndpoints();
@@ -163,14 +172,22 @@ function resolveUpdateSource() {
   const shippedPageUrl = normalizeBaseUrl(shipped.releasesPageUrl);
   const storedUpdateUrl = stored.updateServerUrl ?? null;
   const storedPageUrl = stored.releasesPageUrl ?? null;
+  const savedConfig = Boolean(stored.stored);
 
-  const updateServerUrl = fromEnv ?? storedUpdateUrl ?? shippedUpdateUrl ?? null;
+  const updateServerUrl = fromEnv ?? (savedConfig ? storedUpdateUrl : shippedUpdateUrl ?? null);
   const releasesPageUrl = storedPageUrl ?? shippedPageUrl ?? null;
   const source = fromEnv
     ? "env"
-    : (storedUpdateUrl || storedPageUrl ? "config" : (shippedUpdateUrl ? "default" : "none"));
+    : (storedUpdateUrl ? "config" : (savedConfig ? "none" : (shippedUpdateUrl ? "default" : "none")));
 
-  return { updateServerUrl, releasesPageUrl, source, envOverride: Boolean(fromEnv) };
+  return {
+    updateServerUrl,
+    releasesPageUrl,
+    source,
+    envOverride: Boolean(fromEnv),
+    // Explicitly switched off in Settings (as opposed to "never configured").
+    disabled: !fromEnv && savedConfig && !storedUpdateUrl,
+  };
 }
 
 /**
@@ -188,7 +205,8 @@ function isUpdateSourceConfigured() {
 /**
  * Apply a changed feed to the already-resolved updater so a save in Settings
  * takes effect without restarting the app. Clearing the URL leaves the old
- * provider in place on purpose — the source gates keep it inert.
+ * provider in place: the source gates (`isUpdateSourceConfigured()`) are what
+ * keep every check entry point inert once the feed is cleared.
  */
 function applySelfHostedFeedChange(updater) {
   const target = updater ?? _autoUpdater;
@@ -412,14 +430,32 @@ const CHECK_RETRY_DELAYS_MS = [800, 2500];
  * electron-updater's own message ("Fail to fetch") says nothing about whether
  * the feed was unreachable, rate-limited, or not published yet, so surface the
  * HTTP status / error code that came with it.
+ *
+ * The most common self-hosted failure — a release whose `latest*.yml` has not
+ * been published yet — arrives as an ERR_UPDATER_CHANNEL_FILE_NOT_FOUND whose
+ * message embeds the raw 404 *plus a stack trace*, and it carries no
+ * statusCode. Recover the status from the text, say what it means in one line,
+ * and never let the stack reach the UI.
  */
 function describeUpdateError(err) {
   const raw = (err && err.message) || String(err || "Unknown update check error");
+  const firstLine = String(raw).split("\n")[0].trim();
   const status = err && (err.statusCode || err.status);
-  if (status) return `${raw} (HTTP ${status})`;
+  if (status) return `${firstLine} (HTTP ${status})`;
+
   const code = err && err.code;
-  if (typeof code === "string" && code) return `${raw} (${code})`;
-  return raw;
+  // electron-updater's HttpError puts the status in the text ("HttpError: 404
+  // Not Found"), not in a property.
+  const httpFromText = /HTTP[\s:]*(?:Error[\s:]*)?(\d{3})/i.exec(String(raw));
+  if (code === "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND") {
+    const http = httpFromText ? ` (HTTP ${httpFromText[1]})` : "";
+    return (
+      `The update feed is missing its latest-*.yml metadata${http} — ` +
+      `the release may still be publishing. (${code})`
+    );
+  }
+  if (typeof code === "string" && code) return `${firstLine} (${code})`;
+  return firstLine;
 }
 
 /**

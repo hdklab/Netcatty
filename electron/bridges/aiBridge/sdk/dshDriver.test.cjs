@@ -360,6 +360,22 @@ test("a non-JSON line puts the parser into plain-text mode", () => {
   assert.equal(parser.jsonMode, false);
 });
 
+test("plain-text fallback keeps the newline between lines", () => {
+  const deltas = [];
+  const parser = createDshJsonParser({ text: (t) => deltas.push(t) });
+  parser.push("line one\nline two\nline three\n");
+  assert.deepEqual(deltas, ["line one", "\nline two", "\nline three"]);
+
+  // The payload that actually triggers this: stdout whose first line starts with
+  // "{" (so the parser picks json mode) but is not a dsh event stream, so every
+  // line lands in the fallback. The answer must survive verbatim.
+  const jsonish = [];
+  const answer = '{\n  "foo": 1,\n  "bar": 2\n}';
+  const jsonParser = createDshJsonParser({ text: (t) => jsonish.push(t) });
+  for (const line of answer.split("\n")) jsonParser.push(`${line}\n`);
+  assert.equal(jsonish.join(""), answer);
+});
+
 test("maps Netcatty permission modes onto dsh's own sandbox policy", () => {
   assert.equal(resolveDshPermissionMode("observer"), "read-only");
   assert.equal(resolveDshPermissionMode("confirm"), "workspace-write");

@@ -241,6 +241,7 @@ function createDshJsonParser(emitter) {
     textSoFar: "",
     toolNames: new Map(),
     reasoningOpen: false,
+    sawNonJson: false,
   };
 
   const appendText = (next) => {
@@ -348,9 +349,12 @@ function createDshJsonParser(emitter) {
         if (parsed && typeof parsed === "object" && typeof parsed.type === "string") {
           state.jsonMode = true;
         } else {
-          // Not JSON: fall back to forwarding raw text for the whole run.
+          // Not JSON: fall back to forwarding raw text for the whole run. `line`
+          // has already lost its newline (pushLine gets a buffer slice), so every
+          // line after the first has to re-add one or the answer renders glued
+          // together.
           state.jsonMode = false;
-          emitter.text(state.jsonMode === false && state.sawNonJson ? line : line);
+          emitter.text(state.sawNonJson ? `\n${line}` : line);
           state.sawNonJson = true;
           return;
         }

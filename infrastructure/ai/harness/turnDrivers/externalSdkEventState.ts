@@ -16,8 +16,9 @@ export function upsertAgentActivity(
  *
  * The output side matters as much as the input side: counting only the prompt
  * made every turn show "output 0" in the activity view even when the agent had
- * produced a long answer. Both sides go through the shared estimator, which is
- * CJK-aware (length/4 badly undercounts Chinese prompts).
+ * produced a long answer. Both sides go through the shared estimator, which
+ * counts CJK characters as one token each instead of dividing every character by
+ * 4 — a Chinese prompt used to be undercounted roughly 4x.
  */
 export function resolveEstimatedUsageFallback(
   prompt: string,

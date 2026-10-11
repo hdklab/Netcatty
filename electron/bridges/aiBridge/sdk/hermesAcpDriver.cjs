@@ -60,6 +60,8 @@ const HERMES_ACP_REQUEST_TIMEOUT_MS = 30_000;
 const HERMES_ACP_PROMPT_TIMEOUT_MS = 30 * 60_000;
 const HERMES_ACP_SESSION_TIMEOUT_MS = 30_000;
 const HERMES_ACP_TERMINAL_BYTE_LIMIT = 1024 * 1024;
+/** Grace between SIGTERM and SIGKILL for `terminal/create` children at turn end. */
+const HERMES_ACP_TERMINAL_KILL_GRACE_MS = 500;
 
 /** argv for `hermes acp` (the ACP server subcommand). */
 function buildHermesAcpSpawnArgs() {
@@ -94,6 +96,34 @@ function signalProcessTree(child, signal, forceKillImpl) {
     }
   }
   try { child.kill(signal); } catch { /* ignore */ }
+}
+
+/**
+ * Kill and drop every terminal this turn created.
+ *
+ * `terminal/create` spawns the process from Netcatty's main process, so it is a
+ * sibling of the hermes-acp process, not a descendant: killing the agent's tree
+ * does not touch it. The ACP agent is expected to `terminal/release` what it
+ * opens, but a cancelled turn — or an agent that just forgets — would leave a
+ * dev server running for the lifetime of the app, and the per-turn handler
+ * state that could still reach it is gone by then.
+ */
+function releaseTerminals(terminals, { forceKillImpl, graceMs = HERMES_ACP_TERMINAL_KILL_GRACE_MS } = {}) {
+  if (!terminals || typeof terminals.forEach !== "function") return;
+  const pending = [];
+  for (const record of terminals.values()) {
+    if (!record || record.done) continue;
+    pending.push(record);
+    signalProcessTree(record.child, "SIGTERM", forceKillImpl);
+  }
+  terminals.clear();
+  if (pending.length === 0) return;
+  const timer = setTimeout(() => {
+    for (const record of pending) {
+      if (!record.done) signalProcessTree(record.child, "SIGKILL", forceKillImpl);
+    }
+  }, Math.max(0, graceMs));
+  timer.unref?.();
 }
 
 /**
@@ -392,10 +422,14 @@ function createHermesAcpClientHandlers({
       let content = fsx.readFileSync(target, "utf8");
       const line = Number(params?.line);
       const limit = Number(params?.limit);
-      if (Number.isFinite(line) && line > 0) {
+      const hasLine = Number.isFinite(line) && line > 0;
+      const hasLimit = Number.isFinite(limit) && limit > 0;
+      // `line` and `limit` are independent in ACP: `{ path, limit: 100 }` means
+      // "the first 100 lines", not "the whole file".
+      if (hasLine || hasLimit) {
         const lines = content.split("\n");
-        const start = line - 1;
-        const end = Number.isFinite(limit) && limit > 0 ? start + limit : lines.length;
+        const start = hasLine ? line - 1 : 0;
+        const end = hasLimit ? start + limit : lines.length;
         content = lines.slice(start, end).join("\n");
       }
       return { content };
@@ -887,6 +921,9 @@ async function runHermesAcpTurn({
     }
     await closePromise;
     if (signal) signal.removeEventListener("abort", abortHandler);
+    // Terminals this turn opened outlive the agent process; drop them here so a
+    // cancelled turn or a forgotten `terminal/release` cannot leak a server.
+    releaseTerminals(state.clientHandlers?.terminals, { forceKillImpl });
   }
 
   closeReasoning(state, emitter);
@@ -926,6 +963,7 @@ module.exports = {
   hermesAcpToolArgs,
   hermesAcpToolName,
   hermesAcpToolResultText,
+  releaseTerminals,
   runHermesAcpTurn,
   translateHermesAcpUpdate,
 };

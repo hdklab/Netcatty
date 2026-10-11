@@ -16,6 +16,7 @@ const {
   emitHermesAcpUsage,
   handleHermesAcpMessage,
   hermesAcpContentText,
+  releaseTerminals,
   translateHermesAcpUpdate,
 } = require("./hermesAcpDriver.cjs");
 const { getDriver, listBackends } = require("./index.cjs");
@@ -410,6 +411,97 @@ test("client handlers read/write files and drive a terminal lifecycle", async ()
     assert.equal(output.exitStatus.exitCode, 0);
     handlers["terminal/release"]({ terminalId: created.terminalId });
     assert.equal(handlers.terminals.size, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("fs/read_text_file honours line and limit independently", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nc-hermes-acp-lines-"));
+  fs.writeFileSync(
+    path.join(dir, "lines.txt"),
+    ["one", "two", "three", "four", "five"].join("\n"),
+    "utf8",
+  );
+  const handlers = createHermesAcpClientHandlers({ cwd: dir });
+  try {
+    const read = (params) => handlers["fs/read_text_file"]({ path: "lines.txt", ...params }).content;
+    assert.equal(read({}), "one\ntwo\nthree\nfour\nfive");
+    // `limit` without `line` means "the first N lines", not the whole file.
+    assert.equal(read({ limit: 2 }), "one\ntwo");
+    assert.equal(read({ line: 3 }), "three\nfour\nfive");
+    assert.equal(read({ line: 2, limit: 2 }), "two\nthree");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("releaseTerminals SIGTERMs the open children and empties the map", () => {
+  const running = makeFakeChild();
+  const finished = makeFakeChild();
+  const terminals = new Map([
+    ["t-running", { child: running, done: false }],
+    ["t-done", { child: finished, done: true }],
+  ]);
+
+  releaseTerminals(terminals, { forceKillImpl: forceKill, graceMs: 60_000 });
+
+  assert.deepEqual(running.kills, ["SIGTERM"]);
+  assert.deepEqual(finished.kills, [], "a finished terminal is left alone");
+  assert.equal(terminals.size, 0);
+});
+
+test("a finished turn releases the terminals the agent opened", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nc-hermes-acp-release-"));
+  let terminalChild = null;
+  try {
+    await withFakeSpawn(
+      ({ args }) => {
+        if (args.includes("acp")) {
+          return makeAcpChild({
+            onPrompt: (child) => {
+              // The agent asks the client to run something long-lived and never
+              // releases it — the turn end has to clean it up.
+              emitLine(child, {
+                jsonrpc: "2.0",
+                id: 77,
+                method: "terminal/create",
+                params: { command: "sleep", args: ["600"], cwd: dir },
+              });
+              emitLine(child, {
+                jsonrpc: "2.0",
+                method: "session/update",
+                params: {
+                  sessionId: "acp-sess-1",
+                  update: { sessionUpdate: "agent_message_chunk", content: { text: "started", type: "text" } },
+                },
+              });
+            },
+          });
+        }
+        terminalChild = makeFakeChild();
+        return terminalChild;
+      },
+      async ({ driver, calls }) => {
+        const emitter = makeEmitter();
+        const result = await driver.runHermesAcpTurn({
+          prompt: "start the dev server",
+          binPath: "/usr/bin/hermes",
+          env: { PATH: "/usr/bin" },
+          emitter,
+          forceKillImpl: forceKill,
+        });
+
+        assert.equal(result.runtime, "acp");
+        assert.equal(calls.length, 2, "the agent process and the terminal child were spawned");
+        assert.ok(terminalChild, "terminal/create spawned a child");
+        assert.ok(
+          terminalChild.kills.includes("SIGTERM"),
+          "the terminal child is signalled when the turn ends",
+        );
+        assert.ok(emitter.calls.some((c) => c[0] === "text" && c[1] === "started"));
+      },
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

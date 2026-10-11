@@ -45,7 +45,12 @@ function configure(deps) {
   _deps = deps || null;
 }
 
-function resolveTempDir() {
+/**
+ * Directory for the lftp script and the staged drop files. A per-call override
+ * wins (tests and the IPC handler pass one), then the configured app temp dir.
+ */
+function resolveTempDir(override) {
+  if (typeof override === 'string' && override.trim()) return override;
   if (_deps?.tempDir) return _deps.tempDir;
   return os.tmpdir();
 }
@@ -159,7 +164,7 @@ async function uploadFiles(options) {
     return { ok: false, code: 'invalid-request', error: error.message };
   }
 
-  const dir = resolveTempDir();
+  const dir = resolveTempDir(options.tempDir);
   fs.mkdirSync(dir, { recursive: true });
   const scriptPath = path.join(dir, `nc-lftp-${process.pid}-${Date.now()}.script`);
   fs.writeFileSync(scriptPath, script, { mode: 0o600 });
@@ -263,6 +268,10 @@ function materializeDropFile(file, stagingDir) {
 
   const safeName = path.basename(String(file?.name || 'drop.bin')).replace(/[^\w.-]/g, '_') || 'drop.bin';
   const stagedPath = path.join(stagingDir, `nc-ftp-${process.pid}-${Date.now()}-${safeName}`);
+  // The staging directory is created lazily by whoever gets here first: the OS
+  // clears the temp dir (and it does not exist at all on a fresh install), so
+  // writing straight into it would fail with ENOENT and lose the drop.
+  fs.mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(stagedPath, buffer, { mode: 0o600 });
   return { localPath: stagedPath, cleanup: true };
 }

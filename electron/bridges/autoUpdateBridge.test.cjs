@@ -1190,6 +1190,61 @@ test("saving the update source persists it and applies the feed without a restar
   }
 });
 
+test("clearing the update source keeps updates off, shipped factory default or not", async () => {
+  const userDataPath = fs.mkdtempSync(path.join(tempDirBridge.getTempDir(), "nc-update-clear-"));
+  try {
+    await withMocks({ userDataPath }, async ({ bridge }) => {
+      const ipcMain = makeIpcMain();
+      bridge.registerHandlers(ipcMain);
+
+      const shipped = require("../../infrastructure/config/selfHostedEndpoints.cjs");
+      assert.ok(shipped.updateServerUrl, "this build ships the GitHub feed as its factory default");
+
+      // Nothing saved yet: the factory default is what feeds the updater.
+      const factory = bridge.resolveUpdateSource();
+      assert.equal(factory.updateServerUrl, shipped.updateServerUrl);
+      assert.equal(factory.source, "default");
+      assert.equal(bridge.isUpdateSourceConfigured(), true);
+
+      await ipcMain.invoke("netcatty:update:setUpdateSource", {
+        updateServerUrl: "https://updates.example/nc",
+        releasesPageUrl: "",
+      });
+      assert.equal(bridge.readSelfHostedUpdateUrl(), "https://updates.example/nc");
+
+      // Clear === saving the form with an empty feed URL. That is an explicit
+      // "off" and must not fall back to the shipped cloud feed the UI says it
+      // never falls back to.
+      const cleared = await ipcMain.invoke("netcatty:update:setUpdateSource", {
+        updateServerUrl: "",
+        releasesPageUrl: "",
+      });
+      assert.equal(cleared.success, true);
+      assert.equal(cleared.updateServerUrl, null);
+      assert.equal(cleared.source, "none");
+      assert.equal(cleared.disabled, true);
+      assert.equal(bridge.isUpdateSourceConfigured(), false, "no check may run after Clear");
+      assert.equal(bridge.resolveUpdateSource().updateServerUrl, null);
+
+      // The decision lives in the file, so it survives a restart.
+      const stored = JSON.parse(
+        fs.readFileSync(path.join(userDataPath, "self-hosted-update.json"), "utf8"),
+      );
+      assert.equal(stored.updateServerUrl, null);
+
+      // Saving a URL again turns updates back on.
+      await ipcMain.invoke("netcatty:update:setUpdateSource", {
+        updateServerUrl: "https://updates.example/v2",
+        releasesPageUrl: "",
+      });
+      assert.equal(bridge.isUpdateSourceConfigured(), true);
+      assert.equal(bridge.resolveUpdateSource().source, "config");
+    });
+  } finally {
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
+});
+
 test("NETCATTY_UPDATE_SERVER_URL overrides the saved update source", async () => {
   const userDataPath = fs.mkdtempSync(path.join(tempDirBridge.getTempDir(), "nc-update-source-"));
   try {

@@ -116,6 +116,10 @@ test('uploadFiles runs lftp with only the script path in argv, and cleans up', a
   const argv = fs.readFileSync(path.join(dir, 'argv.txt'), 'utf8').trim().split('\n');
   assert.deepEqual(argv, ['-f', argv[1]]);
   assert.ok(argv[1].endsWith('.script'), 'lftp receives a script file');
+  assert.ok(
+    argv[1].startsWith(dir + path.sep),
+    'the script is written into the caller-supplied temp dir',
+  );
   assert.ok(!argv.join(' ').includes('topsecret'), 'the password never reaches argv');
 
   const seen = fs.readFileSync(path.join(dir, 'received-script.txt'), 'utf8');
@@ -174,6 +178,59 @@ test('uploadFiles times out a hung lftp and still removes the script', async () 
   });
   const leftovers = fs.readdirSync(dir).filter((name) => name.endsWith('.script'));
   assert.deepEqual(leftovers, []);
+});
+
+test('materializeDropFile creates the staging directory it writes into', () => {
+  const dir = tempDir();
+  const staging = path.join(dir, 'netcatty-ftp-staging');
+  assert.equal(fs.existsSync(staging), false, 'the staging dir starts out absent');
+
+  const resolved = ftpBridge._internal.materializeDropFile(
+    { name: 'fw.bin', remoteName: 'fw.bin', data: new TextEncoder().encode('firmware').buffer },
+    staging,
+  );
+
+  assert.equal(resolved.cleanup, true);
+  assert.ok(resolved.localPath.startsWith(staging + path.sep));
+  assert.equal(fs.readFileSync(resolved.localPath, 'utf8'), 'firmware');
+});
+
+test('netcatty:ftp:upload stages a data-only dropped file before handing it to lftp', async () => {
+  const dir = tempDir();
+  const lftp = writeFakeLftp(dir, { exitCode: 0 });
+  const handlers = {};
+  ftpBridge.configure({ tempDir: dir });
+  ftpBridge.registerHandlers({ handle: (channel, fn) => { handlers[channel] = fn; } });
+
+  try {
+    await withLftp(lftp, async () => {
+      const result = await handlers['netcatty:ftp:upload']({}, {
+        host: '10.0.0.9',
+        port: 21,
+        user: 'root',
+        password: 'topsecret',
+        remoteDir: '/srv',
+        files: [
+          { name: 'fw.bin', remoteName: 'fw.bin', data: new TextEncoder().encode('firmware').buffer },
+        ],
+      });
+      assert.deepEqual(result, { ok: true });
+    });
+  } finally {
+    ftpBridge.configure(null);
+  }
+
+  const script = fs.readFileSync(path.join(dir, 'received-script.txt'), 'utf8');
+  assert.match(
+    script,
+    /^put -o "fw\.bin" ".*netcatty-ftp-staging[\\/]nc-ftp-\d+-\d+-fw\.bin"$/m,
+    'the staged copy is uploaded under the dropped name',
+  );
+  assert.deepEqual(
+    fs.readdirSync(path.join(dir, 'netcatty-ftp-staging')),
+    [],
+    'the staged copy is removed after the transfer, the directory stays',
+  );
 });
 
 test('getCapabilities reports whether an lftp is usable, and redact strips credential pairs', async () => {

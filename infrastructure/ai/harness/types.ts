@@ -110,7 +110,13 @@ export interface ApprovalResolvedEvent extends AgentEventBase {
   persistedGrantId?: string;
 }
 
-export type TokenEstimatorKind = 'chars-div-4' | 'openai-heuristic' | 'anthropic-heuristic' | 'google-heuristic';
+export type TokenEstimatorKind =
+  | 'cjk-aware'
+  // Legacy kind: kept for traces persisted before the CJK-aware default.
+  | 'chars-div-4'
+  | 'openai-heuristic'
+  | 'anthropic-heuristic'
+  | 'google-heuristic';
 
 export interface CompactionTrace {
   trigger: ContextPrepareTrigger;
