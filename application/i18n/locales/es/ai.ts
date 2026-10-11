@@ -503,6 +503,7 @@ export const esAiMessages: Messages = {
   'ai.chat.noAgentHint': 'Todavía no hay ningún agente externo habilitado. Instala dsh, Hermes, Codex u otro CLI y actívalo más abajo.',
   'ai.sidebar.collapse': 'Contraer panel lateral',
   'ai.sidebar.expand': 'Expandir panel lateral',
+  'ai.sidebar.resizeWidth': 'Arrastra para ajustar el ancho del panel de IA',
   'ai.sidebar.close': 'Ocultar panel de IA',
   'ai.sidebar.scopeLabel': 'Netcatty (sin terminal)',
   'ai.chat.permObserver': 'Observador',

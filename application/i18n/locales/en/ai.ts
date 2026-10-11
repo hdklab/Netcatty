@@ -512,6 +512,7 @@ export const enAiMessages: Messages = {
   'ai.chat.noAgentHint': 'No external agent is enabled yet. Install dsh, Hermes, Codex or another CLI, then enable it below.',
   'ai.sidebar.collapse': 'Collapse side panel',
   'ai.sidebar.expand': 'Expand side panel',
+  'ai.sidebar.resizeWidth': 'Drag to resize the AI panel width',
   'ai.sidebar.close': 'Hide AI side panel',
   'ai.sidebar.scopeLabel': 'Netcatty (no terminal)',
   'ai.chat.permObserver': 'Observer',

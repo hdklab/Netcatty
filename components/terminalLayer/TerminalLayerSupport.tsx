@@ -14,13 +14,21 @@ import {
   applySessionPresentation,
   usePresentedSession,
 } from '../../application/state/sessionPresentationStore';
-import { useTerminalLayoutSuppressActive } from '../../application/state/terminalLayoutSuppressStore';
+import { useTerminalLayoutSuppressActive, terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
 import type { TerminalSessionExitEvent } from '../../application/state/resolveTerminalSessionExitIntent';
 import { createTerminalSelectionAttachment } from '../../application/state/terminalSelectionAttachment';
 import { getTopTabInsertionTarget, isPointInsideRect, WORKSPACE_SESSION_DRAG_TYPE } from '../../application/state/terminalDragData';
 import { useAIState } from '../../application/state/useAIState';
 import { useAISessionsStore } from '../../application/state/aiSessionsStore';
 import { useStoredBoolean } from '../../application/state/useStoredBoolean';
+import { useStoredNumber } from '../../application/state/useStoredNumber';
+import {
+  AI_SIDEBAR_DEFAULT_WIDTH,
+  AI_SIDEBAR_MAX_VIEWPORT_RATIO,
+  AI_SIDEBAR_MAX_WIDTH,
+  AI_SIDEBAR_MIN_WIDTH,
+  clampAiSidebarWidth,
+} from '../../application/state/aiSidebarWidth';
 import { isSavedVaultHost } from '../../domain/ephemeralHosts';
 import {
   buildAITerminalSessionInfo,
@@ -38,8 +46,9 @@ import {
 } from '../../domain/terminalHibernate';
 import { KeyBinding, TerminalSettings } from '../../domain/models';
 import type { TerminalCwdChangeMeta } from '../terminal/sftpCwd';
-import { STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION } from '../../infrastructure/config/storageKeys';
+import { STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION, STORAGE_KEY_AI_SIDEBAR_WIDTH } from '../../infrastructure/config/storageKeys';
 import { cn } from '../../lib/utils';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 import { LazyLoadBoundary } from '../ui/lazy-load-boundary';
 import type { DropEntry } from '../../lib/sftpFileUtils';
 import type { GroupConfig, Host, Identity, KnownHost, ProxyProfile, SSHKey, Snippet, TerminalSession, VaultNote, Workspace } from '../../types';
@@ -759,10 +768,76 @@ const AiGlobalSidebarInner: React.FC<AiGlobalSidebarProps> = ({
   const { t } = useI18n();
   const { open, collapsed } = useAiSidebarState();
   const [hostEl, setHostEl] = useState<HTMLElement | null>(null);
+  const [sidebarWidth, setSidebarWidth, persistSidebarWidth] = useStoredNumber(
+    STORAGE_KEY_AI_SIDEBAR_WIDTH,
+    AI_SIDEBAR_DEFAULT_WIDTH,
+    { min: AI_SIDEBAR_MIN_WIDTH, max: AI_SIDEBAR_MAX_WIDTH },
+  );
+  const [resizePreviewWidth, setResizePreviewWidth] = useState<number | null>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     setHostEl(document.getElementById(AI_SIDEBAR_HOST_ID));
   }, []);
+
+  useLayoutEffect(() => () => {
+    resizeCleanupRef.current?.();
+  }, []);
+
+  const displayWidth = resizePreviewWidth ?? sidebarWidth;
+
+  // The panel is docked right, so dragging its left edge leftwards grows it.
+  // Terminal layout updates stay suppressed during the drag (as the side panel
+  // and host tree do) so xterm does not re-fit on every frame.
+  const handleResizeStart = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeCleanupRef.current?.();
+    terminalLayoutSuppressStore.begin();
+    const startX = event.clientX;
+    const startWidth = shellRef.current?.getBoundingClientRect().width ?? sidebarWidth;
+    let lastWidth = startWidth;
+    let rafId: number | null = null;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      lastWidth = clampAiSidebarWidth(startWidth + (startX - moveEvent.clientX), window.innerWidth);
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        setResizePreviewWidth(lastWidth);
+      });
+    };
+    let cleanedUp = false;
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = null;
+      terminalLayoutSuppressStore.end();
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', finish);
+      window.removeEventListener('blur', finish);
+      if (resizeCleanupRef.current === cleanup) resizeCleanupRef.current = null;
+    };
+    const finish = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      const next = clampAiSidebarWidth(lastWidth, window.innerWidth);
+      setResizePreviewWidth(null);
+      if (next !== startWidth) {
+        setSidebarWidth(next);
+        persistSidebarWidth(next);
+      }
+      cleanup();
+    };
+    resizeCleanupRef.current = cleanup;
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', finish);
+    window.addEventListener('blur', finish);
+  }, [persistSidebarWidth, setSidebarWidth, sidebarWidth]);
 
   const context = useMemo(() => {
     if (activeTabId) {
@@ -832,7 +907,34 @@ const AiGlobalSidebarInner: React.FC<AiGlobalSidebarProps> = ({
               <X size={14} />
             </button>
           </div>
-          <div className="h-full min-h-0 w-[380px] max-w-[70vw] border-l border-border/60 bg-background">
+          <div
+            ref={shellRef}
+            className="relative h-full min-h-0 border-l border-border/60 bg-background"
+            style={{
+              width: displayWidth,
+              maxWidth: `${Math.round(AI_SIDEBAR_MAX_VIEWPORT_RATIO * 100)}vw`,
+            }}
+            data-section="ai-sidebar-panel"
+          >
+            {/* A short hover delay instead of a native title bubble, and Radix
+                hides it on pointerdown so nothing floats over the drag. */}
+            <TooltipProvider delayDuration={300} skipDelayDuration={100}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label={t('ai.sidebar.resizeWidth')}
+                    className="group absolute top-0 left-[-5px] z-30 h-full w-2.5 cursor-ew-resize"
+                    data-section="ai-sidebar-resizer"
+                    onMouseDown={handleResizeStart}
+                  >
+                    <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-primary/60 group-active:bg-primary" />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="left">{t('ai.sidebar.resizeWidth')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <AIChatPanelInstance
               context={context}
               panelKey="ai-global-sidebar"

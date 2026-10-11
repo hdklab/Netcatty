@@ -194,6 +194,8 @@ export const STORAGE_KEY_AI_EXTERNAL_AGENTS = 'netcatty_ai_external_agents_v1';
 export const STORAGE_KEY_AI_DEFAULT_AGENT = 'netcatty_ai_default_agent_v1';
 /** Global AI side panel: visibility + collapsed rail state. */
 export const STORAGE_KEY_AI_SIDEBAR = 'netcatty_ai_sidebar_v1';
+/** Global AI side panel chat-column width in px (drag-resizable). */
+export const STORAGE_KEY_AI_SIDEBAR_WIDTH = 'netcatty_ai_sidebar_width';
 export const STORAGE_KEY_AI_COMMAND_BLOCKLIST = 'netcatty_ai_command_blocklist_v1';
 export const STORAGE_KEY_AI_COMMAND_TIMEOUT = 'netcatty_ai_command_timeout_v1';
 export const STORAGE_KEY_AI_RESPONSE_IDLE_TIMEOUT = 'netcatty_ai_response_idle_timeout_v1';

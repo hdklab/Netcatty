@@ -459,6 +459,7 @@ export const ruAiMessages: Messages = {
   'ai.chat.noAgentHint': 'Внешний агент ещё не включён. Установите dsh, Hermes, Codex или другой CLI и включите его ниже.',
   'ai.sidebar.collapse': 'Свернуть боковую панель',
   'ai.sidebar.expand': 'Развернуть боковую панель',
+  'ai.sidebar.resizeWidth': 'Перетащите, чтобы изменить ширину панели ИИ',
   'ai.sidebar.close': 'Скрыть панель ИИ',
   'ai.sidebar.scopeLabel': 'Netcatty (без терминала)',
   'ai.chat.permObserver': 'Наблюдатель',

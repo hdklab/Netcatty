@@ -512,6 +512,7 @@ export const zhCNAiMessages: Messages = {
   'ai.chat.noAgentHint': '还没有启用任何外部 Agent。装好 dsh、Hermes、Codex 等 CLI 后，在下方「Agent 设置」里启用它。',
   'ai.sidebar.collapse': '收起侧边栏',
   'ai.sidebar.expand': '展开侧边栏',
+  'ai.sidebar.resizeWidth': '拖拽调整 AI 面板宽度',
   'ai.sidebar.close': '隐藏 AI 侧边栏',
   'ai.sidebar.scopeLabel': 'Netcatty（未绑定终端）',
   'ai.chat.permObserver': '观察',
