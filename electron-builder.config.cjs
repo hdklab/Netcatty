@@ -325,6 +325,12 @@ module.exports = {
         icon: 'icons',
         target: ['AppImage', 'deb', 'rpm', 'pacman'],
         category: 'Development',
+        // Electron 用 package.json 的 desktopName（去掉 .desktop）当 Wayland app_id / X11 WM_CLASS，
+        // 而 electron-builder 默认把 StartupWMClass 写成 productName（这里是 Netcatty，大写 N）。
+        // 两者大小写不一致时，桌面环境的任务栏/启动器可能认不出运行中的窗口属于哪个启动项。
+        // desktopName 已在 package.json 里设成 netcatty.desktop；syncDesktopName 让 .desktop 文件名
+        // 也取它（netcatty.desktop），于是 app_id = 文件名 = StartupWMClass = netcatty，三者一致。
+        syncDesktopName: true,
         extraResources: [...moshExtraResources('linux'), ...etExtraResources('linux')]
     },
     deb: {

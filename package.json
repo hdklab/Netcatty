@@ -1,5 +1,6 @@
 {
   "name": "netcatty",
+  "desktopName": "netcatty.desktop",
   "description": "Netcatty is a modern SSH manager and terminal app with host grouping, SFTP, keychain, port forwarding, and a rich UI.",
   "homepage": "https://github.com/hdklab/Netcatty",
   "private": true,
