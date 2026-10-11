@@ -826,6 +826,17 @@ jobs:
       - name: List artifacts
         run: ls -la artifacts/
 
+      - name: Guard against an asset-less release
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=$(find artifacts -maxdepth 2 -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.pacman' -o -name '*.exe' -o -name '*.dmg' -o -name '*.zip' \) | wc -l)
+          echo "installer files found: ${count}"
+          if [ "${count}" -eq 0 ]; then
+            echo "::error::no installer artifacts were downloaded — aborting instead of creating an empty Release"
+            exit 1
+          fi
+
       - name: Verify update metadata files
         run: |
           missing=0
@@ -849,14 +860,24 @@ jobs:
             echo "After recovery:"
             ls -la artifacts/*.yml
           fi
-          # Final check — fail if any update yml is still missing
+          # Final check. A platform that did not build in this run has no yml to
+          # publish (a fork without Apple credentials has no macOS leg), so a
+          # missing per-platform file is only a warning. What must never happen is
+          # publishing a Release with no update metadata at all.
+          present=0
           for f in latest-mac.yml latest.yml latest-linux.yml latest-linux-arm64.yml; do
-            if [ ! -f "artifacts/$f" ]; then
-              echo "::error::$f is still missing after recovery attempt"
-              exit 1
+            if [ -f "artifacts/$f" ]; then
+              present=$((present + 1))
+            else
+              echo "::warning::$f absent (platform not built in this run) — skipping it"
             fi
           done
-          echo "All update metadata files present."
+          if [ "$present" = "0" ]; then
+            echo "::error::no update metadata (latest*.yml) at all — refusing to publish a Release"
+            exit 1
+          fi
+          echo "Update metadata files present: ${present}/4."
+          ls -la artifacts/*.yml || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
