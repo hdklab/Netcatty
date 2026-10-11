@@ -207,22 +207,195 @@ async function prepareDshModelPatch({ model, binPath, env } = {}) {
   return { patchPath: file, profile };
 }
 
-function runDshTurn({ prompt, cwd, env, binPath, emitter, signal, patchPath, profile }) {
+/**
+ * `dsh --profile headless --json` prints one JSON object per line describing the
+ * run: session, turn/step status, thinking, tool_call, tool_result, text, usage
+ * and a final message. Parsing it is what lets the sidebar show the agent's work
+ * (tool calls and their results) instead of a single wall of text.
+ *
+ * Lines that are not JSON are passed through as plain text, so an older dsh
+ * without --json keeps working unchanged.
+ */
+/**
+ * Netcatty's sidebar permission mode -> dsh's own sandbox/approval preset.
+ * dsh reads this from the environment (`DSH_PERMISSION_MODE`), and without it
+ * an "observer" turn could still let the agent's built-in bash/file tools write
+ * anything — Netcatty can only gate the tools that go through its own RPC.
+ */
+const DSH_PERMISSION_MODE_BY_NETCATTY_MODE = {
+  observer: "read-only",
+  confirm: "workspace-write",
+  auto: "danger-full-access",
+};
+
+function resolveDshPermissionMode(permissionMode) {
+  const key = String(permissionMode || "").trim().toLowerCase();
+  return DSH_PERMISSION_MODE_BY_NETCATTY_MODE[key] || "workspace-write";
+}
+
+function createDshJsonParser(emitter) {
+  const state = {
+    jsonMode: null, // null = undecided, true/false once the first line is seen
+    buffer: "",
+    reasoningText: "",
+    textSoFar: "",
+    toolNames: new Map(),
+    reasoningOpen: false,
+  };
+
+  const appendText = (next) => {
+    if (typeof next !== "string" || !next) return;
+    // `text` events carry the cumulative message for the step; emit only the delta.
+    const delta = next.startsWith(state.textSoFar) ? next.slice(state.textSoFar.length) : next;
+    state.textSoFar = next.startsWith(state.textSoFar) ? next : state.textSoFar + next;
+    if (delta) {
+      if (state.reasoningOpen) {
+        emitter.reasoningEnd?.();
+        state.reasoningOpen = false;
+      }
+      emitter.text(delta);
+    }
+  };
+
+  const handleEvent = (event) => {
+    if (!event || typeof event !== "object") return;
+    switch (event.type) {
+      case "session":
+        if (event.sessionId) emitter.sessionId?.(event.sessionId);
+        break;
+      case "thinking": {
+        const next = typeof event.text === "string" ? event.text : "";
+        if (!next) break;
+        const delta = next.startsWith(state.reasoningText) ? next.slice(state.reasoningText.length) : next;
+        state.reasoningText = next.startsWith(state.reasoningText) ? next : state.reasoningText + next;
+        if (delta) {
+          emitter.reasoning?.(delta);
+          state.reasoningOpen = true;
+        }
+        break;
+      }
+      case "tool_call": {
+        if (state.reasoningOpen) {
+          emitter.reasoningEnd?.();
+          state.reasoningOpen = false;
+        }
+        const callId = event.callId || "";
+        const tool = event.tool || "unknown";
+        if (callId) state.toolNames.set(callId, tool);
+        emitter.toolCall?.(tool, event.input || {}, callId);
+        break;
+      }
+      case "tool_result": {
+        const callId = event.callId || "";
+        const output = typeof event.result === "string"
+          ? event.result
+          : (event.result == null ? "" : JSON.stringify(event.result));
+        emitter.toolResult?.(callId, output, state.toolNames.get(callId) || "unknown");
+        break;
+      }
+      case "text":
+        appendText(event.text);
+        break;
+      case "status": {
+        if (event.usage && typeof event.usage === "object") {
+          // Real usage from the harness; the renderer prefers this over estimates.
+          emitter.usage?.({
+            inputTokens: Number(event.usage.inputTokens) || 0,
+            cachedInputTokens: Number(event.usage.cacheReadTokens) || 0,
+            outputTokens: Number(event.usage.outputTokens) || 0,
+            totalTokens: Number(event.usage.totalTokens) || 0,
+          });
+        }
+        break;
+      }
+      case "final":
+        // Safety net: make sure the answer is on screen even if no `text` event
+        // arrived (or it was emitted before the first flush).
+        if (typeof event.text === "string" && event.text && !state.textSoFar) appendText(event.text);
+        break;
+      case "error":
+        if (event.message) emitter.warning?.(event.callId || "", String(event.message));
+        break;
+      default:
+        break;
+    }
+  };
+
+  return {
+    /** Feed a stdout chunk; returns true once the stream is known to be JSON. */
+    push(chunk) {
+      if (typeof chunk !== "string" || !chunk) return state.jsonMode === true;
+      state.buffer += chunk;
+      let newlineIndex = state.buffer.indexOf("\n");
+      while (newlineIndex >= 0) {
+        const line = state.buffer.slice(0, newlineIndex);
+        state.buffer = state.buffer.slice(newlineIndex + 1);
+        this.pushLine(line);
+        newlineIndex = state.buffer.indexOf("\n");
+      }
+      return state.jsonMode === true;
+    },
+    pushLine(line) {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      if (state.jsonMode !== true) {
+        let parsed = null;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch {
+          parsed = null;
+        }
+        if (parsed && typeof parsed === "object" && typeof parsed.type === "string") {
+          state.jsonMode = true;
+        } else {
+          // Not JSON: fall back to forwarding raw text for the whole run.
+          state.jsonMode = false;
+          emitter.text(state.jsonMode === false && state.sawNonJson ? line : line);
+          state.sawNonJson = true;
+          return;
+        }
+      }
+      if (state.jsonMode === true) {
+        try {
+          handleEvent(JSON.parse(trimmed));
+        } catch {
+          // A malformed line must not kill the turn.
+        }
+      }
+    },
+    flush() {
+      if (state.buffer) {
+        this.pushLine(state.buffer);
+        state.buffer = "";
+      }
+    },
+    get jsonMode() {
+      return state.jsonMode;
+    },
+  };
+}
+
+function runDshTurn({ prompt, cwd, env, binPath, emitter, signal, patchPath, profile, permissionMode }) {
   return new Promise((resolve, reject) => {
     const executable = binPath || "dsh";
     // With a model override dsh is invoked explicitly (profile + patch) because
     // the `headless` shorthand takes no launcher flags; otherwise the shorthand
     // stays exactly as it was.
+    const effectiveProfile = profile || resolveDshProfile(env);
+    // --json only exists on the headless app; other profiles would reject it.
+    const supportsJson = !effectiveProfile || String(effectiveProfile) === "headless";
+    const jsonArgs = supportsJson ? ["--json"] : [];
     const args = patchPath
-      ? ["--profile", profile || resolveDshProfile(env), "--patch", patchPath, String(prompt ?? "")]
-      : ["headless", String(prompt ?? "")];
+      ? ["--profile", effectiveProfile, "--patch", patchPath, ...jsonArgs, String(prompt ?? "")]
+      : ["headless", ...jsonArgs, String(prompt ?? "")];
     const spec = prepareCommandForSpawn(executable, args);
 
     let child;
     try {
       child = spawn(spec.command, spec.args, {
         cwd: cwd || undefined,
-        env: buildDshEnv(env),
+        // Carry the sidebar's permission mode into dsh's own sandbox policy.
+        env: { ...buildDshEnv(env), DSH_PERMISSION_MODE: resolveDshPermissionMode(permissionMode) },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
         shell: spec.shell,
@@ -236,7 +409,14 @@ function runDshTurn({ prompt, cwd, env, binPath, emitter, signal, patchPath, pro
     let stdoutHead = "";
     let strippedLabel = false;
 
-    const emitStdout = (chunk) => {
+    const jsonParser = createDshJsonParser(emitter);
+
+    // A run is either JSON (`headless --json`) or plain text; decide from the
+    // first non-whitespace byte and never switch back.
+    let streamMode = null; // null | "json" | "plain"
+    let pendingDecision = "";
+
+    const emitRawText = (chunk) => {
       if (strippedLabel) {
         emitter.text(chunk);
         return;
@@ -253,6 +433,33 @@ function runDshTurn({ prompt, cwd, env, binPath, emitter, signal, patchPath, pro
         : stdoutHead;
       stdoutHead = "";
       emitter.text(trimmed);
+    };
+
+    const emitStdout = (chunk) => {
+      if (streamMode === "json") {
+        jsonParser.push(chunk);
+        return;
+      }
+      if (streamMode === null) {
+        pendingDecision += chunk;
+        const firstChar = pendingDecision.trimStart().charAt(0);
+        if (!firstChar) return; // still whitespace, nothing to decide yet
+        if (firstChar !== "{") {
+          // Plain text run (older dsh, or a profile without --json).
+          streamMode = "plain";
+          const buffered = pendingDecision;
+          pendingDecision = "";
+          emitRawText(buffered);
+          return;
+        }
+        if (!pendingDecision.includes("\n")) return; // JSON mode; wait for a whole line
+        streamMode = "json";
+        const buffered = pendingDecision;
+        pendingDecision = "";
+        jsonParser.push(buffered);
+        return;
+      }
+      emitRawText(chunk);
     };
 
     child.stdout.setEncoding("utf8");
@@ -293,6 +500,12 @@ function runDshTurn({ prompt, cwd, env, binPath, emitter, signal, patchPath, pro
 
     child.on("close", (code, closeSignal) => {
       cleanup();
+      if (streamMode === null && pendingDecision) {
+        streamMode = "plain";
+        emitRawText(pendingDecision);
+        pendingDecision = "";
+      }
+      jsonParser.flush();
       if (stdoutHead && !strippedLabel) {
         // Stream ended before the label check completed.
         emitter.text(stdoutHead.startsWith(REASONING_LABEL)
@@ -323,6 +536,8 @@ function runDshTurn({ prompt, cwd, env, binPath, emitter, signal, patchPath, pro
 
 module.exports = {
   runDshTurn,
+  createDshJsonParser,
+  resolveDshPermissionMode,
   readDshEnvFile,
   buildDshEnv,
   resolveDshProfile,

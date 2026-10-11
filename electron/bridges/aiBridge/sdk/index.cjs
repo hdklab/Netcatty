@@ -21,6 +21,7 @@ const grokAcp = require("./grokAcpDriver.cjs");
 const mimo = require("./mimoDriver.cjs");
 const dsh = require("./dshDriver.cjs");
 const hermes = require("./hermesDriver.cjs");
+const hermesAcp = require("./hermesAcpDriver.cjs");
 const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 
 function hasCodebuddyQueryOnlyOptions(options) {
@@ -430,8 +431,9 @@ const DRIVER_REGISTRY = {
       });
     },
   },
-  // DeepSeek Harness (dsh) — one-shot `dsh headless` CLI path. See dshDriver.cjs
-  // for what is intentionally not mapped yet (resume, tool events, attachments).
+  // DeepSeek Harness (dsh) — `dsh headless --json`, whose run events are mapped
+  // to reasoning / tool calls / usage. See dshDriver.cjs for what is still not
+  // mapped (resume, attachments).
   dsh: {
     async runTurn(ctx) {
       // dsh has no --model flag: a chosen model becomes a one-turn profile patch.
@@ -447,6 +449,7 @@ const DRIVER_REGISTRY = {
         signal: ctx.abortController?.signal || ctx.signal,
         patchPath: patch?.patchPath,
         profile: patch?.profile,
+        permissionMode: ctx.permissionMode,
       });
     },
     // dsh exposes only the model its profile is configured with.
@@ -456,14 +459,23 @@ const DRIVER_REGISTRY = {
   },
   hermes: {
     async runTurn(ctx) {
-      return hermes.runHermesTurn({
+      // Default: ACP (`hermes acp`) so reasoning, tool calls and real token
+      // usage stream into the sidebar. The driver itself falls back to the
+      // one-shot `hermes -z` path below when the ACP server cannot start or
+      // the protocol fails before a session is established.
+      return hermesAcp.runHermesAcpTurn({
         prompt: ctx.prompt,
+        systemPrompt: ctx.systemPrompt,
         cwd: ctx.cwd,
         env: ctx.env,
         binPath: ctx.binPath,
         emitter: ctx.emitter,
         signal: ctx.abortController?.signal || ctx.signal,
         model: ctx.model,
+        permissionMode: ctx.permissionMode,
+        resumeSessionId: ctx.resumeSessionId,
+        historySeed: ctx.historySeed,
+        injectedMcpServers: ctx.injectedMcpServers,
       });
     },
     async listModels(ctx) {

@@ -6,6 +6,7 @@ const { EventEmitter } = require("node:events");
 const Module = require("node:module");
 
 const DRIVER_PATH = require.resolve("./dshDriver.cjs");
+const { createDshJsonParser, resolveDshPermissionMode } = require("./dshDriver.cjs");
 const CHILD_PROCESS_IDS = new Set(["node:child_process", "child_process"]);
 
 /**
@@ -82,7 +83,7 @@ test("runs dsh headless in the session cwd and streams stdout as text", async ()
     });
 
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args, ["headless", "say pong"]);
+    assert.deepEqual(calls[0].args, ["headless", "--json", "say pong"]);
     assert.equal(calls[0].options.cwd, "/work/project");
     assert.equal(calls[0].options.env.DEEPSEEK_API_KEY, "secret");
 
@@ -291,7 +292,7 @@ test("applies a chosen model as a one-turn profile patch that keeps the provider
     });
     const turnCall = calls[calls.length - 1];
     assert.deepEqual(turnCall.args, [
-      "--profile", "headless", "--patch", patch.patchPath, "say pong",
+      "--profile", "headless", "--patch", patch.patchPath, "--json", "say pong",
     ]);
     turnCall.child.emit("close", 0, null);
     await turn;
@@ -303,7 +304,83 @@ test("keeps the headless shorthand when no model was chosen", async () => {
   await withFakeSpawn(async ({ driver, calls }) => {
     const { emitter } = makeEmitter();
     const turn = driver.runDshTurn({ prompt: "hi", emitter, binPath: "dsh" });
-    assert.deepEqual(calls[0].args, ["headless", "hi"]);
+    assert.deepEqual(calls[0].args, ["headless", "--json", "hi"]);
+    calls[0].child.emit("close", 0, null);
+    await turn;
+  });
+});
+
+test("parses dsh --json run events into tool calls, reasoning, usage and text", () => {
+  const events = [];
+  const emitter = {
+    text: (t) => events.push(["text", t]),
+    reasoning: (t) => events.push(["reasoning", t]),
+    reasoningEnd: () => events.push(["reasoningEnd"]),
+    toolCall: (name, args, id) => events.push(["toolCall", name, args, id]),
+    toolResult: (id, out, name) => events.push(["toolResult", id, out, name]),
+    usage: (u) => events.push(["usage", u]),
+    sessionId: (id) => events.push(["sessionId", id]),
+    warning: (id, message) => events.push(["warning", message]),
+  };
+  const parser = createDshJsonParser(emitter);
+  const stream = [
+    '{"type":"session","sessionId":"s1","cwd":"/tmp"}',
+    '{"type":"thinking","text":"先看看目录"}',
+    '{"type":"tool_call","callId":"c1","tool":"bash","input":{"command":"pwd"}}',
+    '{"type":"tool_result","callId":"c1","status":"completed","result":"/tmp\\n"}',
+    '{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":10,"outputTokens":2,"cacheReadTokens":1,"totalTokens":12}}',
+    '{"type":"text","text":"答案是 /tmp"}',
+    '{"type":"final","text":"答案是 /tmp"}',
+  ].join("\n") + "\n";
+  parser.push(stream);
+  parser.flush();
+
+  assert.equal(parser.jsonMode, true);
+  assert.deepEqual(events, [
+    ["sessionId", "s1"],
+    ["reasoning", "先看看目录"],
+    ["reasoningEnd"],
+    ["toolCall", "bash", { command: "pwd" }, "c1"],
+    ["toolResult", "c1", "/tmp\n", "bash"],
+    ["usage", { inputTokens: 10, cachedInputTokens: 1, outputTokens: 2, totalTokens: 12 }],
+    ["text", "答案是 /tmp"],
+  ]);
+});
+
+test("thinking events stream as deltas, not as repeated cumulative text", () => {
+  const events = [];
+  const parser = createDshJsonParser({ reasoning: (t) => events.push(t), reasoningEnd: () => {} });
+  parser.push('{"type":"thinking","text":"先"}\n{"type":"thinking","text":"先看目录"}\n');
+  assert.deepEqual(events, ["先", "看目录"]);
+});
+
+test("a non-JSON line puts the parser into plain-text mode", () => {
+  const parser = createDshJsonParser({ text: () => {} });
+  parser.push("hello world\n");
+  assert.equal(parser.jsonMode, false);
+});
+
+test("maps Netcatty permission modes onto dsh's own sandbox policy", () => {
+  assert.equal(resolveDshPermissionMode("observer"), "read-only");
+  assert.equal(resolveDshPermissionMode("confirm"), "workspace-write");
+  assert.equal(resolveDshPermissionMode("auto"), "danger-full-access");
+  // Unknown/absent falls back to dsh's own default rather than to full access.
+  assert.equal(resolveDshPermissionMode(undefined), "workspace-write");
+  assert.equal(resolveDshPermissionMode("nonsense"), "workspace-write");
+  assert.equal(resolveDshPermissionMode("  OBSERVER "), "read-only");
+});
+
+test("the spawned dsh process receives DSH_PERMISSION_MODE", async () => {
+  await withFakeSpawn(async ({ driver, calls }) => {
+    const { emitter } = makeEmitter();
+    const turn = driver.runDshTurn({
+      prompt: "hi",
+      env: {},
+      binPath: "/usr/bin/dsh",
+      emitter,
+      permissionMode: "observer",
+    });
+    assert.equal(calls[0].options.env.DSH_PERMISSION_MODE, "read-only");
     calls[0].child.emit("close", 0, null);
     await turn;
   });
