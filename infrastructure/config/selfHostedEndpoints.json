@@ -1,5 +1,5 @@
 {
-  "_comment": "FACTORY DEFAULTS for the self-hosted update/config endpoints. Operators normally configure the source in Settings > System > Software Update (persisted in <userData>/self-hosted-update.json) or with the NETCATTY_UPDATE_SERVER_URL override; values here apply only when neither is set. While no source is configured, Netcatty never contacts the cloud (GitHub) for updates and offers no release-page link. See docs/self-hosted-update-and-config-server.md for the file layout the server must serve.",
-  "updateServerUrl": null,
-  "releasesPageUrl": null
+  "_comment": "FACTORY DEFAULTS for the self-hosted update/config endpoints. The fork feeds updates from its own GitHub release assets: updateServerUrl resolves to <base>/latest-linux.yml (and the per-platform variants) plus <base>/latest.json, all of which .github/workflows/build.yml publishes with every v* tag (electron-builder writes the latest-*.yml files, the release job adds latest.json). Operators can still override this in Settings > System > Software Update (persisted in <userData>/self-hosted-update.json) or with the NETCATTY_UPDATE_SERVER_URL override; values here apply only when neither is set. See docs/self-hosted-update-and-config-server.md for the file layout the server must serve.",
+  "updateServerUrl": "https://github.com/hdklab/Netcatty/releases/latest/download",
+  "releasesPageUrl": "https://github.com/hdklab/Netcatty/releases"
 }

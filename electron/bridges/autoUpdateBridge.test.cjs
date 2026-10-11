@@ -259,22 +259,44 @@ async function withLinuxPackageEnvironment({ packageType, appImage }, fn) {
   }
 }
 
+const SHIPPED_ENDPOINTS_PATH = require.resolve("../../infrastructure/config/selfHostedEndpoints.cjs");
+
 /**
  * Point the bridge at (or away from) the reserved self-hosted update source for
  * one test body. The bridge resolves the source on every call, so a test can
  * flip between "cloud source cancelled" and "self-hosted feed configured" —
- * `null` restores the unconfigured (cancelled) state.
+ * `null` restores the unconfigured (cancelled) state, which also swaps out the
+ * shipped factory defaults (a build that cleared them).
  */
 async function withUpdateSource(url, fn) {
   const previous = process.env.NETCATTY_UPDATE_SERVER_URL;
-  if (url === null || url === undefined) {
+  const cleared = url === null || url === undefined;
+  let previousShippedEntry;
+  if (cleared) {
     delete process.env.NETCATTY_UPDATE_SERVER_URL;
+    // The fork ships the GitHub release feed as its factory default, so the
+    // "no source configured at all" branch only exists for a build whose
+    // defaults are empty — stub the shipped module to reproduce that.
+    previousShippedEntry = require.cache[SHIPPED_ENDPOINTS_PATH];
+    require.cache[SHIPPED_ENDPOINTS_PATH] = {
+      id: SHIPPED_ENDPOINTS_PATH,
+      filename: SHIPPED_ENDPOINTS_PATH,
+      loaded: true,
+      exports: { updateServerUrl: null, releasesPageUrl: null },
+    };
   } else {
     process.env.NETCATTY_UPDATE_SERVER_URL = url;
   }
   try {
     return await fn();
   } finally {
+    if (cleared) {
+      if (previousShippedEntry === undefined) {
+        delete require.cache[SHIPPED_ENDPOINTS_PATH];
+      } else {
+        require.cache[SHIPPED_ENDPOINTS_PATH] = previousShippedEntry;
+      }
+    }
     if (previous === undefined) {
       delete process.env.NETCATTY_UPDATE_SERVER_URL;
     } else {
@@ -390,12 +412,14 @@ test("update check stays offline while no self-hosted source is configured", asy
     },
   };
 
-  await withLinuxPackageEnvironment({ packageType: "deb" }, async () => {
-    await withMocks({ autoUpdater }, async ({ bridge, fakeAutoUpdater }) => {
-      const ipcMain = makeIpcMain();
-      bridge.registerHandlers(ipcMain);
+  // The cleared factory defaults have to be in place *before* init() runs: the
+  // feed is swapped at startup, so an unconfigured build must never set one.
+  await withUpdateSource(null, async () => {
+    await withLinuxPackageEnvironment({ packageType: "deb" }, async () => {
+      await withMocks({ autoUpdater }, async ({ bridge, fakeAutoUpdater }) => {
+        const ipcMain = makeIpcMain();
+        bridge.registerHandlers(ipcMain);
 
-      await withUpdateSource(null, async () => {
         assert.equal(bridge.isUpdateSourceConfigured(), false);
         assert.equal(bridge.readSelfHostedUpdateUrl(), null);
 
@@ -477,6 +501,38 @@ test("auto-check only runs once a self-hosted source is configured", async () =>
       });
     });
   });
+});
+
+test("falls back to the shipped GitHub release feed as the factory default", async () => {
+  const shipped = require("../../infrastructure/config/selfHostedEndpoints.cjs");
+  const userDataPath = fs.mkdtempSync(path.join(tempDirBridge.getTempDir(), "nc-update-default-"));
+  const previous = process.env.NETCATTY_UPDATE_SERVER_URL;
+  // No env override and an empty userData: only the shipped defaults are left.
+  delete process.env.NETCATTY_UPDATE_SERVER_URL;
+
+  try {
+    await withMocks({ userDataPath }, async ({ bridge }) => {
+      const source = bridge.resolveUpdateSource();
+
+      assert.equal(source.updateServerUrl, shipped.updateServerUrl);
+      assert.equal(source.releasesPageUrl, shipped.releasesPageUrl);
+      assert.equal(source.source, "default");
+      assert.equal(source.envOverride, false);
+      assert.equal(bridge.isUpdateSourceConfigured(), true);
+
+      // The feed has to be servable by a GitHub release: electron-updater reads
+      // <base>/latest-linux.yml and the banner reads <base>/latest.json, both of
+      // which live as assets of the fork's newest release.
+      assert.match(source.updateServerUrl, /^https:\/\/github\.com\/hdklab\/Netcatty\/releases\//);
+    });
+  } finally {
+    if (previous === undefined) {
+      delete process.env.NETCATTY_UPDATE_SERVER_URL;
+    } else {
+      process.env.NETCATTY_UPDATE_SERVER_URL = previous;
+    }
+    fs.rmSync(userDataPath, { recursive: true, force: true });
+  }
 });
 
 test("keeps the manual-update fallback for an unmarked Linux package", async () => {

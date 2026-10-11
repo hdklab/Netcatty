@@ -7,7 +7,9 @@
  *
  * `updateServerUrl` is the electron-updater "generic" feed base (it must serve
  * latest.yml / latest-linux.yml / latest-mac.yml and the artifacts, plus a
- * latest.json release metadata file). While it is null, cloud (GitHub)
- * auto-update stays disabled. See docs/self-hosted-update-and-config-server.md.
+ * latest.json release metadata file). It defaults to this fork's own GitHub
+ * release assets (https://github.com/hdklab/Netcatty/releases/latest/download);
+ * clearing it in Settings disables updates entirely — there is no cloud
+ * fallback. See docs/self-hosted-update-and-config-server.md.
  */
 module.exports = require("./selfHostedEndpoints.json");

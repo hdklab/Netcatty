@@ -1,17 +1,44 @@
-# Self-hosted update & config server (reserved)
+# Self-hosted update & config server
 
-Status: **reserved, not configured.** Nothing in the app contacts a cloud update
-source any more; the endpoints below are placeholders to fill in once the server
-exists.
+Status: **configured** — this fork serves its update feed straight from its own
+GitHub release assets, so no separate server is involved. The GitHub provider
+baked into the packaged `app-update.yml` is still overridden at runtime; the
+generic feed described below is what the app actually reads.
+
+## GitHub release assets as the feed
+
+`infrastructure/config/selfHostedEndpoints.json` ships these factory defaults:
+
+```
+updateServerUrl  https://github.com/hdklab/Netcatty/releases/latest/download
+releasesPageUrl  https://github.com/hdklab/Netcatty/releases
+```
+
+`.../releases/latest/download/<asset>` is GitHub's alias for "the asset named
+`<asset>` of the newest non-prerelease release", which is exactly the shape the
+generic provider wants:
+
+| The app requests | Served by |
+| --- | --- |
+| `<base>/latest-linux.yml`, `latest.yml`, `latest-mac.yml`, `latest-linux-arm64.yml` | electron-builder's own update manifests, uploaded by the release job of `.github/workflows/build.yml` |
+| `<base>/latest.json` | the "Publish update metadata (latest.json)" step, which stores the release's own `releases/tags/<tag>` API payload (already the GitHub `releases/latest` shape the renderer parses) as a release asset |
+| `<base>/<artifact>` | the packages named inside those manifests |
+
+Two consequences worth remembering: the feed is only complete once a `v*` tag
+publishes a release (the 1.1.84 release predates both this default and the
+metadata step, so it carries no yml/json files), and prerelease tags
+(`vX.Y.Z-pre`) are invisible to the `/releases/latest` alias. To point the app
+elsewhere — e.g. a real self-hosted server — use Settings → System → Software
+Update or `NETCATTY_UPDATE_SERVER_URL`; both win over these defaults.
 
 ## What is already in place
 
 | Concern | Where | Today |
 | --- | --- | --- |
-| Update feed base URL | Settings > System > Software Update (persisted in `<userData>/self-hosted-update.json`) | unset |
+| Update feed base URL | Settings > System > Software Update (persisted in `<userData>/self-hosted-update.json`) | factory default below |
 | Launch-time override | `NETCATTY_UPDATE_SERVER_URL` env var (wins over the saved value) | unset |
-| Factory defaults | `infrastructure/config/selfHostedEndpoints.json` → `updateServerUrl` / `releasesPageUrl` | `null` |
-| Human download page | same field pair (`releasesPageUrl`) | unset |
+| Factory defaults | `infrastructure/config/selfHostedEndpoints.json` → `updateServerUrl` / `releasesPageUrl` | `https://github.com/hdklab/Netcatty/releases/latest/download` / `https://github.com/hdklab/Netcatty/releases` |
+| Human download page | same field pair (`releasesPageUrl`) | `https://github.com/hdklab/Netcatty/releases` |
 | Config / vault storage | Cloud Sync built-in providers (`webdav`, `s3`) | user-entered, no code change needed |
 
 Resolution order for the feed URL: `NETCATTY_UPDATE_SERVER_URL` → the value saved

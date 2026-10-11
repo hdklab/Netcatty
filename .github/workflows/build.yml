@@ -893,6 +893,33 @@ jobs:
           # empty token input.
           token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
+      # electron-builder writes latest*.yml, but the in-app update banner reads
+      # <updateServerUrl>/latest.json (the GitHub `releases/latest` shape), so the
+      # self-hosted feed served straight from this repo's release assets needs
+      # that file published too. Asset attachment is asynchronous — wait until
+      # the uploader's files are visible so assets[] is not empty.
+      - name: Publish update metadata (latest.json)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          repo="${GITHUB_REPOSITORY}"
+          for attempt in $(seq 1 15); do
+            gh api "repos/${repo}/releases/tags/${tag}" > latest.json
+            count=$(node -p 'const r = require("./latest.json"); (r.assets || []).length')
+            if [ "${count}" -gt 0 ]; then
+              echo "Release ${tag} lists ${count} asset(s) (attempt ${attempt})."
+              break
+            fi
+            echo "No assets visible yet (attempt ${attempt}); retrying in 10s..."
+            sleep 10
+          done
+          node -e 'const r = require("./latest.json"); if (!(r.assets || []).length) { console.error("::error::Release has no assets; latest.json would be empty"); process.exit(1); }'
+          gh release upload "${tag}" latest.json --clobber
+          echo "Published latest.json for ${tag} ($(node -p 'require("./latest.json").assets.length') assets)."
+
   update-nix-release:
     name: update Nix release metadata
     runs-on: ubuntu-latest
