@@ -217,6 +217,17 @@ if (process.env.NETCATTY_NO_SANDBOX === "1") {
 }
 // Avoid Chromium spare renderers that inflate baseline memory for little gain.
 app.commandLine.appendSwitch("disable-features", "SpareRendererForSitePerProcess");
+
+// Credential storage on Linux: see electron/main/linuxPasswordStore.cjs. Without
+// this, Hyprland/sway users get Chromium's plaintext "basic" backend and every
+// start warns that credentials cannot be decrypted.
+try {
+  const { resolveLinuxPasswordStoreSwitch } = require("./main/linuxPasswordStore.cjs");
+  const passwordStore = resolveLinuxPasswordStoreSwitch();
+  if (passwordStore) app.commandLine.appendSwitch("password-store", passwordStore);
+} catch (err) {
+  console.warn("[Main] Failed to configure the Linux password store:", err?.message || err);
+}
 // Aggressive GPU enablement can break some environments; opt out with NETCATTY_COMPAT_GPU=1.
 if (process.env.NETCATTY_COMPAT_GPU !== "1") {
   // Force hardware acceleration even on blocklisted GPUs (macs sometimes fall back to software)

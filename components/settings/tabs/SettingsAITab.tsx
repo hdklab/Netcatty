@@ -18,7 +18,7 @@ import type {
   ProviderConfig,
   WebSearchConfig,
 } from "../../../infrastructure/ai/types";
-import type { ManagedAgentKey } from "../../../infrastructure/ai/managedAgents";
+import { DEFAULT_EXTERNAL_AGENT_ID, MANAGED_AGENT_KEYS, type ManagedAgentKey } from "../../../infrastructure/ai/managedAgents";
 import { PROVIDER_PRESETS } from "../../../infrastructure/ai/types";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { Button } from "../../ui/button";
@@ -99,6 +99,29 @@ function scheduleAfterFirstPaint(callback: () => void, delayMs = 0): () => void 
 }
 
 type AISettingsSubTab = "providers" | "agents" | "tools" | "search" | "safety";
+
+/** Per-agent path inputs/outputs, keyed by managed agent. */
+type AgentPathControls = {
+  info: AgentPathInfo | null;
+  setInfo: React.Dispatch<React.SetStateAction<AgentPathInfo | null>>;
+  resolving: boolean;
+  setResolving: React.Dispatch<React.SetStateAction<boolean>>;
+  customPath: string;
+  setCustomPath: React.Dispatch<React.SetStateAction<string>>;
+};
+
+type AgentPathControlsRef = { current: Record<ManagedAgentKey, AgentPathControls> | null };
+
+function readAgentPathControls(
+  ref: AgentPathControlsRef,
+  agentKey: ManagedAgentKey,
+): AgentPathControls {
+  const controls = ref.current;
+  if (!controls) {
+    throw new Error(`Agent path controls are not ready for ${agentKey}`);
+  }
+  return controls[agentKey];
+}
 
 function getSavedManagedAgentPathInfo(
   agents: ExternalAgentConfig[],
@@ -218,16 +241,8 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const [isCodexLoading, setIsCodexLoading] = useState(false);
   const [codexError, setCodexError] = useState<string | null>(null);
   const [codexAppServerStatus, setCodexAppServerStatus] = useState<CodexAppServerStatus | null>(null);
-  const initialManagedPathsRef = useRef<{
-    codex: string;
-    claude: string;
-    copilot: string;
-    cursor: string;
-    codebuddy: string;
-    opencode: string;
-    grok: string;
-    mimo: string;
-  } | null>(null);
+  const initialManagedPathsRef = useRef<Record<ManagedAgentKey, string> | null>(null);
+  const agentPathControlsRef = useRef<Record<ManagedAgentKey, AgentPathControls> | null>(null);
   if (!initialManagedPathsRef.current) {
     initialManagedPathsRef.current = getInitialManagedAgentPaths(externalAgents);
   }
@@ -305,6 +320,35 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const [mimoCustomPath, setMimoCustomPath] = useState(() => initialManagedPathsRef.current?.mimo ?? "");
   const [isResolvingMimo, setIsResolvingMimo] = useState(false);
 
+  const [dshPathInfo, setDshPathInfo] = useState<AgentPathInfo | null>(
+    () => getSavedManagedAgentPathInfo(externalAgents, "dsh"),
+  );
+  const [dshCustomPath, setDshCustomPath] = useState(() => initialManagedPathsRef.current?.dsh ?? "");
+  const [isResolvingDsh, setIsResolvingDsh] = useState(false);
+
+  const [hermesPathInfo, setHermesPathInfo] = useState<AgentPathInfo | null>(
+    () => getSavedManagedAgentPathInfo(externalAgents, "hermes"),
+  );
+  const [hermesCustomPath, setHermesCustomPath] = useState(() => initialManagedPathsRef.current?.hermes ?? "");
+  const [isResolvingHermes, setIsResolvingHermes] = useState(false);
+
+  // Keyed view over every managed agent's path input/output. The callbacks below
+  // read it through a ref so their identities stay stable (effects depend on
+  // them) and so an agent key can never fall through to another agent's state —
+  // the ternary chains this replaced silently routed unknown keys to mimo.
+  agentPathControlsRef.current = {
+    codex: { info: codexPathInfo, setInfo: setCodexPathInfo, resolving: isResolvingCodex, setResolving: setIsResolvingCodex, customPath: codexCustomPath, setCustomPath: setCodexCustomPath },
+    claude: { info: claudePathInfo, setInfo: setClaudePathInfo, resolving: isResolvingClaude, setResolving: setIsResolvingClaude, customPath: claudeCustomPath, setCustomPath: setClaudeCustomPath },
+    copilot: { info: copilotPathInfo, setInfo: setCopilotPathInfo, resolving: isResolvingCopilot, setResolving: setIsResolvingCopilot, customPath: copilotCustomPath, setCustomPath: setCopilotCustomPath },
+    cursor: { info: cursorPathInfo, setInfo: setCursorPathInfo, resolving: isResolvingCursor, setResolving: setIsResolvingCursor, customPath: "", setCustomPath: () => {} },
+    codebuddy: { info: codebuddyPathInfo, setInfo: setCodebuddyPathInfo, resolving: isResolvingCodebuddy, setResolving: setIsResolvingCodebuddy, customPath: codebuddyCustomPath, setCustomPath: setCodebuddyCustomPath },
+    opencode: { info: opencodePathInfo, setInfo: setOpencodePathInfo, resolving: isResolvingOpencode, setResolving: setIsResolvingOpencode, customPath: opencodeCustomPath, setCustomPath: setOpencodeCustomPath },
+    grok: { info: grokPathInfo, setInfo: setGrokPathInfo, resolving: isResolvingGrok, setResolving: setIsResolvingGrok, customPath: grokCustomPath, setCustomPath: setGrokCustomPath },
+    mimo: { info: mimoPathInfo, setInfo: setMimoPathInfo, resolving: isResolvingMimo, setResolving: setIsResolvingMimo, customPath: mimoCustomPath, setCustomPath: setMimoCustomPath },
+    dsh: { info: dshPathInfo, setInfo: setDshPathInfo, resolving: isResolvingDsh, setResolving: setIsResolvingDsh, customPath: dshCustomPath, setCustomPath: setDshCustomPath },
+    hermes: { info: hermesPathInfo, setInfo: setHermesPathInfo, resolving: isResolvingHermes, setResolving: setIsResolvingHermes, customPath: hermesCustomPath, setCustomPath: setHermesCustomPath },
+  };
+
   const codebuddyManagedAgent = useMemo(
     () => externalAgents.find((a) => a.id === "discovered_codebuddy"),
     [externalAgents],
@@ -355,7 +399,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     return () => {
       mountedRef.current = false;
       codexRequestIdRef.current += 1;
-      for (const key of ["codex", "claude", "copilot", "cursor", "codebuddy", "opencode", "grok", "mimo"] as ManagedAgentKey[]) {
+      for (const key of MANAGED_AGENT_KEYS) {
         agentPathRequestIds[key] = (agentPathRequestIds[key] ?? 0) + 1;
       }
     };
@@ -366,23 +410,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     result: AgentPathInfo | null,
     commandSource: "manual" | "auto" = "auto",
   ) => {
-    const setInfo = agentKey === "codex"
-      ? setCodexPathInfo
-      : agentKey === "claude"
-        ? setClaudePathInfo
-        : agentKey === "copilot"
-          ? setCopilotPathInfo
-          : agentKey === "cursor"
-            ? setCursorPathInfo
-            : agentKey === "codebuddy"
-              ? setCodebuddyPathInfo
-              : agentKey === "opencode"
-                ? setOpencodePathInfo
-                : agentKey === "grok"
-                  ? setGrokPathInfo
-                  : setMimoPathInfo;
-
-    setInfo(result);
+    readAgentPathControls(agentPathControlsRef, agentKey).setInfo(result);
 
     let nextDefaultId: string | null = null;
     setExternalAgents((prev) => {
@@ -411,21 +439,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     const bridge = getBridge();
     if (!bridge?.aiResolveCli) return null;
 
-    const setResolving = agentKey === "codex"
-      ? setIsResolvingCodex
-      : agentKey === "claude"
-        ? setIsResolvingClaude
-        : agentKey === "copilot"
-          ? setIsResolvingCopilot
-          : agentKey === "cursor"
-            ? setIsResolvingCursor
-            : agentKey === "codebuddy"
-              ? setIsResolvingCodebuddy
-              : agentKey === "opencode"
-                ? setIsResolvingOpencode
-                : agentKey === "grok"
-                  ? setIsResolvingGrok
-                  : setIsResolvingMimo;
+    const { setResolving } = readAgentPathControls(agentPathControlsRef, agentKey);
 
     setResolving(true);
     const requestId = (agentPathRequestIdRef.current[agentKey] ?? 0) + 1;
@@ -454,22 +468,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         && !result?.available
         && !options.removeUnavailableManualPath
       ) {
-        const setInfo = agentKey === "codex"
-          ? setCodexPathInfo
-          : agentKey === "claude"
-            ? setClaudePathInfo
-            : agentKey === "copilot"
-              ? setCopilotPathInfo
-              : agentKey === "cursor"
-                ? setCursorPathInfo
-                : agentKey === "codebuddy"
-                  ? setCodebuddyPathInfo
-                  : agentKey === "opencode"
-                    ? setOpencodePathInfo
-                    : agentKey === "grok"
-                      ? setGrokPathInfo
-                      : setMimoPathInfo;
-        setInfo(result);
+        readAgentPathControls(agentPathControlsRef, agentKey).setInfo(result);
         return result;
       }
       applyResolvedAgentPath(agentKey, result, options?.commandSource ?? "auto");
@@ -508,6 +507,8 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
       { key: "opencode", delayMs: 1560, path: initialPaths?.opencode ?? "" },
       { key: "grok", delayMs: 1840, path: initialPaths?.grok ?? "" },
       { key: "mimo", delayMs: 2120, path: initialPaths?.mimo ?? "" },
+      { key: "dsh", delayMs: 2400, path: initialPaths?.dsh ?? "" },
+      { key: "hermes", delayMs: 2680, path: initialPaths?.hermes ?? "" },
     ];
     const cancelTasks = tasks
       .filter((task) => !autoResolvedAgentStateRef.current[task.key])
@@ -637,18 +638,21 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     [removeProvider, editingProviderId, removeProviderConfirm],
   );
 
-  // Agent options for default agent
-  const agentOptions = useMemo(() => [
-    { value: "catty", label: t('ai.defaultAgent.catty'), icon: <AgentIconBadge agent={{ id: "catty", type: "builtin" }} size="xs" variant="plain" /> },
-    ...externalAgents
-      .filter((a) => canSendWithAgent(a.id, externalAgents))
-      .map((a) => ({ value: a.id, label: a.name, icon: <AgentIconBadge agent={a} size="xs" variant="plain" /> })),
-  ], [externalAgents, t]);
+  // Agent options for the default agent. External agents only — the built-in
+  // Catty agent is gone — so a stale selection falls back to the first enabled
+  // agent, or to the default external agent when none is enabled yet.
+  const agentOptions = useMemo(() => externalAgents
+    .filter((a) => canSendWithAgent(a.id, externalAgents))
+    .map((a) => ({ value: a.id, label: a.name, icon: <AgentIconBadge agent={a} size="xs" variant="plain" /> })),
+  [externalAgents]);
 
   useEffect(() => {
-    if (!agentOptions.some((option) => option.value === defaultAgentId)) {
-      setDefaultAgentId("catty");
-    }
+    if (agentOptions.some((option) => option.value === defaultAgentId)) return;
+    // A stale or retired selection (the built-in Catty id, an agent that was
+    // removed) becomes the fork's default external agent. Deliberately not the
+    // first enabled agent: discovery runs after mount, so "first" would silently
+    // persist whichever agent happened to be resolved first.
+    setDefaultAgentId(DEFAULT_EXTERNAL_AGENT_ID);
   }, [agentOptions, defaultAgentId, setDefaultAgentId]);
 
   useEffect(() => {
@@ -756,21 +760,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
 
   // Validate a custom path for an agent.
   const handleCheckCustomPath = useCallback(async (agentKey: ManagedAgentKey) => {
-    const customPath = agentKey === "codex"
-      ? codexCustomPath
-      : agentKey === "claude"
-        ? claudeCustomPath
-        : agentKey === "copilot"
-          ? copilotCustomPath
-          : agentKey === "codebuddy"
-            ? codebuddyCustomPath
-            : agentKey === "opencode"
-              ? opencodeCustomPath
-              : agentKey === "grok"
-                ? grokCustomPath
-                : agentKey === "mimo"
-                  ? mimoCustomPath
-                  : "";
+    const customPath = readAgentPathControls(agentPathControlsRef, agentKey).customPath;
     const result = await resolveAgentPath(agentKey, customPath, {
       refreshShellEnv: true,
       commandSource: customPath.trim() ? "manual" : "auto",
@@ -782,24 +772,10 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         codexPath: result?.path || customPath.trim() || undefined,
       });
     }
-  }, [claudeCustomPath, codexCustomPath, copilotCustomPath, codebuddyCustomPath, opencodeCustomPath, grokCustomPath, mimoCustomPath, resolveAgentPath, refreshCodexIntegration]);
+  }, [resolveAgentPath, refreshCodexIntegration]);
 
   const handleResetCustomPath = useCallback(async (agentKey: ManagedAgentKey) => {
-    if (agentKey === "codex") {
-      setCodexCustomPath("");
-    } else if (agentKey === "claude") {
-      setClaudeCustomPath("");
-    } else if (agentKey === "copilot") {
-      setCopilotCustomPath("");
-    } else if (agentKey === "codebuddy") {
-      setCodebuddyCustomPath("");
-    } else if (agentKey === "opencode") {
-      setOpencodeCustomPath("");
-    } else if (agentKey === "grok") {
-      setGrokCustomPath("");
-    } else if (agentKey === "mimo") {
-      setMimoCustomPath("");
-    }
+    readAgentPathControls(agentPathControlsRef, agentKey).setCustomPath("");
 
     const result = await resolveAgentPath(agentKey, "", {
       refreshShellEnv: true,
@@ -1237,6 +1213,36 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               onRecheckPath={() => void handleCheckCustomPath("mimo")}
               onResetPath={() => void handleResetCustomPath("mimo")}
               i18nPrefix="ai.mimo"
+            />
+          </SettingsSection>
+
+          <SettingsSection
+            title={t('ai.dsh.title')}
+            leading={<AgentIconBadge agent={{ id: "dsh", icon: "dsh", name: "DeepSeek Harness" }} variant="plain" className="h-5 w-5 text-muted-foreground/90" />}
+          >
+            <CopilotCliCard
+              pathInfo={dshPathInfo}
+              isResolvingPath={isResolvingDsh}
+              customPath={dshCustomPath}
+              onCustomPathChange={setDshCustomPath}
+              onRecheckPath={() => void handleCheckCustomPath("dsh")}
+              onResetPath={() => void handleResetCustomPath("dsh")}
+              i18nPrefix="ai.dsh"
+            />
+          </SettingsSection>
+
+          <SettingsSection
+            title={t('ai.hermes.title')}
+            leading={<AgentIconBadge agent={{ id: "hermes", icon: "hermes", name: "Hermes" }} variant="plain" className="h-5 w-5 text-muted-foreground/90" />}
+          >
+            <CopilotCliCard
+              pathInfo={hermesPathInfo}
+              isResolvingPath={isResolvingHermes}
+              customPath={hermesCustomPath}
+              onCustomPathChange={setHermesCustomPath}
+              onRecheckPath={() => void handleCheckCustomPath("hermes")}
+              onResetPath={() => void handleResetCustomPath("hermes")}
+              i18nPrefix="ai.hermes"
             />
           </SettingsSection>
 

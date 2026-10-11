@@ -270,6 +270,12 @@ export const SystemOverviewTab = memo(function SystemOverviewTab({
 
   // Prefer cached stats over empty/loading so tab switches never flash the
   // empty placeholder when we already have a successful sample.
+  // The panel can outlive its SSH connection (a restored tab still reports
+  // "connected" while the exec channel is gone), and the main process then
+  // answers with a raw English "Session not found or not connected". Say what
+  // actually happened and what to do, instead of dumping that string.
+  const isConnectionGoneError = Boolean(error && /session not found|not connected/i.test(error));
+
   const showBlockingError = Boolean(error && !hasStats && !loading);
   const showInitialLoading = Boolean(loading && !hasStats);
   const showEmpty = Boolean(!hasStats && !loading && !error);
@@ -286,7 +292,12 @@ export const SystemOverviewTab = memo(function SystemOverviewTab({
       )}
 
       {showBlockingError && error ? (
-        <SystemPanelError message={error} onRetry={() => void refresh()} retryLabel={t('history.action.retry')} loading={loading} />
+        <SystemPanelError
+          message={isConnectionGoneError ? t('systemManager.connectionLost') : error}
+          onRetry={() => void refresh()}
+          retryLabel={t('history.action.retry')}
+          loading={loading}
+        />
       ) : showInitialLoading ? (
         <SystemPanelLoading message={t('systemManager.overview.loading')} />
       ) : showEmpty ? (

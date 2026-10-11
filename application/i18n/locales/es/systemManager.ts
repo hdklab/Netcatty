@@ -5,6 +5,7 @@ export const esSystemManagerMessages: Messages = {
 
   'systemManager.noSession': 'No hay una sesión de terminal activa.',
   'systemManager.notConnected': 'Conéctate a un host para administrar procesos y servicios.',
+  'systemManager.connectionLost': 'La conexión de esta sesión se ha perdido. Reconecta la pestaña e inténtalo de nuevo.',
   'systemManager.empty': 'No hay datos disponibles.',
   'systemManager.tabs.overview': 'Resumen',
   'systemManager.tabs.processes': 'Procesos',

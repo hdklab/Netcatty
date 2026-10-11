@@ -347,8 +347,8 @@ export interface DiscoveredAgent {
   /** @deprecated Legacy discovery field from the pre-SDK migration. */
   acpCommand?: string;
   acpArgs?: string[];
-  /** SDK backend key (claude|codex|copilot|cursor|codebuddy|opencode|grok|mimo) — the routing value. */
-  sdkBackend?: 'claude' | 'codex' | 'copilot' | 'cursor' | 'codebuddy' | 'opencode' | 'grok' | 'mimo';
+  /** SDK backend key (claude|codex|copilot|cursor|codebuddy|opencode|grok|mimo|dsh|hermes) — the routing value. */
+  sdkBackend?: 'claude' | 'codex' | 'copilot' | 'cursor' | 'codebuddy' | 'opencode' | 'grok' | 'mimo' | 'dsh' | 'hermes';
   /** Absolute resolved CLI path (preferred over `path`). */
   binPath?: string;
   installed?: boolean;
@@ -877,6 +877,26 @@ export const GROK_MODEL_PRESETS: AgentModelPreset[] = [
   },
 ];
 
+// Curated DeepSeek models for DeepSeek Harness (dsh) when live discovery is
+// unavailable. dsh only reports the model its profile is configured with, so
+// this list is what makes another model selectable at all — a selection is
+// applied as a one-turn profile patch. Live discovery still wins.
+export const DSH_MODEL_PRESETS: AgentModelPreset[] = [
+  { id: 'deepseek-flash', name: 'DeepSeek Flash' },
+  { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+  { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
+];
+
+// Curated Hermes Agent models when the CLI's provider cache is unavailable.
+// IDs mirror the DeepSeek lineup Hermes caches for its `deepseek` provider;
+// `listHermesModels` (which reads that cache) is authoritative when present.
+export const HERMES_MODEL_PRESETS: AgentModelPreset[] = [
+  { id: 'deepseek-flash', name: 'DeepSeek Flash' },
+  { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
+];
+
 export function getAgentModelPresets(
   agentCommand?: string,
   sdkBackend?: string,
@@ -891,6 +911,8 @@ export function getAgentModelPresets(
   if (backend === 'opencode') return OPENCODE_MODEL_PRESETS;
   if (backend === 'grok') return GROK_MODEL_PRESETS;
   if (backend === 'mimo') return MIMO_MODEL_PRESETS;
+  if (backend === 'dsh') return DSH_MODEL_PRESETS;
+  if (backend === 'hermes') return HERMES_MODEL_PRESETS;
 
   if (!agentCommand) return [];
   // Split on both POSIX (/) and Windows (\) separators so command paths like

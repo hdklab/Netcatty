@@ -1,4 +1,13 @@
 import React, { createContext, lazy, memo, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { createPortal } from 'react-dom';
+import { useI18n } from '../../application/i18n/I18nProvider';
+import { ChevronLeft, ChevronRight, MessageSquare, X } from 'lucide-react';
+import {
+  AI_SIDEBAR_HOST_ID,
+  AI_SIDEBAR_SCOPE_ID,
+  setAiSidebarState,
+  useAiSidebarState,
+} from '../../application/state/aiSidebarStore';
 
 import { activeTabStore } from '../../application/state/activeTabStore';
 import {
@@ -505,12 +514,10 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
   if (!aiConfig) {
     throw new Error('AIChatPanelsHost must be rendered inside AIStateProvider');
   }
-  const {
-    sessions,
-    activeSessionIdMap,
-    draftsByScope,
-    panelViewByScope,
-  } = useAISessionsStore();
+  // Panel state lives in the instance component; the host only needs the pieces
+  // it uses itself (pending terminal selections + the sidebar guard).
+  const { activeSessionIdMap, panelViewByScope } = useAISessionsStore();
+  const sidebarOpen = useAiSidebarState().open;
   const {
     defaultAgentId,
     showDraftView,
@@ -559,14 +566,107 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
         const context = contextsByTabId.get(tabId);
         if (!context) return null;
 
-        const isVisible = activeTabId === tabId && activeSidePanelTab === 'ai';
+        // The global sidebar owns the AI panel while it is open, so the per-tab
+        // instance stands down instead of rendering a second copy. A pending
+        // terminal selection is the exception: its picker lives in this instance.
+        const isVisible = activeTabId === tabId
+          && activeSidePanelTab === 'ai'
+          && (!sidebarOpen || Boolean(pendingTerminalSelection));
 
         return (
           <div
             key={tabId}
             className={cn("absolute inset-0 z-10", !isVisible && "hidden")}
           >
-            <LazyLoadBoundary name="AI side panel" resetKey={tabId}>
+            <AIChatPanelInstance
+              context={context}
+              panelKey={tabId}
+              isVisible={isVisible}
+              resolveExecutorContext={resolveExecutorContext}
+              notes={notes}
+              hosts={hosts}
+              snippets={snippets}
+              onOpenVaultNote={onOpenVaultNoteFromChat}
+              onOpenVaultHost={onOpenVaultHostFromChat}
+              onOpenVaultSection={onOpenVaultSectionFromChat}
+              onOpenVaultSnippet={onOpenVaultSnippetFromChat}
+            />
+          </div>
+        );
+      })}
+    </>
+  );
+};
+
+export const AIChatPanelsHost = memo(AIChatPanelsHostInner, aiChatPanelsHostAreEqual);
+
+
+/**
+ * One AI chat panel instance. Rendered per mount site (per terminal tab, or once
+ * for the global sidebar) — the prop list is shared so both stay in sync.
+ */
+/**
+ * Global AI sidebar props. Deliberately smaller than AIChatPanelsHostProps: the
+ * sidebar is mounted by the app-wide tab bridge, which has the AI contexts but
+ * not every terminal-layer callback.
+ */
+/** Vault catalogs are optional for the global sidebar (artifact nav only). */
+const EMPTY_VAULT_CATALOG: never[] = [];
+
+interface AiGlobalSidebarProps {
+  activeTabId?: string | null;
+  contextsByTabId: Map<string, AIPanelContext>;
+  resolveExecutorContext: AIChatPanelsHostProps['resolveExecutorContext'];
+  pendingTerminalSelection?: AIChatPanelsHostProps['pendingTerminalSelection'];
+  notes?: AIChatPanelsHostProps['notes'];
+  hosts?: AIChatPanelsHostProps['hosts'];
+  snippets?: AIChatPanelsHostProps['snippets'];
+  onOpenVaultNote?: AIChatPanelsHostProps['onOpenVaultNoteFromChat'];
+  onOpenVaultHost?: AIChatPanelsHostProps['onOpenVaultHostFromChat'];
+  onOpenVaultSection?: AIChatPanelsHostProps['onOpenVaultSectionFromChat'];
+  onOpenVaultSnippet?: AIChatPanelsHostProps['onOpenVaultSnippetFromChat'];
+}
+
+const AIChatPanelInstance: React.FC<{
+  context: AIPanelContext;
+  panelKey: string;
+  isVisible: boolean;
+  resolveExecutorContext: AIChatPanelsHostProps['resolveExecutorContext'];
+  notes: AIChatPanelsHostProps['notes'];
+  hosts: AIChatPanelsHostProps['hosts'];
+  snippets: AIChatPanelsHostProps['snippets'];
+  onOpenVaultNote?: AIChatPanelsHostProps['onOpenVaultNoteFromChat'];
+  onOpenVaultHost?: AIChatPanelsHostProps['onOpenVaultHostFromChat'];
+  onOpenVaultSection?: AIChatPanelsHostProps['onOpenVaultSectionFromChat'];
+  onOpenVaultSnippet?: AIChatPanelsHostProps['onOpenVaultSnippetFromChat'];
+}> = ({
+  context,
+  panelKey,
+  isVisible,
+  resolveExecutorContext,
+  notes,
+  hosts,
+  snippets,
+  onOpenVaultNote,
+  onOpenVaultHost,
+  onOpenVaultSection,
+  onOpenVaultSnippet,
+}) => {
+  const aiConfig = useContext(AIConfigContext);
+  if (!aiConfig) {
+    throw new Error('AIChatPanelInstance must be rendered inside AIStateProvider');
+  }
+  const {
+    sessions,
+    activeSessionIdMap,
+    draftsByScope,
+    panelViewByScope,
+  } = useAISessionsStore();
+
+  return (
+    <LazyLoadBoundary name="AI side panel" resetKey={panelKey}>
+      <Suspense fallback={<AIChatSidePanelFallback />}>
+            <LazyLoadBoundary name="AI side panel" resetKey={panelKey}>
               <Suspense fallback={<AIChatSidePanelFallback />}>
                 <LazyAIChatSidePanel
                     // Full list keeps fuzzy history ranking; panel areEqual only
@@ -624,21 +724,139 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
                     notes={notes}
                     hosts={hosts}
                     snippets={snippets}
-                    onOpenVaultNote={onOpenVaultNoteFromChat}
-                    onOpenVaultHost={onOpenVaultHostFromChat}
-                    onOpenVaultSection={onOpenVaultSectionFromChat}
-                    onOpenVaultSnippet={onOpenVaultSnippetFromChat}
+                    onOpenVaultNote={onOpenVaultNote}
+                    onOpenVaultHost={onOpenVaultHost}
+                    onOpenVaultSection={onOpenVaultSection}
+                    onOpenVaultSnippet={onOpenVaultSnippet}
                   />
               </Suspense>
             </LazyLoadBoundary>
-          </div>
-        );
-      })}
-    </>
+      </Suspense>
+    </LazyLoadBoundary>
   );
 };
 
-export const AIChatPanelsHost = memo(AIChatPanelsHostInner, aiChatPanelsHostAreEqual);
+/**
+ * Global AI side panel (VS Code style). It portals into the app shell host so the
+ * panel is available on every view — Vaults, SFTP, notes — instead of only inside
+ * the terminal layer, and it can collapse to an icon rail or hide completely.
+ * The scope follows the active tab when that tab has an AI context, otherwise the
+ * most recent terminal/workspace context keeps the conversation continuous.
+ */
+const AiGlobalSidebarInner: React.FC<AiGlobalSidebarProps> = ({
+  activeTabId,
+  contextsByTabId,
+  pendingTerminalSelection,
+  resolveExecutorContext,
+  notes,
+  hosts,
+  snippets,
+  onOpenVaultNote,
+  onOpenVaultHost,
+  onOpenVaultSection,
+  onOpenVaultSnippet,
+}) => {
+  const { t } = useI18n();
+  const { open, collapsed } = useAiSidebarState();
+  const [hostEl, setHostEl] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    setHostEl(document.getElementById(AI_SIDEBAR_HOST_ID));
+  }, []);
+
+  const context = useMemo(() => {
+    if (activeTabId) {
+      const active = contextsByTabId.get(activeTabId);
+      if (active) return active;
+    }
+    // No live terminal/workspace behind the active view: keep the panel useful
+    // instead of hiding it (the sidebar is app-wide, not a terminal accessory).
+    // A private scope id means the chat is never pruned when tabs close.
+    return {
+      scopeType: 'workspace' as const,
+      scopeTargetId: AI_SIDEBAR_SCOPE_ID,
+      scopeHostIds: [],
+      scopeLabel: t('ai.sidebar.scopeLabel'),
+      terminalSessions: [],
+    };
+  }, [activeTabId, contextsByTabId, t]);
+
+  // A pending terminal selection renders its picker in the per-tab instance.
+  if (!hostEl || !open || pendingTerminalSelection) return null;
+
+  const iconButton = 'flex h-6 w-6 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30';
+
+  return createPortal(
+    <div className="pointer-events-auto flex h-full items-stretch" data-ai-sidebar-root>
+      {collapsed ? (
+        <div className="flex w-11 flex-col items-center gap-2 border-l border-border/60 bg-background py-3">
+          <button
+            type="button"
+            className={iconButton}
+            aria-label={t('ai.sidebar.expand')}
+            title={t('ai.sidebar.expand')}
+            onClick={() => setAiSidebarState({ collapsed: false })}
+          >
+            <ChevronLeft size={14} />
+          </button>
+          <MessageSquare size={14} className="text-muted-foreground/50" />
+          <button
+            type="button"
+            className={iconButton}
+            aria-label={t('ai.sidebar.close')}
+            title={t('ai.sidebar.close')}
+            onClick={() => setAiSidebarState({ open: false })}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ) : (
+        <div className="flex h-full min-h-0 items-stretch">
+          <div className="flex w-7 flex-col items-center gap-2 border-l border-border/60 bg-background py-3">
+            <button
+              type="button"
+              className={iconButton}
+              aria-label={t('ai.sidebar.collapse')}
+              title={t('ai.sidebar.collapse')}
+              onClick={() => setAiSidebarState({ collapsed: true })}
+            >
+              <ChevronRight size={14} />
+            </button>
+            <button
+              type="button"
+              className={iconButton}
+              aria-label={t('ai.sidebar.close')}
+              title={t('ai.sidebar.close')}
+              onClick={() => setAiSidebarState({ open: false })}
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <div className="h-full min-h-0 w-[380px] max-w-[70vw] border-l border-border/60 bg-background">
+            <AIChatPanelInstance
+              context={context}
+              panelKey="ai-global-sidebar"
+              isVisible
+              resolveExecutorContext={resolveExecutorContext}
+              notes={notes ?? EMPTY_VAULT_CATALOG}
+              hosts={hosts ?? EMPTY_VAULT_CATALOG}
+              snippets={snippets ?? EMPTY_VAULT_CATALOG}
+              onOpenVaultNote={onOpenVaultNote}
+              onOpenVaultHost={onOpenVaultHost}
+              onOpenVaultSection={onOpenVaultSection}
+              onOpenVaultSnippet={onOpenVaultSnippet}
+            />
+          </div>
+        </div>
+      )}
+    </div>,
+    hostEl,
+  );
+};
+
+export const AiGlobalSidebar = memo(AiGlobalSidebarInner);
+AiGlobalSidebar.displayName = 'AiGlobalSidebar';
+
 AIChatPanelsHost.displayName = 'AIChatPanelsHost';
 
 export interface TerminalLayerProps {

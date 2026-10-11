@@ -21,7 +21,7 @@ import {
   resolveAgentCliVersion,
   resolveAgentModelSelection,
 } from '../infrastructure/ai/types';
-import { getExternalAgentSdkBackend, getManualAgentCommand, matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
+import { getExternalAgentSdkBackend, getManualAgentCommand, matchesManagedAgentConfig, migrateLegacyAgentSelection } from '../infrastructure/ai/managedAgents';
 import {
   appendComposerCustomModelPresets,
   resolveComposerCustomModelIds,
@@ -421,8 +421,30 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   );
   const activeSessionId = normalizedPanelView.mode === 'session' ? normalizedPanelView.sessionId : null;
   const isStreaming = activeSessionId ? streamingSessionIds.has(activeSessionId) : false;
+
+  // Composer safety net: the Send/Stop button reads the shared streaming set,
+  // which an external agent turn can leave behind when its completion
+  // notification never lands (the message arrives, the composer stays on Stop).
+  // No registered turn means the session is idle, so release the flag.
+  useEffect(() => {
+    if (!activeSessionId || !isStreaming) return;
+    if (getAgentRuntime().hasActiveTurn(activeSessionId)) return;
+    setStreamingForScope(activeSessionId, false);
+  }, [activeSessionId, isStreaming, setStreamingForScope]);
   const isSteering = activeSessionId != null && steeringSessionId === activeSessionId;
-  const currentAgentId = activeSession?.agentId ?? currentDraft?.agentId ?? defaultAgentId;
+  // Sessions created before the built-in agent was removed still carry its id;
+  // mapping it here keeps those chats displayable and sendable through the
+  // default external agent instead of resurrecting the retired agent.
+  const requestedAgentId = migrateLegacyAgentSelection(
+    activeSession?.agentId ?? currentDraft?.agentId ?? defaultAgentId,
+  );
+  // When the requested agent is not enabled (or discovery has not resolved it
+  // yet) fall back to the first sendable external agent, so the composer still
+  // works instead of sitting behind a disabled send button.
+  const currentAgentId = canSendWithAgent(requestedAgentId, externalAgents)
+    ? requestedAgentId
+    : externalAgents.find((agent) => canSendWithAgent(agent.id, externalAgents))?.id
+      ?? requestedAgentId;
   const observedContextUsage = useAgentContextUsage(activeSessionId);
   const inputValue = pendingComposerTextRef.current ?? currentDraft?.text ?? '';
   const files = currentDraft?.attachments ?? [];
@@ -1507,10 +1529,13 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
           });
         } catch (err) {
           reportStreamError(sessionId, abortController.signal, err);
+        } finally {
+          // Always release the composer: a throwing title/status update used to
+          // skip this and strand the panel on the Stop button.
+          updateLastMessage(sessionId, msg => msg.statusText ? { ...msg, statusText: '' } : msg);
+          setStreamingForScope(sessionId, false);
+          abortControllersRef.current.delete(sessionId);
         }
-        updateLastMessage(sessionId, msg => msg.statusText ? { ...msg, statusText: '' } : msg);
-        setStreamingForScope(sessionId, false);
-        abortControllersRef.current.delete(sessionId);
         autoTitleSession(sessionId, titleText);
       } else {
         const toolScope = {

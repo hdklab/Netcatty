@@ -1,6 +1,15 @@
 
 declare global {
   interface NetcattyBridge {
+    /**
+     * Server stats for a *local* terminal session. The SSH stats handler needs a
+     * connection to probe and answers "Session not found or not connected" for a
+     * local shell, so the Overview tab falls back to this. Same result shape as
+     * getServerStats; the main process rejects it for non-local sessions.
+     */
+    getLocalServerStats?(sessionId: string): Promise<
+      Awaited<ReturnType<NonNullable<NetcattyBridge["getServerStats"]>>>
+    >;
     probeSystemCapabilities?(sessionId: string): Promise<{
       success: boolean;
       pending?: boolean;

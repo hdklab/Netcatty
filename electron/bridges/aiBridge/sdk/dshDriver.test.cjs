@@ -53,11 +53,16 @@ async function withFakeSpawn(fn) {
 
 function makeEmitter() {
   const text = [];
+  const done = [];
   return {
     text,
+    done,
     emitter: {
       text(chunk) {
         if (chunk) text.push(chunk);
+      },
+      emitDone() {
+        done.push(true);
       },
     },
   };
@@ -67,7 +72,7 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 test("runs dsh headless in the session cwd and streams stdout as text", async () => {
   await withFakeSpawn(async ({ driver, calls }) => {
-    const { emitter, text } = makeEmitter();
+    const { emitter, text, done } = makeEmitter();
     const turn = driver.runDshTurn({
       prompt: "say pong",
       cwd: "/work/project",
@@ -85,6 +90,7 @@ test("runs dsh headless in the session cwd and streams stdout as text", async ()
     child.stdout.emit("data", "pong\n");
     child.emit("close", 0, null);
     await turn;
+    assert.deepEqual(done, [true], "driver must signal the done IPC");
 
     assert.deepEqual(text, ["pong\n"]);
   });
@@ -199,5 +205,106 @@ test("spawns with the merged env so an app-launched turn is keyed like the CLI",
     // Whatever ~/.dsh/env holds on this machine is merged in; PATH from the
     // launching environment must survive.
     assert.equal(calls[0].options.env.PATH, "/usr/bin");
+  });
+});
+
+test("parses the default model out of `dsh --dump-config`", () => {
+  const { parseDshDefaultModel, resolveDshProfile } = require("./dshDriver.cjs");
+  const dump = [
+    "# == @deepseek-ai/dsh-headless",
+    "- id: agent",
+    "  name: '@deepseek-ai/dsh-agent'",
+    "- id: agent-default-model",
+    "  name: '@deepseek-ai/dsh-agent-default-model'",
+    "  config:",
+    "    provider: deepseek-official",
+    "    model: deepseek-flash",
+    "# == @deepseek-ai/dsh-base",
+    "- id: jobs",
+    "  name: '@deepseek-ai/dsh-jobs-local'",
+    "  config:",
+    "    model: not-this-one",
+    "",
+  ].join("\n");
+
+  assert.deepEqual(parseDshDefaultModel(dump), {
+    provider: "deepseek-official",
+    model: "deepseek-flash",
+  });
+  // A config rendered from code (`!!js`) is not a literal model id.
+  assert.deepEqual(
+    parseDshDefaultModel("- id: agent-default-model\n  config:\n    model: !!js ctx.model\n"),
+    { provider: null, model: null },
+  );
+  assert.deepEqual(parseDshDefaultModel(""), { provider: null, model: null });
+  assert.equal(resolveDshProfile({}), "headless");
+  assert.equal(resolveDshProfile({ DSH_PROFILE: "web" }), "web");
+});
+
+test("reports the profile's configured model as the dsh catalog", async () => {
+  await withFakeSpawn(async ({ driver, calls }) => {
+    const promise = driver.listDshModels({ binPath: "/usr/bin/dsh", env: {} });
+    assert.deepEqual(calls[0].args, ["--profile", "headless", "--dump-config"]);
+    calls[0].child.stdout.emit(
+      "data",
+      "- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: deepseek-chat\n",
+    );
+    calls[0].child.emit("close", 0, null);
+    assert.deepEqual(await promise, {
+      currentModelId: "deepseek-chat",
+      models: [{ id: "deepseek-chat", name: "deepseek-chat" }],
+    });
+  });
+});
+
+test("applies a chosen model as a one-turn profile patch that keeps the provider", async () => {
+  const fs = require("node:fs");
+  await withFakeSpawn(async ({ driver, calls }) => {
+    // prepareDshModelPatch reads the current config first (same fake spawn).
+    const preparing = driver.prepareDshModelPatch({
+      model: "deepseek-chat",
+      binPath: "/usr/bin/dsh",
+      env: {},
+    });
+    calls[0].child.stdout.emit(
+      "data",
+      "- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: deepseek-flash\n",
+    );
+    calls[0].child.emit("close", 0, null);
+    const patch = await preparing;
+
+    assert.equal(patch.profile, "headless");
+    assert.equal(
+      fs.readFileSync(patch.patchPath, "utf8"),
+      "- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: deepseek-chat\n",
+    );
+
+    // The turn then boots the explicit profile with the overlay, and cleans the
+    // transient patch file up once the process exits.
+    const { emitter } = makeEmitter();
+    const turn = driver.runDshTurn({
+      prompt: "say pong",
+      emitter,
+      binPath: "/usr/bin/dsh",
+      patchPath: patch.patchPath,
+      profile: patch.profile,
+    });
+    const turnCall = calls[calls.length - 1];
+    assert.deepEqual(turnCall.args, [
+      "--profile", "headless", "--patch", patch.patchPath, "say pong",
+    ]);
+    turnCall.child.emit("close", 0, null);
+    await turn;
+    assert.equal(fs.existsSync(patch.patchPath), false);
+  });
+});
+
+test("keeps the headless shorthand when no model was chosen", async () => {
+  await withFakeSpawn(async ({ driver, calls }) => {
+    const { emitter } = makeEmitter();
+    const turn = driver.runDshTurn({ prompt: "hi", emitter, binPath: "dsh" });
+    assert.deepEqual(calls[0].args, ["headless", "hi"]);
+    calls[0].child.emit("close", 0, null);
+    await turn;
   });
 });

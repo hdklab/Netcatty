@@ -46,6 +46,7 @@ export function isAIChatSessionStreaming(sessionId: string | null | undefined): 
   return !!sessionId && sharedStreamingSessionIds.has(sessionId);
 }
 
+
 function emitStreamingStoreChange(): void {
   streamingSubscribers.forEach(listener => {
     try {

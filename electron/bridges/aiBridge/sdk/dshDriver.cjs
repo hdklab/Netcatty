@@ -15,6 +15,15 @@
  * `$DSH_HOME/env`, which a terminal launch sources but an app-spawned child
  * would otherwise miss (see readDshEnvFile).
  *
+ * Model selection: dsh takes no `--model` flag, so a model chosen in Netcatty is
+ * applied as a one-turn profile patch (`--patch <file>` overriding the
+ * `agent-default-model` entry's `model`), which is how dsh composes profiles.
+ * The user's own profile files are never touched.
+ *
+ * Model discovery (listDshModels) reads `dsh --profile <p> --dump-config` and
+ * reports the model that profile is configured with; dsh exposes no larger
+ * enumeration, so the renderer keeps its curated presets alongside it.
+ *
  * Deliberately not mapped yet (minimal first step):
  * - session resume (`resumeSessionId`) — every turn is a fresh dsh run;
  * - tool-call / file-change / plan events — only text deltas are emitted;
@@ -73,10 +82,141 @@ function buildDshEnv(env) {
   return { ...readDshEnvFile(base), ...base };
 }
 
-function runDshTurn({ prompt, cwd, env, binPath, emitter, signal }) {
+/** The dsh profile the app boots (`DSH_PROFILE`, default `headless`). */
+function resolveDshProfile(env = process.env) {
+  const configured = typeof env?.DSH_PROFILE === "string" ? env.DSH_PROFILE.trim() : "";
+  return configured || "headless";
+}
+
+/**
+ * Read the `agent-default-model` entry out of `dsh --profile <p> --dump-config`
+ * (a YAML listing of the composed profile tree). Returns nulls when the entry or
+ * its config is missing instead of throwing.
+ */
+function parseDshDefaultModel(raw) {
+  const result = { provider: null, model: null };
+  let inEntry = false;
+  for (const line of String(raw || "").split(/\r?\n/)) {
+    const idMatch = /^-\s*id:\s*(\S+)\s*$/.exec(line);
+    if (idMatch) {
+      inEntry = idMatch[1] === "agent-default-model";
+      continue;
+    }
+    if (!inEntry) continue;
+    if (/^-\s/.test(line)) {
+      inEntry = false;
+      continue;
+    }
+    const kv = /^\s+(provider|model):\s*(.+?)\s*$/.exec(line);
+    // `!!js` expressions are code, not literal ids; ignore them.
+    if (kv && !kv[2].startsWith("!!")) {
+      result[kv[1]] = kv[2].replace(/^["']|["']$/g, "");
+    }
+  }
+  return result;
+}
+
+/** Run a short-lived dsh command and resolve with its stdout (never rejects). */
+function captureDsh(executable, args, env, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    const spec = prepareCommandForSpawn(executable, args);
+    let child;
+    try {
+      child = spawn(spec.command, spec.args, {
+        env: env || process.env,
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+        shell: spec.shell,
+      });
+    } catch {
+      resolve("");
+      return;
+    }
+    let out = "";
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Already gone.
+      }
+    }, timeoutMs);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      out += chunk;
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve("");
+    });
+    child.on("close", () => {
+      clearTimeout(timer);
+      resolve(out);
+    });
+  });
+}
+
+/** The model/provider that profile is configured with ({} when unavailable). */
+async function readDshDefaultModel({ binPath, env } = {}) {
+  const executable = binPath || "dsh";
+  const profile = resolveDshProfile(env);
+  const out = await captureDsh(executable, ["--profile", profile, "--dump-config"], env);
+  return parseDshDefaultModel(out);
+}
+
+/**
+ * Catalog for the picker. dsh exposes only the active model, so that single
+ * entry is the truthful answer; the renderer merges its curated presets on top
+ * and a chosen preset is applied per turn through prepareDshModelPatch.
+ */
+async function listDshModels({ binPath, env } = {}) {
+  const current = await readDshDefaultModel({ binPath, env });
+  return {
+    currentModelId: current.model || null,
+    models: current.model ? [{ id: current.model, name: current.model }] : [],
+  };
+}
+
+/** Directory for the transient one-turn profile patch file. */
+function resolveDshPatchDir() {
+  try {
+    // Netcatty's own temp directory (AGENTS.md: never write to os.tmpdir()).
+    const { getTempFilePath } = require("../../tempDirBridge.cjs");
+    const file = getTempFilePath("dsh-model-patch.yml");
+    if (file) return path.dirname(file);
+  } catch {
+    // Not running inside Electron (unit tests): fall back to an OS temp dir.
+  }
+  return path.join(os.tmpdir(), "netcatty-dsh");
+}
+
+/**
+ * Write a one-turn profile patch overriding `agent-default-model.config.model`
+ * and return `{ patchPath, profile }`. dsh replaces the entry rather than
+ * merging it, so the provider is copied from the current config.
+ */
+async function prepareDshModelPatch({ model, binPath, env } = {}) {
+  const profile = resolveDshProfile(env);
+  const current = await readDshDefaultModel({ binPath, env });
+  const dir = resolveDshPatchDir();
+  await fs.promises.mkdir(dir, { recursive: true });
+  const file = path.join(dir, `dsh-model-${process.pid}-${Date.now()}.yml`);
+  const lines = ["- id: agent-default-model", "  config:"];
+  if (current.provider) lines.push(`    provider: ${current.provider}`);
+  lines.push(`    model: ${model}`);
+  await fs.promises.writeFile(file, `${lines.join("\n")}\n`, "utf8");
+  return { patchPath: file, profile };
+}
+
+function runDshTurn({ prompt, cwd, env, binPath, emitter, signal, patchPath, profile }) {
   return new Promise((resolve, reject) => {
     const executable = binPath || "dsh";
-    const spec = prepareCommandForSpawn(executable, ["headless", String(prompt ?? "")]);
+    // With a model override dsh is invoked explicitly (profile + patch) because
+    // the `headless` shorthand takes no launcher flags; otherwise the shorthand
+    // stays exactly as it was.
+    const args = patchPath
+      ? ["--profile", profile || resolveDshProfile(env), "--patch", patchPath, String(prompt ?? "")]
+      : ["headless", String(prompt ?? "")];
+    const spec = prepareCommandForSpawn(executable, args);
 
     let child;
     try {
@@ -137,6 +277,13 @@ function runDshTurn({ prompt, cwd, env, binPath, emitter, signal }) {
 
     const cleanup = () => {
       if (signal) signal.removeEventListener("abort", abort);
+      if (patchPath) {
+        try {
+          fs.unlinkSync(patchPath);
+        } catch {
+          // Already removed (or never written).
+        }
+      }
     };
 
     child.on("error", (err) => {
@@ -158,6 +305,11 @@ function runDshTurn({ prompt, cwd, env, binPath, emitter, signal }) {
         return;
       }
       if (code === 0) {
+        // The renderer's SDK turn promise only settles when the main process
+        // signals "done" (see sdkAgentAdapter.onAiSdkAgentDone). Every other
+        // driver emits it; skipping it left the chat composer stuck on Stop and
+        // the send gate held after a perfectly successful answer.
+        emitter.emitDone?.();
         resolve();
         return;
       }
@@ -173,5 +325,10 @@ module.exports = {
   runDshTurn,
   readDshEnvFile,
   buildDshEnv,
+  resolveDshProfile,
+  parseDshDefaultModel,
+  readDshDefaultModel,
+  listDshModels,
+  prepareDshModelPatch,
   REASONING_LABEL,
 };

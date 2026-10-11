@@ -12,7 +12,8 @@ export type CodingCliProviderId =
   | 'codebuddy'
   | 'grok'
   | 'mimo'
-  | 'dsh';
+  | 'dsh'
+  | 'hermes';
 
 export type CodingCliProvider = {
   id: CodingCliProviderId;
@@ -116,6 +117,13 @@ export const CODING_CLI_PROVIDERS: readonly CodingCliProvider[] = [
     command: 'dsh',
     titleHints: ['deepseek harness', 'deepseek', 'dsh'],
     iconKey: 'dsh',
+  },
+  {
+    id: 'hermes',
+    label: 'Hermes',
+    command: 'hermes',
+    titleHints: ['hermes', 'hermes agent'],
+    iconKey: 'hermes',
   },
 ] as const;
 

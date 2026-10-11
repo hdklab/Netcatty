@@ -373,3 +373,82 @@ test('AgentRuntime runTurn rejects a concurrent start for the same session', asy
   await first;
   assert.equal(driver.runs.length, 1);
 });
+
+test('AgentRuntime clears the streaming flag when a driver throws', async () => {
+  class ThrowingDriver implements TurnDriver {
+    readonly backend = 'catty' as const;
+    async run(): Promise<void> {
+      throw new Error('driver exploded');
+    }
+    abort(): void {}
+  }
+
+  const runtime = new AgentRuntime({ drivers: [new ThrowingDriver()], traceStore: new TraceStore() });
+  const streamingCalls: Array<[string, boolean]> = [];
+
+  await assert.rejects(() => runtime.runTurn({
+    backend: 'catty',
+    chatSessionId: 'chat-throw',
+    sendScopeKey: 'chat-throw',
+    userText: 'hi',
+    signal: new AbortController().signal,
+    currentSession: undefined,
+    assistantMsgId: 'assistant-1',
+    context: {
+      activeProvider: undefined,
+      activeModelId: '',
+      scopeType: 'terminal',
+      globalPermissionMode: 'confirm',
+      terminalSessions: [],
+      autoTitleSession: () => {},
+    },
+    maxIterations: 5,
+    ui: {
+      addMessageToSession: () => {},
+      updateLastMessage: () => {},
+      updateMessageById: () => {},
+      reportStreamError: () => {},
+      setStreamingForScope: (key, value) => { streamingCalls.push([key, value]); },
+    },
+  }), /driver exploded/);
+
+  assert.deepEqual(streamingCalls, [['chat-throw', false]]);
+});
+
+test('AgentRuntime clears the streaming flag when the session is already busy', async () => {
+  const driver = new MockTurnDriver();
+  const runtime = new AgentRuntime({ drivers: [driver], traceStore: new TraceStore() });
+  const streamingCalls: Array<[string, boolean]> = [];
+  const ui = {
+    addMessageToSession: () => {},
+    updateLastMessage: () => {},
+    updateMessageById: () => {},
+    reportStreamError: () => {},
+    setStreamingForScope: (key: string, value: boolean) => { streamingCalls.push([key, value]); },
+  };
+  const baseInput = {
+    backend: 'catty' as const,
+    chatSessionId: 'chat-busy',
+    sendScopeKey: 'chat-busy',
+    userText: 'hi',
+    signal: new AbortController().signal,
+    currentSession: undefined,
+    assistantMsgId: 'assistant-1',
+    context: {
+      activeProvider: undefined,
+      activeModelId: '',
+      scopeType: 'terminal' as const,
+      globalPermissionMode: 'confirm' as const,
+      terminalSessions: [],
+      autoTitleSession: () => {},
+    },
+    maxIterations: 5,
+    ui,
+  };
+
+  const first = runtime.runTurn(baseInput);
+  await assert.rejects(() => runtime.runTurn(baseInput), /already in progress/i);
+  await first;
+  // Both turns release the flag: the rejected one never ran a driver.
+  assert.deepEqual(streamingCalls.filter(([, v]) => v === false).map(([k]) => k), ['chat-busy', 'chat-busy']);
+});

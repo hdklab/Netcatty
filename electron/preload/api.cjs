@@ -404,6 +404,9 @@ function createPreloadApi(ctx) {
   getServerStats: async (sessionId) => {
     return ipcRenderer.invoke("netcatty:ssh:stats", { sessionId });
   },
+  getLocalServerStats: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:system:localServerStats", { sessionId });
+  },
   probeSystemCapabilities: async (sessionId) => {
     return ipcRenderer.invoke("netcatty:system:probeCapabilities", { sessionId });
   },

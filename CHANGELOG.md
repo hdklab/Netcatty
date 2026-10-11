@@ -3,13 +3,19 @@
 ## [Unreleased] - 2026-03-11
 
 ### 修复
-- 修复 Vaults 页（或任何非终端标签页）点击顶部 AI 助手按钮完全没反应：AI 面板只存在于终端层且需要终端/工作区上下文，之前只会把"已打开"状态写到永远画不出来的标签上。现在会先切到终端——有会话就跳到该标签并打开面板，没有任何会话则先开一个本地终端再打开
+- 修复外部 Agent（DeepSeek Harness / Hermes）答完以后 AI 面板一直显示 Stop 方块、箭头不再出现、并且再也发不出消息：渲染层靠主进程的 `done` IPC 结算轮次 promise，而 `dshDriver` / `hermesDriver` 没有发它，轮次永不收尾，于是 streaming 标记、发送闸门与 `isSending` 一起被卡住。两个驱动补上 `emitDone`，`sdkStreamHandlers` 再对"驱动跑完却没发 done"统一兜底（渲染层去重），避免以后新增驱动再犯
+- 修复 Vaults / SFTP 等非终端页顶部 AI 按钮的行为：面板改为应用级全局侧栏（见"功能"），按钮只负责显示/隐藏，不再为此切换标签或新建终端
 
 ### 设计原理
-- `application/state/resolveAiPanelTerminalTab.ts` 把"当前标签能否承载 AI 面板"和"该切到哪个终端标签"提成纯函数，便于单测（`resolveAiPanelTerminalTab.test.ts`）
+- AI 面板的 Send/Stop 由 `useAIChatStreaming` 的模块级共享 streaming 集合驱动（终端层与全局侧栏两个实例共用）；`AgentRuntime.runTurn` 现在在自己拥有的每条退出路径上释放它，面板再与 `AgentRuntime.hasActiveTurn()` 对账，任何残留都不会再表现为永久 Stop
+- 外部 SDK 驱动的完成契约：驱动结束必须 `emitter.emitDone()`——渲染层 `sdkAgentAdapter` 靠 `onAiSdkAgentDone` 结算轮次，漏发即"回答已到但轮次不收尾"
+- 全局 AI 侧栏不提升 `useAIState`，而是把面板 `createPortal` 到 `AppView` 内容区里的 `#ai-sidebar-host`，并且该宿主是视图栈的 flex 兄弟节点：侧栏占位（内容区变窄）而非浮层，才不会盖住右侧按钮
 - dsh 走 `electron/bridges/aiBridge/sdk/dshDriver.cjs`：`runTurn` 只做 spawn + stdout 转发；会话续接、工具调用事件、附件暂未映射，属刻意的最小第一步
 
 ### 功能
+- 本地终端的「系统 → 概览」现在有数据了：SSH 统计路径（`netcatty:ssh:stats`）需要可探测的连接，本地 shell 只会回 "Session not found or not connected"，于是概览一直空白。新增本机统计采集器（Node `os` + `/proc/meminfo` + `/etc/os-release` + `statfs` + `/sys/class/net`，CPU/网络用两次采样求增量）与 IPC `netcatty:system:localServerStats`；渲染层仅在 SSH 统计以"未连接"失败时回退，且主进程会校验该会话确实是本地会话，已断开的远端会话不会被本机数据顶替
+- AI 助手改为 VS Code 式全局侧栏：顶栏按钮显示/隐藏、可收成 44px 图标栏（状态存 `netcatty_ai_sidebar_v1`）；终端侧栏的 AI 入口也指向它，避免两个面板并存
+- 新增 `docs/external-mcp.md`：对外 MCP 的开启方式、发现文件字段、15+ 按需工具清单、权限语义与 Hermes 接入命令
 - 自建更新源可在应用内配置：设置 > 系统 > 软件更新 > 自建更新服务器填入「更新源地址 / 下载页地址」保存即生效（写入 `<userData>/self-hosted-update.json`，运行时热切换 feed，无需重启）；`NETCATTY_UPDATE_SERVER_URL` 仍优先并在界面上标注
 - AI 助手 agent 列表新增 DeepSeek Harness（`dsh`）：自动发现 PATH 上的 `dsh`，选中后按最小可用方式接入（`dsh headless "<任务>"`，stdout 作为回复流），模型/凭据仍由 dsh 自己管理（`$DSH_HOME` / `DEEPSEEK_API_KEY`）
 - 取消云端（GitHub）更新：应用不再向 GitHub 检查或下载更新，更新源改为预留的自建服务器（`infrastructure/config/selfHostedEndpoints.json` 的 `updateServerUrl`，或用 `NETCATTY_UPDATE_SERVER_URL` 启动时覆盖）；未配置时不发起任何检查、不显示下载入口，设置页明确提示"未配置更新源"
@@ -45,3 +51,17 @@
 - `checkNow` 语义：使用 GitHub API（`performCheck`）检测是否有新版本，若发现更新且 electron-updater 尚未开始下载，则异步触发 `bridge.checkForUpdate()` 启动自动下载流程
 - 此功能仅对打包后的应用（Windows NSIS、macOS dmg/zip、Linux AppImage/deb/rpm/pacman）生效，dev 模式需配合 `forceDevUpdateConfig=true` + `dev-app-update.yml` 测试（见 `.gitignore`）
 - `hasUpdate` 旧 toast 在 `autoDownloadStatus !== 'idle'` 时自动抑制，避免与新 toast 重复
+
+### 功能（AI Agent 列表）
+- 新增 Hermes（`hermes`，Nous Research 的 Hermes Agent CLI）：自动发现 PATH 上的 `hermes`，每轮以 oneshot 模式执行（`hermes -z "<任务>"`），stdout 作为回复流；模型、记忆与凭据由 Hermes 自己的配置管理
+- 设置 > AI > Agent 新增「DeepSeek Harness」与「Hermes」两张卡片（检测状态 / 自定义路径 / 重新检测 / 重置），与其他外部 Agent 卡片一致
+
+### 变更（移除内置 Catty）
+- 内置 Catty（Netcatty 自带 Agent）不再出现：设置里的「默认 Agent」下拉与聊天面板的 Agent 选择器都只列外部 CLI Agent，应用只用外部 Agent 运行对话
+- 新会话默认 Agent 改为 dsh；历史遗留的 `catty` 选择在读取时迁移为默认外部 Agent（`migrateLegacyAgentSelection`），旧会话仍可打开并改由外部 Agent 继续
+- 一个外部 Agent 都没启用时，面板的选择器显示「未配置 Agent」并给出启用指引
+
+### 设计原理（AI Agent 接线）
+- 每个 Agent 的路径状态改为键控表（`MANAGED_AGENT_KEYS` / `agentPathControlsRef`）取代三元链：原来未覆盖的 key 会把写操作静默落到 mimo 的状态上
+- 新增一个 Agent 的触点固定为五处：`domain/codingCliProviders.ts`（终端标签识别）、`domain/agentIcon.ts`（图标）、`infrastructure/ai/managedAgents.ts`（键与元数据）、`electron/bridges/aiBridge/agentDiscoveryHandlers.cjs`（发现与版本探测）、`electron/bridges/aiBridge/sdk/<name>Driver.cjs` + `sdk/index.cjs`（执行），设置页复用 `CopilotCliCard` 的 `i18nPrefix`
+- 「默认 Agent」的空值兜底从内置 Catty 改为 `DEFAULT_EXTERNAL_AGENT_ID`（dsh），与 `canSendWithAgent` 只认可用外部 Agent 保持一致

@@ -20,6 +20,7 @@ const grok = require("./grokDriver.cjs");
 const grokAcp = require("./grokAcpDriver.cjs");
 const mimo = require("./mimoDriver.cjs");
 const dsh = require("./dshDriver.cjs");
+const hermes = require("./hermesDriver.cjs");
 const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 
 function hasCodebuddyQueryOnlyOptions(options) {
@@ -433,6 +434,10 @@ const DRIVER_REGISTRY = {
   // for what is intentionally not mapped yet (resume, tool events, attachments).
   dsh: {
     async runTurn(ctx) {
+      // dsh has no --model flag: a chosen model becomes a one-turn profile patch.
+      const patch = ctx.model
+        ? await dsh.prepareDshModelPatch({ model: ctx.model, binPath: ctx.binPath, env: ctx.env })
+        : null;
       return dsh.runDshTurn({
         prompt: ctx.prompt,
         cwd: ctx.cwd,
@@ -440,7 +445,29 @@ const DRIVER_REGISTRY = {
         binPath: ctx.binPath,
         emitter: ctx.emitter,
         signal: ctx.abortController?.signal || ctx.signal,
+        patchPath: patch?.patchPath,
+        profile: patch?.profile,
       });
+    },
+    // dsh exposes only the model its profile is configured with.
+    async listModels(ctx) {
+      return dsh.listDshModels({ binPath: ctx.binPath, env: ctx.env });
+    },
+  },
+  hermes: {
+    async runTurn(ctx) {
+      return hermes.runHermesTurn({
+        prompt: ctx.prompt,
+        cwd: ctx.cwd,
+        env: ctx.env,
+        binPath: ctx.binPath,
+        emitter: ctx.emitter,
+        signal: ctx.abortController?.signal || ctx.signal,
+        model: ctx.model,
+      });
+    },
+    async listModels(ctx) {
+      return hermes.listHermesModels({ env: ctx.env });
     },
   },
 };

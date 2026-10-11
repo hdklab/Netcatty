@@ -5,6 +5,7 @@ export const zhCnSystemManagerMessages: Messages = {
 
   'systemManager.noSession': '没有活动的终端会话。',
   'systemManager.notConnected': '请先连接到主机以管理进程与服务。',
+  'systemManager.connectionLost': '该会话的连接已失效（标签可能已断开），请重新连接该标签后再试。',
   'systemManager.empty': '暂无数据。',
   'systemManager.tabs.overview': '概览',
   'systemManager.tabs.processes': '进程',

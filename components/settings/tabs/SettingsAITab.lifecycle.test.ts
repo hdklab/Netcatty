@@ -20,6 +20,10 @@ assert.ok(resolverStart >= 0 && resolverEnd > resolverStart);
 const declarations = source.slice(lifecycleStart, lifecycleEnd) + source.slice(resolverStart, resolverEnd);
 const setters = ["Codex", "Claude", "Copilot", "Cursor", "Codebuddy", "Opencode", "Grok"];
 const bindings = ["useRef", "useEffect", "useCallback", "getBridge", "applyResolvedAgentPath", "cursorApiKeyEncrypted",
+  // The production code now reads per-agent path controls from a keyed ref and
+  // iterates MANAGED_AGENT_KEYS in the unmount cleanup; both live outside the
+  // extracted slices, so the harness supplies them.
+  "MANAGED_AGENT_KEYS", "readAgentPathControls", "agentPathControlsRef",
   ...setters.map(name => `setIsResolving${name}`)];
 const runHooks = vm.runInNewContext(ts.transpile(`(function(ctx) {
   const { ${bindings.join(",")} } = ctx;
@@ -47,6 +51,9 @@ async function mountResolver() {
       getBridge: () => bridge,
       applyResolvedAgentPath: (_key: string, result: unknown) => applied.push(result),
       cursorApiKeyEncrypted: "",
+      MANAGED_AGENT_KEYS: ["codex", "claude", "copilot", "cursor", "codebuddy", "opencode", "grok", "mimo", "dsh", "hermes"],
+      readAgentPathControls: () => ({ setResolving: setBusy }),
+      agentPathControlsRef: { current: null },
       ...Object.fromEntries(setters.map(name => [`setIsResolving${name}`, setBusy])),
     });
     return null;

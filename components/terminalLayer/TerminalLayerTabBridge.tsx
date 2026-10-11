@@ -14,6 +14,7 @@ import type { Host, TerminalSession, Workspace } from '../../types';
 import { resolveTerminalHibernateEnabled } from '../../domain/terminalHibernate';
 import { resolveTerminalSftpHost } from '../../domain/sftpTerminalIdentity';
 import { shouldMeasureTerminalLayerLayout } from '../terminalPaneVisibility';
+import { AIStateProvider, AiGlobalSidebar } from './TerminalLayerSupport';
 import { TerminalLayerView } from './TerminalLayerView';
 import { useTerminalAiContexts } from '../../application/state/useTerminalAiContexts';
 import { useTerminalLayerEffects } from './useTerminalLayerEffects';
@@ -723,5 +724,21 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     s.onToggleGlobalBroadcastRef,
   ]);
 
-  return <TerminalLayerView ctx={ctx} />;
+  // The global AI sidebar is mounted here on purpose: this bridge renders into
+  // the always-present top tab bar, while the AI state tree used to live inside
+  // the side panel (which only exists once a tool tab is open). Portal-rendering
+  // from here keeps the sidebar available on every view -- Vaults, SFTP, notes.
+  return (
+    <>
+      <TerminalLayerView ctx={ctx} />
+      <AIStateProvider>
+        <AiGlobalSidebar
+          activeTabId={activeTabId}
+          contextsByTabId={aiContextsByTabId}
+          resolveExecutorContext={resolveAIExecutorContext}
+          pendingTerminalSelection={s.pendingTerminalSelectionForAI}
+        />
+      </AIStateProvider>
+    </>
+  );
 }

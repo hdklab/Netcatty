@@ -1,6 +1,7 @@
 "use strict";
 
 const { createExecOnSessionApi } = require("./systemManager/execOnSession.cjs");
+const { collectLocalServerStats } = require("./systemManager/localServerStats.cjs");
 const { createTmuxOpsApi } = require("./systemManager/tmuxOps.cjs");
 const { createDockerOpsApi } = require("./systemManager/dockerOps.cjs");
 const { createGpuOpsApi } = require("./systemManager/gpuOps.cjs");
@@ -496,6 +497,7 @@ function createSystemManagerBridge(deps) {
     if (terminalWorkerManager) {
       [
         "netcatty:system:probeCapabilities",
+        "netcatty:system:localServerStats",
         "netcatty:system:listProcesses",
         "netcatty:system:signalProcess",
         "netcatty:system:setupOsc7Tracking",
@@ -519,6 +521,23 @@ function createSystemManagerBridge(deps) {
       ].forEach((channel) => registerWorkerHandle(ipcMain, terminalWorkerManager, channel));
       return;
     }
+    // Local terminal stats: the SSH stats path cannot probe a local shell, so
+    // the Overview tab uses this instead (same ServerStats shape).
+    ipcMain.handle("netcatty:system:localServerStats", (_event, payload) => {
+    const sessionId = payload?.sessionId;
+    // Only a real local session may use this path: a disconnected *remote*
+    // session must keep reporting its own error instead of showing the app
+    // machine's numbers.
+    if (!sessionId || typeof isLocalSession !== "function" || !isLocalSession(sessionId)) {
+      return { success: false, error: "Session not found or not connected" };
+    }
+    try {
+      return { success: true, stats: collectLocalServerStats() };
+    } catch (err) {
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
     ipcMain.handle("netcatty:system:probeCapabilities", probeCapabilities);
     ipcMain.handle("netcatty:system:listProcesses", listProcesses);
     ipcMain.handle("netcatty:system:signalProcess", signalProcess);

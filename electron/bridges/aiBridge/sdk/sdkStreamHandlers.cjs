@@ -603,6 +603,16 @@ function registerSdkStreamHandlers(ctx) {
         mcpServerBridge.setChatSessionCancelled?.(chatSessionId, false);
 
         const emitter = createStreamEmitter({ safeSend, sender: event.sender, requestId });
+        // Drivers are supposed to signal "done" themselves, but a driver that
+        // forgets it strands the renderer: its turn promise never settles, so
+        // the chat composer stays on Stop and the send gate stays held. Signal
+        // it centrally once the turn succeeded; repeats are ignored renderer-side.
+        let doneSignalled = false;
+        const signalDone = () => {
+          if (doneSignalled) return;
+          doneSignalled = true;
+          emitter.emitDone();
+        };
         try {
           const shellEnv = await getShellEnv();
           const effectiveMode = normalizeToolIntegrationMode(toolIntegrationMode);
@@ -785,6 +795,7 @@ function registerSdkStreamHandlers(ctx) {
           const driver = getDriver(backendKey);
           const driverEmitter = {
             ...emitter,
+            emitDone: signalDone,
             sessionId(sessionId) {
               if (sessionId) {
                 emitter.emitEvent({
@@ -870,6 +881,7 @@ function registerSdkStreamHandlers(ctx) {
           const result = codexRuntime === "app-server"
             ? await codexAppServerRuntime.runTurn(commonTurnContext)
             : await driver.runTurn(commonTurnContext);
+          signalDone();
 
           // Persist any new session id for resume on the next turn.
           const newSessionId = result?.sessionId || result?.threadId;

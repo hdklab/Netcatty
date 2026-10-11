@@ -35,9 +35,11 @@ const agents: ExternalAgentConfig[] = [
   },
 ];
 
-test('canSendWithAgent allows Catty and enabled external agents', () => {
-  assert.equal(canSendWithAgent('catty', agents), true);
+test('canSendWithAgent allows enabled external agents only', () => {
   assert.equal(canSendWithAgent('enabled-agent', agents), true);
+  // The built-in Catty agent is no longer offered, so a leftover "catty"
+  // selection must not be sendable.
+  assert.equal(canSendWithAgent('catty', agents), false);
 });
 
 test('canSendWithAgent blocks missing or disabled external agents', () => {

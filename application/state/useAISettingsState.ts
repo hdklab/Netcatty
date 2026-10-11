@@ -20,6 +20,7 @@ import {
 } from '../../infrastructure/config/storageKeys';
 import type { AIQuickMessage } from '../../infrastructure/ai/quickMessages';
 import { sanitizeQuickMessages } from '../../infrastructure/ai/quickMessages';
+import { migrateLegacyAgentSelection } from '../../infrastructure/ai/managedAgents';
 import type {
   AIPermissionMode,
   AIToolIntegrationMode,
@@ -70,7 +71,7 @@ export function useAISettingsState() {
     localStorageAdapter.read<ExternalAgentConfig[]>(STORAGE_KEY_AI_EXTERNAL_AGENTS) ?? []
   );
   const [defaultAgentId, setDefaultAgentIdRaw] = useState<string>(() =>
-    localStorageAdapter.readString(STORAGE_KEY_AI_DEFAULT_AGENT) ?? 'catty'
+    migrateLegacyAgentSelection(localStorageAdapter.readString(STORAGE_KEY_AI_DEFAULT_AGENT))
   );
   const [commandBlocklist, setCommandBlocklistRaw] = useState<string[]>(readCommandBlocklistSetting);
   const [commandTimeout, setCommandTimeoutRaw] = useState<number>(() =>
@@ -247,7 +248,7 @@ export function useAISettingsState() {
             break;
           }
           case STORAGE_KEY_AI_DEFAULT_AGENT:
-            setDefaultAgentIdRaw(localStorageAdapter.readString(STORAGE_KEY_AI_DEFAULT_AGENT) ?? 'catty');
+            setDefaultAgentIdRaw(migrateLegacyAgentSelection(localStorageAdapter.readString(STORAGE_KEY_AI_DEFAULT_AGENT)));
             break;
           case STORAGE_KEY_AI_COMMAND_BLOCKLIST: {
             const blocklist = readCommandBlocklistSetting();

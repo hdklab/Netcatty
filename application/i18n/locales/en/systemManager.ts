@@ -5,6 +5,7 @@ export const enSystemManagerMessages: Messages = {
 
   'systemManager.noSession': 'No active terminal session.',
   'systemManager.notConnected': 'Connect to a host to manage processes and services.',
+  'systemManager.connectionLost': 'This session is no longer connected. Reconnect the tab, then retry.',
   'systemManager.empty': 'No data available.',
   'systemManager.tabs.overview': 'Overview',
   'systemManager.tabs.processes': 'Processes',

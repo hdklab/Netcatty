@@ -7,6 +7,7 @@ import { releaseEditorTabSaveCoordinator, saveEditorTab } from '../state/editorT
 import { focusEditorInWindow, popOutEditorTab } from '../state/editorWindowClient';
 import { useTerminalHostTreeLayoutWidth } from '../state/terminalHostTreeStore';
 import { TopTabs } from '../../components/TopTabs';
+import { AI_SIDEBAR_HOST_ID } from '../state/aiSidebarStore';
 import { VaultView } from '../../components/VaultView';
 import { QuickAddSnippetDialog } from '../../components/QuickAddSnippetDialog';
 import { QuickScriptEditorDialog } from '../../components/scripts/QuickScriptEditorDialog';
@@ -571,7 +572,11 @@ function AppViewInner({ domains }: AppViewProps) {
         hostById={hostById}
       />
 
-      <div className="flex-1 relative min-h-0">
+      {/* The AI sidebar is a flex sibling of the view stack rather than an overlay:
+          it takes layout space, so opening it never covers buttons at the right
+          edge of the vault / SFTP / editor views. */}
+      <div className="flex-1 flex min-h-0">
+        <div className="flex-1 relative min-h-0 min-w-0">
         <AppHostTreeLayer
           enabled={showHostTreeSidebar}
           hosts={hosts}
@@ -833,9 +838,15 @@ function AppViewInner({ domains }: AppViewProps) {
           </LazyLoadBoundary>
         ))}
 
-        <AppPluginKeybindingThemeHost
-          sessions={sessions}
-          workspaces={workspaces}
+          <AppPluginKeybindingThemeHost
+            sessions={sessions}
+            workspaces={workspaces}
+          />
+        </div>
+        {/* Portal host for the global AI side panel (see AiGlobalSidebar). */}
+        <div
+          id={AI_SIDEBAR_HOST_ID}
+          className="pointer-events-none relative z-30 flex h-full shrink-0"
         />
       </div>
 

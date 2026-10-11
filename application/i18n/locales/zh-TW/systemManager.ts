@@ -5,6 +5,7 @@ export const zhTwSystemManagerMessages: Messages = {
 
   'systemManager.noSession': '沒有使用中的終端工作階段。',
   'systemManager.notConnected': '請先連線到主機以管理程序與服務。',
+  'systemManager.connectionLost': '此工作階段的連線已失效（分頁可能已中斷），請重新連線後再試。',
   'systemManager.empty': '暫無資料。',
   'systemManager.tabs.overview': '概覽',
   'systemManager.tabs.processes': '程序',

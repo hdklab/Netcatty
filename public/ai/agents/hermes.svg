@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Hermes">
+  <!-- Monochrome mark: an H under a wing, for the Hermes Agent CLI. -->
+  <path d="M6 8.5v11" />
+  <path d="M18 8.5v11" />
+  <path d="M6 14h12" />
+  <path d="M3.5 5.2c2.6-2 6.2-2.4 8.5-.6" />
+  <path d="M20.5 5.2c-2.6-2-6.2-2.4-8.5-.6" />
+</svg>

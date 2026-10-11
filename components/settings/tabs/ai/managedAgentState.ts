@@ -1,5 +1,6 @@
 import type { ExternalAgentConfig } from "../../../../infrastructure/ai/types";
 import {
+  DEFAULT_EXTERNAL_AGENT_ID,
   type ManagedAgentKey,
   isPathLikeCommand,
 } from "../../../../infrastructure/ai/managedAgents";
@@ -61,7 +62,7 @@ export function buildManagedAgentState(
             cursorAuthMode: existingManaged.cursorAuthMode === "cli-login" ? "cli-login" : "api-key",
           },
         ],
-        defaultAgentId: existingManaged.id === defaultAgentId ? "catty" : defaultAgentId,
+        defaultAgentId: existingManaged.id === defaultAgentId ? DEFAULT_EXTERNAL_AGENT_ID : defaultAgentId,
       };
     }
     if (agentKey === "codebuddy") {
@@ -85,14 +86,14 @@ export function buildManagedAgentState(
               available: false,
             },
           ],
-          defaultAgentId: existingManaged.id === defaultAgentId ? "catty" : defaultAgentId,
+          defaultAgentId: existingManaged.id === defaultAgentId ? DEFAULT_EXTERNAL_AGENT_ID : defaultAgentId,
         };
       }
     }
     return {
       agents: otherAgents,
       defaultAgentId: managedAgents.some((agent) => agent.id === defaultAgentId)
-        ? "catty"
+        ? DEFAULT_EXTERNAL_AGENT_ID
         : defaultAgentId,
     };
   }
@@ -238,5 +239,7 @@ export function getInitialManagedAgentPaths(agents: ExternalAgentConfig[]) {
     opencode: getAutoManagedAgentStoredPath(agents, "opencode") ?? "",
     grok: getAutoManagedAgentStoredPath(agents, "grok") ?? "",
     mimo: getAutoManagedAgentStoredPath(agents, "mimo") ?? "",
+    dsh: getAutoManagedAgentStoredPath(agents, "dsh") ?? "",
+    hermes: getAutoManagedAgentStoredPath(agents, "hermes") ?? "",
   };
 }

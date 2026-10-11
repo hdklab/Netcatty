@@ -92,27 +92,44 @@ export class AgentRuntime {
     };
   }
 
+  /**
+   * Whether a turn is currently registered for `chatSessionId`. The chat panel
+   * uses this to reconcile its Stop button against the runtime: the shared
+   * streaming set can outlive a turn whose completion notification was lost, and
+   * a missing turn is proof the composer is idle again.
+   */
+  hasActiveTurn(chatSessionId: string): boolean {
+    return this.activeTurnPromises.has(chatSessionId);
+  }
+
   async runTurn(input: TurnInput): Promise<TurnResult> {
-    const driver = this.drivers.get(input.backend);
-    if (!driver) {
-      throw new Error(`No TurnDriver registered for backend "${input.backend}"`);
-    }
-
     const chatSessionId = input.chatSessionId;
-    if (this.activeTurnPromises.has(chatSessionId)) {
-      const error = new Error(`Agent turn already in progress for session ${chatSessionId}`);
-      (error as Error & { code?: string }).code = 'AGENT_TURN_BUSY';
-      throw error;
-    }
-
-    const turnPromise = this.runTurnInternal(input, driver);
-    this.activeTurnPromises.set(chatSessionId, turnPromise);
+    let turnPromise: Promise<TurnResult> | null = null;
     try {
+      const driver = this.drivers.get(input.backend);
+      if (!driver) {
+        throw new Error(`No TurnDriver registered for backend "${input.backend}"`);
+      }
+
+      if (this.activeTurnPromises.has(chatSessionId)) {
+        const error = new Error(`Agent turn already in progress for session ${chatSessionId}`);
+        (error as Error & { code?: string }).code = 'AGENT_TURN_BUSY';
+        throw error;
+      }
+
+      turnPromise = this.runTurnInternal(input, driver);
+      this.activeTurnPromises.set(chatSessionId, turnPromise);
       return await turnPromise;
     } finally {
-      if (this.activeTurnPromises.get(chatSessionId) === turnPromise) {
+      if (turnPromise && this.activeTurnPromises.get(chatSessionId) === turnPromise) {
         this.activeTurnPromises.delete(chatSessionId);
       }
+      // Single choke point for the chat panel's streaming flag. Drivers and the
+      // panel clear it on their own happy paths, but a driver that throws, an
+      // aborted turn, a missing driver, or a busy-session rejection could leave
+      // the shared set holding the id — the panel then reads it as "still
+      // streaming" and shows the Stop button forever.
+      input.ui?.setStreamingForScope?.(chatSessionId, false);
     }
   }
 

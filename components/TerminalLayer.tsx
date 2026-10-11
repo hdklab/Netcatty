@@ -1,5 +1,6 @@
 import { captureTerminalBroadcastInput, isTerminalBroadcastInputCurrent, markTerminalBroadcastUserInput } from "./terminal/runtime/terminalPacedBroadcast";
-import { pruneComposeBarHistory } from '../application/state/composeBarHistoryStore';
+import { pruneComposeBarHistory } from '../application/state/composeBarHistoryStore';import { getAiSidebarState, setAiSidebarState } from '../application/state/aiSidebarStore';
+
 import { FolderTree, History, MessageSquare, PanelLeft, PanelRight, Palette, X, Zap } from 'lucide-react';
 import React, { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { activeTabStore } from '../application/state/activeTabStore';
@@ -82,8 +83,6 @@ import { dispatchKittyKeyboardBroadcastInput } from './terminal/runtime/kittyKey
 import { Button } from './ui/button';
 import { resolveScriptsSidePanelShortcutIntent } from '../application/state/resolveSnippetsShortcutIntent';
 import { resolveSidePanelToggleIntent } from '../application/state/resolveSidePanelToggleIntent';
-import { resolveAiSidePanelToggleIntent } from '../application/state/resolveAiSidePanelToggleIntent';
-import { canHostAiPanelForTab, resolveAiPanelTerminalTab } from '../application/state/resolveAiPanelTerminalTab';
 import { terminalLayerAreEqual } from './terminalLayerMemo';
 import { TerminalLayerTabBridge } from './terminalLayer/TerminalLayerTabBridge';
 import {
@@ -773,9 +772,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     420,
     { min: TERMINAL_SIDE_PANEL_MIN_WIDTH, max: TERMINAL_SIDE_PANEL_MAX_WIDTH },
   );
+  // Bottom is the product default: the tool panels (SFTP, scripts, history,
+  // theme, system, notes) read as a console under the terminal, which keeps the
+  // session at full width. The side-panel header still offers 左/右/下, so a
+  // deliberate choice wins and is persisted.
   const [sidePanelPosition, setSidePanelPosition] = useStoredString<'left' | 'right' | 'bottom'>(
     'netcatty_side_panel_position',
-    'left',
+    'bottom',
     isSidePanelDockPosition,
   );
   const [sidePanelHeight, setSidePanelHeight, persistSidePanelHeight] = useStoredNumber(
@@ -1901,7 +1904,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleSwitchSidePanelTab('sftp');
   }, [handleSwitchSidePanelTab]);
 
-  // Open scripts side panel (called from Terminal toolbar)
+  // Open scripts side panel (called from Terminal toolbar).
   const handleOpenScripts = useCallback(() => {
     handleSwitchSidePanelTab('scripts');
   }, [handleSwitchSidePanelTab]);
@@ -1960,9 +1963,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   // Open AI chat side panel (side-panel rail button: a plain switch that is a
   // no-op when AI is already the active sub-panel, matching the other rail tabs)
+  // The AI surface is the app-wide sidebar now, so the terminal toolbar entry
+  // opens that instead of a second, tab-scoped panel.
   const handleOpenAI = useCallback(() => {
-    handleSwitchSidePanelTab('ai');
-  }, [handleSwitchSidePanelTab]);
+    setAiSidebarState({ open: true, collapsed: false });
+  }, []);
 
   const handleOpenSystem = useCallback(() => {
     handleSwitchSidePanelTab('system');
@@ -2083,93 +2088,25 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     ));
   }, []);
 
-  /**
-   * True when the AI side panel can actually render for `tabId`: the panel host
-   * needs an AI context, which only terminal sessions and workspaces provide.
-   */
-  const canShowAiPanelForTab = useCallback((tabId: string): boolean => (
-    canHostAiPanelForTab(tabId, {
-      sessions: sessionsRef.current,
-      workspaces: workspacesRef.current,
-    })
-  ), []);
-
-  /** Open the AI sub-panel for `tabId` without toggling it closed. */
-  const openAiPanelForTab = useCallback((tabId: string) => {
-    markSidePanelSubTabOpened(tabId, 'ai');
-    setSidePanelOpenTabs((prev) => (
-      prev.get(tabId) === 'ai' ? prev : new Map(prev).set(tabId, 'ai')
-    ));
-  }, [markSidePanelSubTabOpened, setSidePanelOpenTabs]);
-
-  // Set while the AI button had to create a local shell first: the panel opens
-  // as soon as that tab exists and can host it (see the effect below).
-  const pendingAiPanelOpenRef = useRef(false);
-
-  const surfaceTerminalForAiPanel = useCallback(() => {
-    const targetTabId = resolveAiPanelTerminalTab({
-      sessions: sessionsRef.current,
-      workspaces: workspacesRef.current,
-      activeWorkspaceId: activeWorkspaceRef.current?.id ?? null,
-      focusedSessionId: focusedSessionIdRef.current ?? null,
-      activeSessionId: activeSessionRef.current?.id ?? null,
-    });
-
-    if (targetTabId) {
-      activeTabStore.setActiveTabId(targetTabId);
-      openAiPanelForTab(targetTabId);
-      return;
-    }
-
-    // No terminal session at all — start a local shell and attach the panel to
-    // it once the tab shows up.
-    pendingAiPanelOpenRef.current = true;
-    onCreateLocalTerminal?.();
-  }, [onCreateLocalTerminal, openAiPanelForTab]);
-
-  useEffect(() => {
-    if (!pendingAiPanelOpenRef.current) return;
-    const tabId = activeTabIdRef.current;
-    if (!tabId || !canShowAiPanelForTab(tabId)) return;
-    pendingAiPanelOpenRef.current = false;
-    openAiPanelForTab(tabId);
-  }, [canShowAiPanelForTab, openAiPanelForTab, sessions, workspaces]);
-
-  // Toggle the AI chat side panel from the top-bar button: open it (or switch
-  // to it from another sub-panel), and close the side panel when AI is already
-  // the open sub-panel. Unlike handleOpenAI (the rail switch), a second click
-  // here dismisses the panel.
-  //
-  // The panel lives inside the terminal layer and needs a terminal/workspace AI
-  // context. From the Vaults view (activeTabId === 'vault') or another
-  // non-terminal tab, toggling only marked the panel "open" behind the vault
-  // surface — the button looked completely dead. Surface a terminal first.
+  // Toggle the global AI side panel from the top-bar button (VS Code style): the
+  // panel lives in the app shell now, so this works from any view instead of
+  // having to surface a terminal first. A second click hides it; a collapsed
+  // sidebar expands.
   const handleToggleAiFromTopBar = useCallback(() => {
-    const tabId = activeTabIdRef.current;
-    if (!tabId) return;
+    const sidebarState = getAiSidebarState();
 
-    if (!canShowAiPanelForTab(tabId)) {
-      surfaceTerminalForAiPanel();
+    // The panel now lives in the app shell (see AiGlobalSidebar), so the button
+    // toggles that sidebar instead of the per-tab side panel: a second click
+    // hides it, and a collapsed sidebar expands. No terminal is surfaced any
+    // more -- the sidebar falls back to a page-level scope on its own.
+    if (sidebarState.open) {
+      setAiSidebarState(sidebarState.collapsed
+        ? { collapsed: false }
+        : { open: false, collapsed: false });
       return;
     }
-
-    const intent = resolveAiSidePanelToggleIntent(
-      sidePanelOpenTabsRef.current.get(tabId) ?? null,
-    );
-
-    if (intent.kind === 'closeTerminalSidePanel') {
-      handleCloseSidePanel();
-      return;
-    }
-
-    handleSwitchSidePanelTab('ai');
-  }, [
-    canShowAiPanelForTab,
-    handleCloseSidePanel,
-    handleSwitchSidePanelTab,
-    sidePanelOpenTabsRef,
-    surfaceTerminalForAiPanel,
-  ]);
+    setAiSidebarState({ open: true, collapsed: false });
+  }, []);
 
   // Execute snippet on the focused terminal session
   const handleSnippetClickForFocusedSession = useCallback((

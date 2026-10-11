@@ -12,9 +12,14 @@ export function findEnabledExternalAgent(
     Boolean(getExternalAgentSdkBackend(agent)));
 }
 
+/**
+ * Only enabled external agents can run a turn. The built-in Catty agent is not
+ * offered by this build, so a leftover "catty" selection is not sendable — the
+ * panel migrates such selections to the default external agent before sending.
+ */
 export function canSendWithAgent(
   agentId: string,
   agents: ExternalAgentConfig[],
 ): boolean {
-  return agentId === "catty" || Boolean(findEnabledExternalAgent(agents, agentId));
+  return Boolean(findEnabledExternalAgent(agents, agentId));
 }

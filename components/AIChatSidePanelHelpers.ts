@@ -275,7 +275,11 @@ export function shouldLoadSdkRuntimeModels(agent?: ExternalAgentConfig): boolean
     || sdkBackend === 'codebuddy'
     || sdkBackend === 'opencode'
     || sdkBackend === 'grok'
-    || sdkBackend === 'mimo';
+    || sdkBackend === 'mimo'
+    // dsh reports the model its profile is configured with; hermes lists the
+    // provider models its own picker cached. Both degrade to curated presets.
+    || sdkBackend === 'dsh'
+    || sdkBackend === 'hermes';
 }
 
 export function shouldAdoptSdkCurrentModel(

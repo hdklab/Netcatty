@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Activity, FolderTree, History, Maximize2, MessageSquare, Minimize2, NotebookText, Palette, PanelsTopLeft, Play, Save, SplitSquareHorizontal, SplitSquareVertical, X } from 'lucide-react';
+import { Activity, FolderTree, History, Maximize2, Minimize2, NotebookText, Palette, PanelsTopLeft, Play, Save, SplitSquareHorizontal, SplitSquareVertical, X } from 'lucide-react';
 import {
   buildSidePanelChromeThemeFromTerminalTheme,
   buildTerminalSidePanelCssVars,
@@ -625,7 +625,6 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     cn,
     followAppTerminalTheme,
     handleCloseSidePanel,
-    handleOpenAI,
     handleOpenHistory,
     handleOpenNotes,
     handleOpenScripts,
@@ -1041,9 +1040,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     { id: 'theme' as const, label: t('terminal.layer.theme'), icon: <Palette size={15} />, onClick: handleOpenTheme },
     { id: 'system' as const, label: t('terminal.layer.system'), icon: <Activity size={15} />, onClick: handleOpenSystem },
     { id: 'notes' as const, label: t('terminal.layer.notes'), icon: <NotebookText size={15} />, onClick: handleOpenNotes },
-    { id: 'ai' as const, label: t('terminal.layer.aiChat'), icon: <MessageSquare size={15} />, onClick: handleOpenAI },
   ], [
-    handleOpenAI,
     handleOpenHistory,
     handleOpenNotes,
     handleOpenScripts,

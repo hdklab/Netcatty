@@ -266,7 +266,20 @@ async function fetchSharedServerStats(session: SharedServerStatsSession, force =
 
   const request = (async () => {
     try {
-      const result = await bridge.getServerStats(session.sessionId);
+      let result = await bridge.getServerStats(session.sessionId);
+      // A local terminal has no SSH connection to probe: the SSH stats handler
+      // answers "Session not found or not connected". Ask the local collector
+      // instead — the main process rejects it unless the session really is a
+      // local one, so a disconnected remote session keeps its own error.
+      if (
+        !result?.success
+        && !result?.pending
+        && /not found or not connected/i.test(String(result?.error || ''))
+        && typeof bridge.getLocalServerStats === 'function'
+      ) {
+        const localResult = await bridge.getLocalServerStats(session.sessionId);
+        if (localResult?.success) result = localResult;
+      }
 
       // Discard stale responses from before a polling restart or reconnect.
       if (generation !== session.fetchGeneration) return;

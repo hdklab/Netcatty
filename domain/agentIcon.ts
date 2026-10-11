@@ -24,6 +24,7 @@ export type AgentIconKey =
   | 'grok'
   | 'mimo'
   | 'dsh'
+  | 'hermes'
   | 'terminal'
   | 'plus';
 
@@ -133,6 +134,12 @@ export const AGENT_ICON_VISUALS: Record<AgentIconKey, AgentIconVisual> = {
     // DeepSeek Harness has no separate mark; reuse the bundled DeepSeek logo.
     src: '/ai/providers/deepseek.svg',
     badgeClassName: 'border-blue-500/22 bg-blue-500/12',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert opacity-90',
+  },
+  hermes: {
+    // Hermes ships its own monochrome mark (public/ai/agents/hermes.svg).
+    src: '/ai/agents/hermes.svg',
+    badgeClassName: 'border-amber-500/22 bg-amber-500/12',
     imageClassName: 'object-contain dark:brightness-0 dark:invert opacity-90',
   },
   terminal: {

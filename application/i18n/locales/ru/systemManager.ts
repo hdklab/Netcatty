@@ -5,6 +5,7 @@ export const ruSystemManagerMessages: Messages = {
 
   'systemManager.noSession': 'Нет активного терминального сеанса.',
   'systemManager.notConnected': 'Подключитесь к хосту для управления процессами и сервисами.',
+  'systemManager.connectionLost': 'Соединение с сеансом потеряно. Переподключите вкладку и повторите.',
   'systemManager.empty': 'Нет данных.',
   'systemManager.tabs.overview': 'Обзор',
   'systemManager.tabs.processes': 'Процессы',

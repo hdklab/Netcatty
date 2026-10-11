@@ -9,11 +9,11 @@ const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 const mimoDriver = require("./mimoDriver.cjs");
 
 test("registry exposes SDK backends", () => {
-  assert.deepEqual(listBackends().sort(), ["claude", "codebuddy", "codex", "copilot", "cursor", "dsh", "grok", "mimo", "opencode"]);
+  assert.deepEqual(listBackends().sort(), ["claude", "codebuddy", "codex", "copilot", "cursor", "dsh", "grok", "hermes", "mimo", "opencode"]);
 });
 
 test("getDriver returns a driver with runTurn", () => {
-  for (const key of ["claude", "codebuddy", "codex", "copilot", "cursor", "grok", "mimo", "opencode"]) {
+  for (const key of ["claude", "codebuddy", "codex", "copilot", "cursor", "dsh", "grok", "hermes", "mimo", "opencode"]) {
     const d = getDriver(key);
     assert.equal(typeof d.runTurn, "function", `${key} must expose runTurn`);
   }

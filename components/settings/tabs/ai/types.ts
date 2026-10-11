@@ -8,6 +8,7 @@ import type {
   OpenAIApiFormat,
   ProviderStyle,
 } from "../../../../infrastructure/ai/types";
+import type { ManagedAgentKey } from "../../../../infrastructure/ai/managedAgents";
 
 export type CodexIntegrationState =
   | "connected_chatgpt"
@@ -192,7 +193,7 @@ export interface NetcattyAiBridge {
 }
 
 // Agent default configs for registration in externalAgents
-export const AGENT_DEFAULTS: Record<string, Omit<ExternalAgentConfig, "id" | "command" | "enabled">> = {
+export const AGENT_DEFAULTS: Record<ManagedAgentKey, Omit<ExternalAgentConfig, "id" | "command" | "enabled">> = {
   codex: {
     name: "Codex CLI",
     args: ["exec", "--full-auto", "--json", "{prompt}"],
@@ -240,6 +241,22 @@ export const AGENT_DEFAULTS: Record<string, Omit<ExternalAgentConfig, "id" | "co
     args: [],
     icon: "mimo",
     sdkBackend: "mimo",
+  },
+  // DeepSeek Harness and Hermes get their flags from their own drivers, so the
+  // CLI args stay empty here — but name/icon/sdkBackend must be present: a
+  // managed agent resolved without them shows up as a bare command path and
+  // cannot be sent to (sdkBackend is the routing value).
+  dsh: {
+    name: "DeepSeek Harness",
+    args: [],
+    icon: "dsh",
+    sdkBackend: "dsh",
+  },
+  hermes: {
+    name: "Hermes",
+    args: [],
+    icon: "hermes",
+    sdkBackend: "hermes",
   },
 };
 

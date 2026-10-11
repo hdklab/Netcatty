@@ -111,6 +111,8 @@ function registerAgentDiscoveryHandlers(ctx) {
         description: "Xiaomi's MiMo Code CLI, an OpenCode fork", sdkBackend: "mimo", args: [] },
       { command: "dsh", name: "DeepSeek Harness", icon: "dsh",
         description: "DeepSeek's open-source agent harness (dsh)", sdkBackend: "dsh", args: [] },
+      { command: "hermes", name: "Hermes", icon: "hermes",
+        description: "Nous Research's Hermes Agent CLI (one-shot mode)", sdkBackend: "hermes", args: [] },
     ];
 
     const shellEnv = await getShellEnv();
@@ -173,6 +175,12 @@ function registerAgentDiscoveryHandlers(ctx) {
           auth = shellEnv.DEEPSEEK_API_KEY
             ? { authenticated: true, authSource: "env" }
             : { authenticated: false, authSource: null };
+        } else if (agent.command === "hermes") {
+          // Hermes keeps provider credentials in its own config dir
+          // (~/.hermes/config.yaml plus its credential store), which the app
+          // must not read; mirror the MiMo/OpenCode assumption and let the
+          // first turn surface an auth error if the CLI is not set up.
+          auth = { authenticated: true, authSource: "hermes-config" };
         }
       } catch { /* auth probe is best-effort */ }
 

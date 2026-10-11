@@ -36,15 +36,18 @@ interface AgentSelectorProps {
   disabled?: boolean;
 }
 
-const BUILTIN_AGENTS: AgentInfo[] = [
-  {
-    id: 'catty',
-    name: 'Catty Agent',
-    type: 'builtin',
-    description: 'Built-in terminal assistant',
-    available: true,
-  },
-];
+/**
+ * Placeholder badge shown before any external agent is enabled. This build ships
+ * no built-in agent: every turn runs through an external CLI agent (dsh, Hermes,
+ * Codex, Claude Code, ...).
+ */
+const NO_AGENT_PLACEHOLDER: AgentInfo = {
+  id: 'terminal',
+  name: '',
+  type: 'external',
+  icon: 'terminal',
+  available: false,
+};
 
 const SectionLabel: React.FC<{ children: React.ReactNode; action?: React.ReactNode }> = ({ children, action }) => (
   <div className="flex items-center justify-between px-3 pb-1.5 pt-1.5">
@@ -169,14 +172,9 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
     [discoveredAgents, externalAgents],
   );
 
-  const allAgents = useMemo(
-    () => [...BUILTIN_AGENTS, ...enabledExternalAgents],
-    [enabledExternalAgents],
-  );
-
   const currentAgent = useMemo(
-    () => allAgents.find((agent) => agent.id === currentAgentId) ?? BUILTIN_AGENTS[0],
-    [allAgents, currentAgentId],
+    () => enabledExternalAgents.find((agent) => agent.id === currentAgentId) ?? enabledExternalAgents[0],
+    [enabledExternalAgents, currentAgentId],
   );
 
   const handleSelect = useCallback(
@@ -212,13 +210,13 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
           className="group flex h-6 min-w-0 max-w-[170px] items-center gap-1.5 rounded-md px-1.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/28 disabled:pointer-events-none disabled:opacity-50"
         >
           <AgentIconBadge
-            agent={currentAgent}
+            agent={currentAgent ?? NO_AGENT_PLACEHOLDER}
             size="xs"
             variant="plain"
             className="h-3 w-3 opacity-78"
           />
           <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/90">
-            {currentAgent.name}
+            {currentAgent?.name ?? t('ai.chat.noAgent')}
           </span>
           <ChevronDown
             size={10}
@@ -235,14 +233,11 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
         sideOffset={6}
         className="w-[256px] overflow-hidden rounded-md border border-border/50 bg-popover p-0 text-foreground shadow-lg supports-[backdrop-filter]:backdrop-blur-sm"
       >
-        {BUILTIN_AGENTS.map((agent) => (
-          <AgentMenuRow
-            key={agent.id}
-            agent={agent}
-            isActive={currentAgentId === agent.id}
-            onClick={() => handleSelect(agent.id)}
-          />
-        ))}
+        {enabledExternalAgents.length === 0 && (
+          <div className="px-3 py-2 text-[11px] leading-5 text-muted-foreground/70">
+            {t('ai.chat.noAgentHint')}
+          </div>
+        )}
 
         {enabledExternalAgents.length > 0 && (
           <>

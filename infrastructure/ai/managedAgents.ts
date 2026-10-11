@@ -3,7 +3,41 @@ import { getCommandBasename, isPathLikeCommand } from './shared/pathLikeCommand'
 
 export { isPathLikeCommand, getCommandBasename };
 
-export type ManagedAgentKey = 'codex' | 'claude' | 'copilot' | 'cursor' | 'codebuddy' | 'opencode' | 'grok' | 'mimo';
+/**
+ * Agent a new chat starts with. This build drives external CLI agents only —
+ * the built-in "Catty" agent is no longer offered anywhere in the UI — so the
+ * default is an external agent id and callers must resolve it like any other.
+ */
+export const DEFAULT_EXTERNAL_AGENT_ID = 'dsh';
+
+/** The retired built-in agent id. Stored selections are migrated off it. */
+export const LEGACY_BUILTIN_AGENT_ID = 'catty';
+
+/**
+ * Map a persisted agent selection onto a selectable agent id: the retired
+ * built-in id (and an empty value) become the default external agent.
+ */
+export function migrateLegacyAgentSelection(agentId: string | null | undefined): string {
+  const value = String(agentId ?? '').trim();
+  if (!value || value === LEGACY_BUILTIN_AGENT_ID) return DEFAULT_EXTERNAL_AGENT_ID;
+  return value;
+}
+
+export type ManagedAgentKey = 'codex' | 'claude' | 'copilot' | 'cursor' | 'codebuddy' | 'opencode' | 'grok' | 'mimo' | 'dsh' | 'hermes';
+
+/** Every managed agent key, in the order the settings UI renders them. */
+export const MANAGED_AGENT_KEYS = [
+  'codex',
+  'claude',
+  'copilot',
+  'cursor',
+  'codebuddy',
+  'opencode',
+  'grok',
+  'mimo',
+  'dsh',
+  'hermes',
+] as const satisfies readonly ManagedAgentKey[];
 
 const MANAGED_AGENT_META: Record<ManagedAgentKey, { commandNames: string[]; sdkBackend: string }> = {
   codex: { commandNames: ['codex'], sdkBackend: 'codex' },
@@ -14,6 +48,8 @@ const MANAGED_AGENT_META: Record<ManagedAgentKey, { commandNames: string[]; sdkB
   opencode: { commandNames: ['opencode'], sdkBackend: 'opencode' },
   grok: { commandNames: ['grok'], sdkBackend: 'grok' },
   mimo: { commandNames: ['mimo'], sdkBackend: 'mimo' },
+  dsh: { commandNames: ['dsh'], sdkBackend: 'dsh' },
+  hermes: { commandNames: ['hermes'], sdkBackend: 'hermes' },
 };
 
 function matchesPrimaryCliBasename(command: string | undefined, agentKey: ManagedAgentKey): boolean {
@@ -31,7 +67,9 @@ export function isSettingsManagedDiscoveredAgent(
     || agent.command === 'codebuddy'
     || agent.command === 'opencode'
     || agent.command === 'grok'
-    || agent.command === 'mimo';
+    || agent.command === 'mimo'
+    || agent.command === 'dsh'
+    || agent.command === 'hermes';
 }
 
 export function matchesManagedAgentConfig(
