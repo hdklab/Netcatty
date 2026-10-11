@@ -317,6 +317,10 @@ jobs:
         env:
           ELECTRON_BUILDER_PUBLISH: "never"
           # macOS code signing & notarization (only for macOS builds)
+          # Signing identity comes from CSC_LINK when it exists; never let the
+          # runner's keychain discovery decide (a fork has no identity and a
+          # hard failure there is exactly what killed the macOS leg).
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           CSC_LINK: ${{ matrix.name == 'macos' && secrets.MAC_CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.name == 'macos' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
           APPLE_ID: ${{ matrix.name == 'macos' && secrets.APPLE_ID || '' }}

@@ -1,9 +1,23 @@
+/* global process */
 const { moshExtraResources } = require('./scripts/mosh-extra-resources.cjs');
 const { etExtraResources } = require('./scripts/et-extra-resources.cjs');
 
 /**
  * @type {import('electron-builder').Configuration}
  */
+/**
+ * Apple notarization needs real credentials. Upstream CI injects them as
+ * secrets; a fork has none, and `notarize: true` then fails the whole macOS leg
+ * inside "Build package" (that is why the fork's macOS builds never produced
+ * artifacts). Only notarize when the credentials are actually present, so
+ * upstream keeps notarized builds and a fork still emits unsigned dmg/zip.
+ */
+const appleNotarizeConfigured = Boolean(
+  process.env.APPLE_ID
+  && process.env.APPLE_APP_SPECIFIC_PASSWORD
+  && process.env.APPLE_TEAM_ID,
+);
+
 module.exports = {
     appId: 'com.netcatty.app',
     productName: 'Netcatty',
@@ -229,7 +243,7 @@ module.exports = {
         ],
         category: 'public.app-category.developer-tools',
         hardenedRuntime: true,
-        notarize: true,
+        notarize: appleNotarizeConfigured,
         entitlements: 'electron/entitlements.mac.plist',
         entitlementsInherit: 'electron/entitlements.mac.plist',
         extendInfo: {
