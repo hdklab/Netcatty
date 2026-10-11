@@ -18,6 +18,13 @@ const appleNotarizeConfigured = Boolean(
   && process.env.APPLE_TEAM_ID,
 );
 
+/**
+ * Signing needs a certificate (CSC_LINK). A fork has none; instead of letting
+ * electron-builder search the runner's keychain (which ends in a hard failure
+ * during packaging), say explicitly "unsigned" so the dmg/zip still get built.
+ */
+const appleSigningConfigured = Boolean(process.env.CSC_LINK);
+
 module.exports = {
     appId: 'com.netcatty.app',
     productName: 'Netcatty',
@@ -243,6 +250,7 @@ module.exports = {
         ],
         category: 'public.app-category.developer-tools',
         hardenedRuntime: true,
+        identity: appleSigningConfigured ? undefined : null,
         notarize: appleNotarizeConfigured,
         entitlements: 'electron/entitlements.mac.plist',
         entitlementsInherit: 'electron/entitlements.mac.plist',
