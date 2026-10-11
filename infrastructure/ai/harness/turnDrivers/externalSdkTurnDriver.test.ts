@@ -63,6 +63,18 @@ test('estimated usage is used only when the SDK did not report actual usage', ()
   assert.equal(resolveEstimatedUsageFallback('12345678', true), null);
 });
 
+test('estimated usage counts the assistant answer, not just the prompt', () => {
+  const usage = resolveEstimatedUsageFallback('12345678', false, 'ok');
+  assert.ok(usage, 'usage fallback expected');
+  assert.equal(usage.inputTokens, 2);
+  assert.ok(usage.outputTokens > 0, 'output tokens must not be reported as 0 when the agent answered');
+  assert.equal(usage.outputTokens, usage.totalTokens - usage.inputTokens);
+  assert.equal(usage.estimated, true);
+
+  // A reported usage always wins over the estimate, even with output text.
+  assert.equal(resolveEstimatedUsageFallback('12345678', true, 'ok'), null);
+});
+
 test('plan updates replace the same activity across tool message boundaries', async () => {
   let onEvent: ((event: Record<string, unknown>) => void) | undefined;
   let onDone: (() => void) | undefined;

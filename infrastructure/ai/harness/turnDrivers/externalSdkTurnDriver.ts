@@ -163,6 +163,8 @@ async function runExternalTurn(
     ui.updateMessageById(sessionId, activeAssistantMessageId, updater);
   };
   let pendingText = '';
+  // Full assistant text of this turn; the usage fallback estimates output tokens from it.
+  let assistantOutputText = '';
   let rafId: number | null = null;
   const appendTextToActiveAssistant = (textChunk: string) => {
     updateActiveAssistant(msg => ({
@@ -201,6 +203,7 @@ async function runExternalTurn(
   };
   const enqueueTextDelta = (textChunk: string) => {
     if (!textChunk) return;
+    assistantOutputText += textChunk;
     // While steering buffers UI ops, skip rAF so text enters the buffer immediately.
     if (steerInFlight) {
       runOrBufferUiOperation(() => appendTextToActiveAssistant(textChunk));
@@ -476,7 +479,7 @@ async function runExternalTurn(
       },
     );
 
-    const estimatedUsage = resolveEstimatedUsageFallback(trimmed, actualUsageReported);
+    const estimatedUsage = resolveEstimatedUsageFallback(trimmed, actualUsageReported, assistantOutputText);
     if (estimatedUsage) {
       flushTextBeforeNonTextEvent();
       runOrBufferUiOperation(() => updateUsage(estimatedUsage));
