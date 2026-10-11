@@ -1,6 +1,28 @@
 # Changelog
 
-## [Unreleased] - 2026-03-11
+## [1.1.88] - 2026-10-11
+
+### 功能
+- **Hermes 改走 ACP（Agent Client Protocol）**：侧栏现在能显示 Hermes 完整的工作过程 —— 思考块、工具调用与结果（包括它经 Netcatty MCP 调用的 `mcp__netcatty_remote_hosts__*` 工具）、以及真实 token 用量（in / out / cached / reasoning）。ACP 需要应答客户端侧请求（`fs/read_text_file`、`fs/write_text_file`、`terminal/*`、`session/request_permission`），驱动按 Netcatty 权限模式决定 allow/deny（观察模式直接拒绝）。不需要单独 `authenticate`，凭据仍来自 `~/.hermes/.env`
+- **DeepSeek Harness（dsh）改为读取 `dsh headless --json` 的运行事件**：`thinking` → 思考块、`tool_call` / `tool_result` → 工具调用卡片、`status.step_end.usage` → 真实用量（含 cached）、`text` / `final` → 正文。首个非空白字节不是 `{` 时整轮回落为原来的纯文本转发，所以老版本 dsh 或非 headless profile 行为不变
+- **侧栏权限模式（观察 / 确认 / 自动）现在会传给外部 Agent 自己的工具沙箱**：dsh 映射为 `DSH_PERMISSION_MODE`（`read-only` / `workspace-write` / `danger-full-access`，未知值一律回落 `workspace-write`，不会误放宽），Hermes 走 ACP 的 `session/request_permission`
+
+### 修复
+- 「检查更新」失败时自动重试两次（0.8s / 2.5s 退避，手动检查与后台自动检查都走这条），不再因为更新源"发布到一半"或代理瞬时抖动就抛一个笼统的 `Fail to fetch`
+- 更新检查的错误现在带上具体原因（HTTP 状态码或错误码，例如 `Fail to fetch (HTTP 404)`、`(ERR_NAME_NOT_RESOLVED)`），便于区分是 feed 没发完还是网络问题
+
+### 设计原理
+- ACP 驱动复用仓库既有的通用 ACP 实现（`createJsonRpcClient`、`translateGrokAcpUpdate`、`toAcpMcpServers`、`buildGrokAcpPermissionResponse` 等），Hermes 专属部分只有 `usage_update` 映射、工具结果文本提取与客户端请求处理；grok 驱动未被改动
+- dsh 的事件解析是独立纯函数 `createDshJsonParser`：按首个字节判定 JSON / 纯文本两种模式，思考与正文都按增量去重（上游给的是累积文本）
+- `hermes acp` 启动失败、或建立 session 之前出错时回落到原来的 `hermes -z` oneshot 模式；session 已建立后的失败只报错、不重复跑（避免同一任务执行两遍）
+
+### 已知限制
+- dsh 这一路目前**没有**把 Netcatty 的 MCP 工具注入进它的回合（Hermes 有，因为 Hermes 自己的配置里注册了 `netcatty`），因此 dsh 只能用自带的 bash / 文件工具，操作不到终端会话；要接的话可以照 ACP 那套注入
+- 确认模式下 dsh 需要提权时没有审批通道（`sandbox escalation to "workspace-write" requires approval, but no approval channel is available`），只能放弃；可以像 Catty / MCP 那样把这类请求接到应用内的批准弹窗
+- ACP 回合不做模型切换：Hermes 使用自身配置的模型，侧栏选择模型对 ACP 回合不生效（模型列表仍来自 `hermes` 自身）
+
+## [1.1.87] - 2026-10-11
+
 
 ### 修复
 - 修复外部 Agent（DeepSeek Harness / Hermes）答完以后 AI 面板一直显示 Stop 方块、箭头不再出现、并且再也发不出消息：渲染层靠主进程的 `done` IPC 结算轮次 promise，而 `dshDriver` / `hermesDriver` 没有发它，轮次永不收尾，于是 streaming 标记、发送闸门与 `isSending` 一起被卡住。两个驱动补上 `emitDone`，`sdkStreamHandlers` 再对"驱动跑完却没发 done"统一兜底（渲染层去重），避免以后新增驱动再犯
