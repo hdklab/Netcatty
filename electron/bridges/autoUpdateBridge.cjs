@@ -394,13 +394,53 @@ function startAutoCheck(delayMs = 5000) {
     _lastStatus = { ..._lastStatus, isChecking: true };
     try {
       console.log("[AutoUpdate] Starting automatic update check...");
-      await updater.checkForUpdates();
+      const checked = await checkForUpdatesWithRetry(updater);
+      if (checked.error) throw checked.error;
     } catch (err) {
       _isChecking = false;
       _lastStatus = { ..._lastStatus, isChecking: false };
-      console.warn("[AutoUpdate] Auto-check failed:", err?.message || err);
+      console.warn("[AutoUpdate] Auto-check failed:", describeUpdateError(err));
     }
   }, delayMs);
+}
+
+/** Small backoff before re-trying a failed check (transient feed/network hiccups). */
+const CHECK_RETRY_DELAYS_MS = [800, 2500];
+
+/**
+ * Turn an updater failure into something the settings panel can explain.
+ * electron-updater's own message ("Fail to fetch") says nothing about whether
+ * the feed was unreachable, rate-limited, or not published yet, so surface the
+ * HTTP status / error code that came with it.
+ */
+function describeUpdateError(err) {
+  const raw = (err && err.message) || String(err || "Unknown update check error");
+  const status = err && (err.statusCode || err.status);
+  if (status) return `${raw} (HTTP ${status})`;
+  const code = err && err.code;
+  if (typeof code === "string" && code) return `${raw} (${code})`;
+  return raw;
+}
+
+/**
+ * checkForUpdates() with a couple of retries. A feed that is mid-publish (or a
+ * momentary proxy failure) fails once and then succeeds, which is exactly the
+ * case that used to leave the user staring at a bare fetch error.
+ */
+async function checkForUpdatesWithRetry(updater) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= CHECK_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return { result: await updater.checkForUpdates() };
+    } catch (err) {
+      lastError = err;
+      const delay = CHECK_RETRY_DELAYS_MS[attempt];
+      if (delay == null) break;
+      console.warn(`[AutoUpdate] Check failed (${err && err.message ? err.message : err}); retrying in ${delay}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  return { error: lastError };
 }
 
 /**
@@ -633,7 +673,9 @@ function registerHandlers(ipcMain) {
     try {
       _isChecking = true;
       _lastStatus = { ..._lastStatus, isChecking: true };
-      const result = await updater.checkForUpdates();
+      const checked = await checkForUpdatesWithRetry(updater);
+      if (checked.error) throw checked.error;
+      const result = checked.result;
       if (!result || !result.updateInfo) {
         return { available: false, supported: true };
       }
@@ -660,11 +702,12 @@ function registerHandlers(ipcMain) {
     } catch (err) {
       _isChecking = false;
       _lastStatus = { ..._lastStatus, isChecking: false };
-      console.warn("[AutoUpdate] Check failed:", err?.message || err);
+      const described = describeUpdateError(err);
+      console.warn("[AutoUpdate] Check failed:", described);
       return {
         available: false,
         supported: true,
-        error: err?.message || "Unknown update check error",
+        error: described,
       };
     }
   });
@@ -859,6 +902,9 @@ function registerHandlers(ipcMain) {
 }
 
 module.exports = {
+  // exported for tests: the retry wrapper and its error summariser
+  checkForUpdatesWithRetry,
+  describeUpdateError,
   init,
   registerHandlers,
   isAutoUpdateSupported,
