@@ -4,7 +4,9 @@ const { applyElectronLaunchEnv } = require("./launchEnv.cjs");
 
 const env = applyElectronLaunchEnv(process.env);
 
-const child = spawn(electronPath, ["."], { stdio: "inherit", env });
+// Extra CLI flags are forwarded to Electron so launchers can pass e.g.
+// `--no-sandbox` or `--remote-debugging-port=9222` via `npm start -- --no-sandbox`.
+const child = spawn(electronPath, [".", ...process.argv.slice(2)], { stdio: "inherit", env });
 child.on("exit", (code) => process.exit(code ?? 0));
 
 // Forward SIGINT/SIGTERM to the Electron child process so Ctrl+C works
