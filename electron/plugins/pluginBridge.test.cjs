@@ -1599,3 +1599,35 @@ test("syncDeleteSecrets uses retained provider binding when contribution is miss
   assert.deepEqual(deleted, [["com.example", "prefix:sync-credential"]]);
   assert.deepEqual(unbound, [["com.example", "com.example.sync"]]);
 });
+
+/**
+ * Regression: main.cjs normalizes VITE_DEV_SERVER_URL (127.0.0.1 -> localhost)
+ * before the window is loaded, so the trusted-sender check must be handed the
+ * normalized value. Comparing the raw origin against the page's localhost
+ * origin rejected the app's own renderer and made every netcatty:plugins:*
+ * call fail with "Untrusted plugin management sender".
+ */
+test("the trusted sender check accepts the renderer origin for a loopback dev server URL", () => {
+  const { normalizeDevServerUrl } = require("../devServerUrl.cjs");
+  const page = { senderFrame: { url: "http://localhost:5173/" } };
+
+  assert.equal(
+    createTrustedPluginBridgeSender({ devServerUrl: normalizeDevServerUrl("http://127.0.0.1:5173") })(page),
+    true,
+    "the normalized dev origin must trust the localhost renderer",
+  );
+
+  assert.equal(
+    createTrustedPluginBridgeSender({ devServerUrl: "http://127.0.0.1:5173" })(page),
+    false,
+    "the raw loopback origin is what used to break (documents the symptom)",
+  );
+
+  assert.equal(
+    createTrustedPluginBridgeSender({ devServerUrl: "http://localhost:5173" })(
+      { senderFrame: { url: "https://attacker.invalid/" } },
+    ),
+    false,
+    "an unrelated origin stays untrusted",
+  );
+});

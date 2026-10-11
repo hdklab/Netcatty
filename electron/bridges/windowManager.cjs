@@ -463,29 +463,9 @@ function broadcastLanguageChanged() {
 
 /**
  * Normalize dev server URL for local access compatibility
+ * (shared with main.cjs and the plugin bridge's trusted-sender check).
  */
-function normalizeDevServerUrl(urlString) {
-  if (!urlString) return urlString;
-  try {
-    const u = new URL(urlString);
-    const host = u.hostname;
-    // Vite often binds to 0.0.0.0; Chromium can't navigate to it. Prefer localhost.
-    if (
-      host === "0.0.0.0" ||
-      host === "127.0.0.1" ||
-      host === "::1" ||
-      host === "[::1]" ||
-      host === "[::]" ||
-      host === "::"
-    ) {
-      u.hostname = "localhost";
-      return u.toString();
-    }
-    return urlString;
-  } catch {
-    return urlString;
-  }
-}
+const { normalizeDevServerUrl } = require("../devServerUrl.cjs");
 
 function getDevRendererBaseUrl(devServerUrl) {
   const normalized = normalizeDevServerUrl(devServerUrl);

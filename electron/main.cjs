@@ -167,6 +167,8 @@ const transferBridge = require("./bridges/transferBridge.cjs");
 const portForwardingBridge = require("./bridges/portForwardingBridge.cjs");
 const terminalBridge = require("./bridges/terminalBridge.cjs");
 const sessionLogStreamManager = require("./bridges/sessionLogStreamManager.cjs");
+// Pure helper (no electron import) shared with windowManager.cjs.
+const { normalizeDevServerUrl } = require("./devServerUrl.cjs");
 // crashLogBridge is required at the top of the file (before error handlers)
 const getOauthBridge = createLazyModule("./bridges/oauthBridge.cjs");
 const getGithubAuthBridge = createLazyModule("./bridges/githubAuthBridge.cjs");
@@ -270,7 +272,9 @@ app.on("web-contents-created", (_event, contents) => {
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 // Never treat a packaged app as "dev" even if the user has VITE_DEV_SERVER_URL set globally.
 const isDev = !app.isPackaged && !!devServerUrl;
-const effectiveDevServerUrl = isDev ? devServerUrl : undefined;
+// Normalize once (127.0.0.1/0.0.0.0/::1 -> localhost) so the URL the window is
+// loaded from matches the origin every downstream trust check compares against.
+const effectiveDevServerUrl = isDev ? normalizeDevServerUrl(devServerUrl) : undefined;
 if (isDev) {
   app.setName("Netcatty Dev");
   app.setPath("userData", path.join(app.getPath("userData"), "dev"));
