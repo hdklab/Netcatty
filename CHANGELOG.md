@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.89] - 2026-10-12
+
+### 功能
+- **AI 侧栏宽度可拖拽**：顶栏 ✨ 打开的全局 AI 会话面板现在可以拖左边线调宽（280 ~ 1200px，且不超过窗口 70%），宽度存 `netcatty_ai_sidebar_width`，重启/刷新后保持。默认宽度从写死的 380px 提到 **399px（+5%）**；拖拽热区 10px 宽、悬停时边线亮起、悬停 300ms 出文字提示（按住拖拽时提示自动收起），拖拽过程中不会误选文字
+- 新增 `scripts/run-ui.sh`：一条命令拉起 UI（`dev` 走 Vite 热更新、`dist` 走 vite build + electron-builder --dir），可选 `--debug`（CDP 调试端口）、`--fresh` / `--data-dir`（独立 profile，可与正在运行的正式版并存）、`--restart`；日志按时间戳落在 `~/.cache/netcatty-ui/<mode>-<时间戳>/`。脚本还会自动修复"npm 包只剩 locales/ 没有 Electron 二进制"这一常见残缺状态
+
+### 修复
+- **自建更新源的版本元数据改由主进程读取**：feed 主机普遍不返回 `Access-Control-Allow-Origin`（出厂默认的 GitHub release asset 地址就没有），渲染进程直接 fetch `<baseUrl>/latest.json` 会被 CORS / opaque response 规则拦掉 —— 看着像网络故障，其实文件本身是好的。现在主进程用 `net.fetch` 取回、只把解析后的载荷交给渲染层（`netcatty:update:fetchReleaseMetadata`）
+- 开发模式下 dev server URL 只在主进程归一化一次：`VITE_DEV_SERVER_URL` 写 `127.0.0.1` / `0.0.0.0` / `::1` 时窗口实际加载的是 `localhost`，而插件桥的 trusted-sender 校验比的是**原始** URL 的 origin，于是把应用自己的渲染进程判为不可信，`netcatty:plugins:*` 全部抛 `Untrusted plugin management sender`（每个终端挂载/刷新都刷一条堆栈）
+- Linux 桌面项身份统一：`package.json` 的 `desktopName` 与 electron-builder 的 `syncDesktopName` 让 app_id / WM_CLASS / `.desktop` 文件名都取 `netcatty`，不再出现"任务栏认不出运行中的窗口属于哪个启动项"（`StartupWMClass` 默认取 productName `Netcatty`，与文件名大小写不一致时会发生）
+
+### 设计原理
+- AI 面板的宽度计算是纯函数（`application/state/aiSidebarWidth.ts` + 单测）；拖拽期间用 raf 节流做预览、松手才写盘，持久化复用 `useStoredNumber` 的懒写机制，避免拖拽过程中刷 localStorage。面板元素同时带 `max-width: 70vw`，窗口变窄时由 CSS 兜底，主内容不会被挤没
+- 拖拽期间开 `terminalLayoutSuppressStore`（与终端侧栏、主机树一致），终端的逐帧 re-fit 被推迟到松手之后
+- 版本元数据 IPC 只接受"有效源"：请求里的 `baseUrl` 必须与主进程当前生效源一致（`requested === effective`）才发请求，渲染层即使被注入脚本也无法让主进程去打任意地址；响应体 2MB 上限、15s 超时
+- dev server URL 归一化收敛到 `electron/devServerUrl.cjs` 一处实现，`main.cjs`（加载窗口前）、`windowManager.cjs`、插件桥共用：窗口实际加载的 origin 与所有 origin 比较必须永远是同一个值
+
 ## [1.1.88] - 2026-10-11
 
 ### 功能
