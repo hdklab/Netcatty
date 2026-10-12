@@ -88,8 +88,6 @@ test("each refusal reports a reason the UI can explain", () => {
   const cases: Array<[Record<string, unknown>, Partial<Parameters<typeof resolveFtpDropPlan>[0]>, string]> = [
     [{ ftpEnabled: false }, {}, "disabled"],
     [{ hostname: "" }, {}, "no-host"],
-    [{}, { remoteDir: null }, "no-cwd"],
-    [{}, { remoteDir: "   " }, "no-cwd"],
     [{}, { lftpAvailable: false }, "no-lftp"],
   ];
   for (const [override, extra, reason] of cases) {
@@ -122,4 +120,23 @@ test("normalizeFtpUploadFiles keeps windows-style paths intact for the bridge", 
   const [first] = normalizeFtpUploadFiles("C:\\build\\fw.bin");
   assert.equal(first.name, "fw.bin");
   assert.equal(first.path, "C:\\build\\fw.bin");
+});
+
+test("a device that never reports a cwd still uploads, into the FTP login directory", () => {
+  // Telnet/serial shells emit no OSC 7, so the pane's cwd is unknown on exactly
+  // the hosts this backend exists for. Refusing the drop there made drag-and-drop
+  // look broken (no upload, no message); the file now lands in the FTP account's
+  // login directory and the toast names it.
+  for (const remoteDir of [undefined, null, "", "   "]) {
+    const result = resolveFtpDropPlan({
+      host: makeHost(),
+      remoteDir,
+      lftpAvailable: true,
+    });
+    assert.equal(result.ok, true, `remoteDir=${JSON.stringify(remoteDir)} plans`);
+    assert.equal(result.ok && result.plan.remoteDir, null, "no directory means the login dir");
+  }
+
+  const withCwd = resolveFtpDropPlan({ host: makeHost(), remoteDir: "/mnt/flash", lftpAvailable: true });
+  assert.equal(withCwd.ok && withCwd.plan.remoteDir, "/mnt/flash");
 });

@@ -20,12 +20,18 @@ export type FtpDropPlan = {
   password?: string;
   secure: boolean;
   insecure: boolean;
-  remoteDir: string;
+  /**
+   * Upload directory: the terminal's tracked cwd, or null to upload into the
+   * FTP account's login directory. Telnet/serial devices never report a cwd
+   * (no OSC 7), so refusing the drop there would make the feature unusable for
+   * exactly the hosts it exists for.
+   */
+  remoteDir: string | null;
 };
 
 export type FtpDropPlanResult =
   | { ok: true; plan: FtpDropPlan }
-  | { ok: false; reason: "unsupported-protocol" | "disabled" | "no-host" | "no-cwd" | "no-lftp" };
+  | { ok: false; reason: "unsupported-protocol" | "disabled" | "no-host" | "no-lftp" };
 
 /** Protocols that never have an SFTP subsystem to fall back on. */
 const FTP_ELIGIBLE_PROTOCOLS = new Set(["telnet", "serial", "local"]);
@@ -66,7 +72,6 @@ export function resolveFtpDropPlan(options: {
   const hostname = String(host.hostname ?? "").trim();
   if (!hostname) return { ok: false, reason: "no-host" };
   const target = String(remoteDir ?? "").trim();
-  if (!target) return { ok: false, reason: "no-cwd" };
   if (!lftpAvailable) return { ok: false, reason: "no-lftp" };
 
   const user = firstNonEmpty(host.ftpUsername, host.telnetUsername, credentials?.username, host.username);
@@ -82,7 +87,7 @@ export function resolveFtpDropPlan(options: {
       password,
       secure: Boolean(host.ftpSecure),
       insecure: Boolean(host.ftpInsecure),
-      remoteDir: target,
+      remoteDir: target || null,
     },
   };
 }

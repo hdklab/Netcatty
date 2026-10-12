@@ -43,7 +43,9 @@ interface UseTerminalDragDropOptions {
   sessionId: string;
   sessionRef: React.MutableRefObject<string | null>;
   status: TerminalSession["status"];
-  t: (key: string) => string;
+  // Widened for the drag-drop toasts: the app's i18n `t` accepts interpolation
+  // variables, and the FTP upload names the directory it wrote into.
+  t: (key: string, vars?: Record<string, string | number>) => string;
   terminalBackend: {
     writeToSession: (sessionId: string, data: string, options?: { automated?: boolean; sensitive?: boolean }) => void;
     cancelZmodem?: (sessionId: string, options?: { interrupt?: boolean }) => void;
@@ -220,6 +222,7 @@ export async function handleTerminalDropEntries({
   isSensitiveInput,
   rzMissingFallbackTimeoutMs,
   termRef,
+  t,
 }: Pick<
   UseTerminalDragDropOptions,
   | "host"
@@ -236,6 +239,7 @@ export async function handleTerminalDropEntries({
   | "isSensitiveInput"
   | "rzMissingFallbackTimeoutMs"
   | "termRef"
+  | "t"
 > & {
   dropEntries: DropEntry[];
 }): Promise<void> {
@@ -343,8 +347,10 @@ export async function handleTerminalDropEntries({
     && terminalBackend.ftpUpload
   ) {
     // FTP/FTPS via the external `lftp` client: the file lands in the terminal's
-    // tracked current directory. Falls through to ZMODEM when the plan is not
-    // usable (no cwd yet, no lftp, no host) so the drop is never silently lost.
+    // tracked current directory, or in the FTP account's login directory when the
+    // device never reports a cwd (telnet/serial shells have no OSC 7). Falls
+    // through to ZMODEM only when the plan is not usable at all (no lftp, no
+    // host) so the drop is never silently lost.
     const initialPath = await resolveSftpInitialPath({ requireActiveShellCwd: true }).catch(() => undefined);
     const capabilities = await terminalBackend.ftpCapabilities?.().catch(() => undefined);
     const plan = resolveFtpDropPlan({
@@ -370,6 +376,14 @@ export async function handleTerminalDropEntries({
       if (!result.ok) {
         throw new Error(result.error || "FTP upload failed");
       }
+      // Always say where the file landed: with no tracked cwd the upload goes to
+      // the FTP login directory, which is rarely the shell's directory.
+      toast.success(
+        plan.plan.remoteDir
+          ? t("terminal.dragDrop.ftpUploaded", { dir: plan.plan.remoteDir })
+          : t("terminal.dragDrop.ftpUploadedLoginDir"),
+        t("terminal.dragDrop.ftpUploadedTitle"),
+      );
       return;
     }
     return await uploadViaZmodem();
@@ -469,6 +483,7 @@ export function useTerminalDragDrop({
         isSensitiveInput,
         rzMissingFallbackTimeoutMs,
         termRef,
+        t,
       });
     } catch (error) {
       logger.error("Failed to handle file drop", error);
