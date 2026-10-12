@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.90] - 2026-10-12
+
+### 修复
+- **AI 侧栏的会话作用域不再取决于「AI 子面板挂载了没有」**：侧栏的每条会话都是 scope 绑定的（`terminal:<sessionId>` / `workspace:<workspaceId>`），而注入给 Agent 的 Netcatty MCP 只暴露该 scope 下的会话。此前只有「已挂载 per-tab AI 子面板」的标签页才在 context 表里，于是刚打开的终端、或切到 Vaults / SFTP / 仪表盘再回到侧栏时，会话会掉到无主机的页面级 scope —— 终端明明开着，Agent 却报 `No hosts are available in the current scope`
+
+### 设计原理
+- 作用域解析收敛成纯函数 `application/state/aiSidebarScope.ts`（配单测）：优先当前标签页 → 其次「最后一个能承载侧栏的标签页」（且它仍然存活）→ 最后页面级兜底。Vaults / SFTP / 仪表盘这类没有终端的视图不再把会话踢回无主机 scope；被记忆的终端一旦关闭，记忆立即失效，Agent 不会被绑在一个已死的 session 上
+- `useTerminalAiContexts` 不再只按「AI 子面板已挂载」的标签页建 context，而是覆盖所有能承载侧栏的标签页：工作区，以及所有非隐藏、不属于工作区的终端会话（工作区内的会话与 AI 打开的隐藏会话通过其宿主寻址，不单独占用一个 tab id）
+
 ## [1.1.89] - 2026-10-12
 
 ### 功能
