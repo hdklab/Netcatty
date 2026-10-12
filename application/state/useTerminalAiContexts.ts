@@ -44,7 +44,21 @@ export function useTerminalAiContexts({
     const sessionById = new Map<string, TerminalSession>(sessions.map((session) => [session.id, session]));
     const workspaceById = new Map<string, Workspace>(workspaces.map((workspace) => [workspace.id, workspace]));
     const allHosts = hosts;
+    // Every tab that can host the panel gets a context, not just the tabs whose
+    // per-tab AI sub-panel is mounted: the app-wide sidebar (AiGlobalSidebar)
+    // reads this map to decide which scope its chat belongs to, and a missing
+    // entry used to strand every sidebar chat on the host-less page scope — the
+    // agent then saw zero sessions even with terminals open. Sessions inside a
+    // workspace and hidden (AI-opened, tab-less) sessions are addressed through
+    // their owner, so they are not tab ids of their own.
     const tabIds = new Set<string>(mountedAiTabIds);
+    for (const workspace of workspaces) {
+      tabIds.add(workspace.id);
+    }
+    for (const session of sessions) {
+      if (session.workspaceId || session.hiddenFromTabs) continue;
+      tabIds.add(session.id);
+    }
 
     const contexts = new Map<string, AIPanelContext>();
 

@@ -8,6 +8,10 @@ import {
   setAiSidebarState,
   useAiSidebarState,
 } from '../../application/state/aiSidebarStore';
+import {
+  rememberAiSidebarTabId,
+  resolveAiSidebarContext,
+} from '../../application/state/aiSidebarScope';
 
 import { activeTabStore } from '../../application/state/activeTabStore';
 import {
@@ -839,22 +843,33 @@ const AiGlobalSidebarInner: React.FC<AiGlobalSidebarProps> = ({
     window.addEventListener('blur', finish);
   }, [persistSidebarWidth, setSidebarWidth, sidebarWidth]);
 
-  const context = useMemo(() => {
-    if (activeTabId) {
-      const active = contextsByTabId.get(activeTabId);
-      if (active) return active;
-    }
-    // No live terminal/workspace behind the active view: keep the panel useful
-    // instead of hiding it (the sidebar is app-wide, not a terminal accessory).
-    // A private scope id means the chat is never pruned when tabs close.
-    return {
-      scopeType: 'workspace' as const,
-      scopeTargetId: AI_SIDEBAR_SCOPE_ID,
-      scopeHostIds: [],
-      scopeLabel: t('ai.sidebar.scopeLabel'),
-      terminalSessions: [],
-    };
-  }, [activeTabId, contextsByTabId, t]);
+  const pageScopeContext = useMemo(() => ({
+    scopeType: 'workspace' as const,
+    scopeTargetId: AI_SIDEBAR_SCOPE_ID,
+    scopeHostIds: [],
+    scopeLabel: t('ai.sidebar.scopeLabel'),
+    terminalSessions: [],
+  }), [t]);
+
+  // Last tab that could host the panel. Without it, leaving a terminal for
+  // Vaults/SFTP/the dashboard dropped the sidebar onto the host-less page scope,
+  // so the agent lost sight of every open terminal (the injected Netcatty MCP
+  // scope is the chat's scope).
+  const hostableTabIdRef = useRef<string | null>(null);
+  const context = useMemo(() => resolveAiSidebarContext({
+    activeTabId,
+    contextsByTabId,
+    rememberedTabId: hostableTabIdRef.current,
+    fallback: pageScopeContext,
+  }), [activeTabId, contextsByTabId, pageScopeContext]);
+
+  useEffect(() => {
+    hostableTabIdRef.current = rememberAiSidebarTabId({
+      previous: hostableTabIdRef.current,
+      activeTabId,
+      contextsByTabId,
+    });
+  }, [activeTabId, contextsByTabId]);
 
   // A pending terminal selection renders its picker in the per-tab instance.
   if (!hostEl || !open || pendingTerminalSelection) return null;
