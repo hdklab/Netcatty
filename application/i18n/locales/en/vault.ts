@@ -744,6 +744,7 @@ export const enVaultMessages: Messages = {
   'hostDetails.sftp.fileProtocol.auto': 'Auto',
   'hostDetails.sftp.fileProtocol.sftp': 'SFTP only',
   'hostDetails.sftp.fileProtocol.scp': 'SCP mode',
+  'hostDetails.sftp.fileProtocol.ftp': 'FTP only',
   'hostDetails.sftp.sudo': 'Sudo Mode',
   'hostDetails.sftp.sudo.desc': 'Automatically acquire Root privileges using stored password',
   'hostDetails.sftp.sudo.passwordWarning': 'Sudo mode requires a password. Configure one above, or ensure the server allows passwordless sudo.',

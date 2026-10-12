@@ -264,7 +264,9 @@ export interface Host {
   sftpSudo?: boolean; // Use sudo for SFTP operations (requires password)
   // Remote file browser protocol: Auto tries SFTP then falls back to SCP-mode
   // (shell browse + scp -t/-f transfers) when the SFTP subsystem is unavailable.
-  sftpFileProtocol?: 'auto' | 'sftp' | 'scp';
+  // `ftp` browses and transfers with the external lftp client — the only option
+  // for hosts whose terminal protocol (telnet/serial) has no SSH at all.
+  sftpFileProtocol?: 'auto' | 'sftp' | 'scp' | 'ftp';
   sftpEncoding?: SftpFilenameEncoding; // Filename encoding for SFTP operations
   sftpBookmarks?: SftpBookmark[]; // Bookmarked SFTP paths for quick navigation
   sftpFollowTerminalCwd?: boolean; // Overrides global SFTP follow-terminal-directory setting

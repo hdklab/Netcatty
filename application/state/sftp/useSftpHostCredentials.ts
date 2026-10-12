@@ -5,6 +5,10 @@ import { resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth } from
 import { resolveHostKeepalive } from "../../../domain/host";
 import { resolveHostSshConnectionTimeouts } from "../../../domain/sshConnectionTimeouts";
 import {
+  resolveFtpSftpEndpoint,
+  resolveSftpFileProtocolMode,
+} from "../../../domain/sftpFtpHost";
+import {
   findIncompleteProxyIdentityId,
   findMissingProxyIdentityId,
   formatIncompleteProxyIdentityMessage,
@@ -52,6 +56,37 @@ export const buildSftpHostCredentials = ({
 
   const resolved = resolveHostAuth({ host, keys, identities });
   const key = resolved.key || null;
+
+  // FTP file mode: the host's file service is FTP (a telnet/serial device, or an
+  // explicit host choice). Nothing SSH-specific applies — no host keys, no sudo,
+  // no transport reuse, and the endpoint carries its own port.
+  if (resolveSftpFileProtocolMode(host) === "ftp") {
+    const target = resolveFtpSftpEndpoint({
+      host,
+      credentials: { username: resolved.username, password: resolved.password },
+    });
+    if (!target.ok) {
+      const error = Object.assign(
+        new Error(`Host "${host.label || host.hostname}" has no address to browse over FTP.`),
+        { code: "SFTP_NO_FILE_SERVICE" },
+      );
+      throw error;
+    }
+    return {
+      hostname: target.endpoint.hostname,
+      hostId: host.id,
+      hostLabel: host.label,
+      port: target.endpoint.port,
+      username: target.endpoint.username,
+      password: target.endpoint.password,
+      authMethod: "password",
+      secure: target.endpoint.secure,
+      insecure: target.endpoint.insecure,
+      fileProtocol: "ftp",
+      sudo: false,
+      verifyHostKeys: false,
+    };
+  }
 
   const proxyConfig = host.proxyConfig
     ? resolveProxyConfigAuth(host.proxyConfig, identities)

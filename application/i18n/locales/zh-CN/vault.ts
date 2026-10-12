@@ -158,6 +158,7 @@ export const zhCNVaultMessages: Messages = {
   'hostDetails.sftp.fileProtocol.auto': '自动',
   'hostDetails.sftp.fileProtocol.sftp': '仅 SFTP',
   'hostDetails.sftp.fileProtocol.scp': 'SCP 模式',
+  'hostDetails.sftp.fileProtocol.ftp': '仅 FTP',
   'hostDetails.sftp.sudo': 'Sudo 提权模式',
   'hostDetails.sftp.sudo.desc': '使用保存的密码自动获取 Root 权限',
   'hostDetails.sftp.sudo.passwordWarning': 'Sudo 模式需要密码。请在上方配置密码，或确保服务器允许免密 sudo。',

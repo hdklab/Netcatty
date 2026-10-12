@@ -755,8 +755,9 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
               onValueChange={(val) => {
                 const protocol = val as Host["sftpFileProtocol"];
                 update("sftpFileProtocol", protocol);
-                // SCP mode has no sudo-sftp elevation path; clear a contradictory saved flag.
-                if (protocol === "scp" && form.sftpSudo) {
+                // Neither SCP nor FTP mode has a sudo-sftp elevation path;
+                // clear a contradictory saved flag.
+                if ((protocol === "scp" || protocol === "ftp") && form.sftpSudo) {
                   update("sftpSudo", false);
                 }
               }}
@@ -768,6 +769,7 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
                 <SelectItem value="auto">{t("hostDetails.sftp.fileProtocol.auto")}</SelectItem>
                 <SelectItem value="sftp">{t("hostDetails.sftp.fileProtocol.sftp")}</SelectItem>
                 <SelectItem value="scp">{t("hostDetails.sftp.fileProtocol.scp")}</SelectItem>
+                <SelectItem value="ftp">{t("hostDetails.sftp.fileProtocol.ftp")}</SelectItem>
               </SelectContent>
             </Select>
           </HostDetailsSettingRow>
@@ -778,7 +780,7 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
             <Switch
               checked={form.sftpSudo || false}
               onCheckedChange={(val) => update("sftpSudo", val)}
-              disabled={form.sftpFileProtocol === "scp"}
+              disabled={form.sftpFileProtocol === "scp" || form.sftpFileProtocol === "ftp"}
             />
           </HostDetailsSettingRow>
           {form.sftpSudo && !form.password && !selectedIdentity?.password && (

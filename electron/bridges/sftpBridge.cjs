@@ -704,9 +704,9 @@ const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding, opt
   if (!dirPath || dirPath === ".") return true;
 
   const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
-  if (isScpModeClient(client)) {
+  if (isNonSftpFileModeClient(client)) {
     const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
-    await getScpBackendForClient(client).mkdir(dirPath, {
+    await resolveRemoteFileBackend(client).mkdir(dirPath, {
       recursive: true,
       encoding: encoding === "auto" ? "utf-8" : encoding,
       signal: options.signal || null,
@@ -1258,12 +1258,12 @@ async function restoreRemoteMode(client, encodedPath, mode, options = {}) {
   const bestEffort = options?.bestEffort !== false;
   try {
     const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
-    if (isScpModeClient(client)) {
+    if (isNonSftpFileModeClient(client)) {
       // SCP-only servers have no SFTP channel; chmod via shell backend.
       const encoding = options?.encoding || "utf-8";
       const remotePath = options?.remotePath
         || (Buffer.isBuffer(encodedPath) ? decodeName(encodedPath, encoding) : String(encodedPath));
-      await getScpBackendForClient(client).chmod(remotePath, mode, {
+      await resolveRemoteFileBackend(client).chmod(remotePath, mode, {
         encoding,
         signal: options?.signal || null,
       });
@@ -1308,7 +1308,7 @@ function createRemoteRecoveryError(promotionError, restoreError, paths = {}) {
 
 async function planScpRemoteUploadReplace(client, remotePath, encoding, signal = null) {
   const { getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
-  const backend = getScpBackendForClient(client);
+  const backend = resolveRemoteFileBackend(client);
   let attrs = null;
   try {
     attrs = await backend.stat(remotePath, { encoding, signal });
@@ -1358,7 +1358,7 @@ async function promoteScpStagedUpload(
   signal,
 ) {
   const { getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
-  const backend = getScpBackendForClient(client);
+  const backend = resolveRemoteFileBackend(client);
   const encodedTargetPath = encodePath(targetPath, encoding);
   const assertTargetSafe = async () => {
     let latestTarget = null;
@@ -1463,7 +1463,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
     : (operation) => operation();
   const preserveStageOnUploadError = options?.preserveStageOnUploadError === true;
   const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
-  const scpMode = isScpModeClient(client);
+  const scpMode = isNonSftpFileModeClient(client);
   const encodedPath = encodePath(remotePath, encoding);
   // Build stable recovery paths before inspecting the destination. A previous
   // interrupted/unclean promotion must be reconciled before we snapshot the
@@ -1473,7 +1473,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   const encodedStagedPath = encodePath(stagedLogical, encoding);
   const encodedBackupPath = encodePath(backupLogical, encoding);
   if (scpMode) {
-    const backend = getScpBackendForClient(client);
+    const backend = resolveRemoteFileBackend(client);
     await reconcileRemoteUploadBackup({
       finalPath: remotePath,
       backupPath: backupLogical,
@@ -1559,7 +1559,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
     // it cannot reliably verify the followed target's byte count.
     if (Number.isFinite(expectedSize) && expectedSize >= 0 && !(scpMode && plan.writeInPlace)) {
       const st = scpMode
-        ? await getScpBackendForClient(client).stat(remotePath, { encoding })
+        ? await resolveRemoteFileBackend(client).stat(remotePath, { encoding })
         : typeof client.stat === "function" ? await client.stat(encodedPath) : null;
       const size = Number(st?.size);
       if (Number.isFinite(size) && size !== expectedSize) {
@@ -1578,7 +1578,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   const cleanupStage = async () => {
     try {
       if (scpMode) {
-        await getScpBackendForClient(client).remove(stagedLogical, {
+        await resolveRemoteFileBackend(client).remove(stagedLogical, {
           recursive: false,
           encoding,
         });
@@ -1604,7 +1604,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
     if (Number.isFinite(expectedSize) && expectedSize >= 0) {
       const stagedStat = await runCancelablePreflight(() => (
         scpMode
-          ? getScpBackendForClient(client).stat(stagedLogical, { encoding, signal })
+          ? resolveRemoteFileBackend(client).stat(stagedLogical, { encoding, signal })
           : typeof client.stat === "function" ? client.stat(encodedStagedPath) : null
       ));
       const stagedSize = Number(stagedStat?.size);
@@ -1934,6 +1934,14 @@ async function openSftpForSession(_event, payload) {
   const { sessionId } = payload || {};
   if (!sessionId) throw new Error("sessionId is required");
 
+  // FTP mode has no SSH transport to borrow: it is the file service for hosts
+  // whose terminal session is telnet/serial. Route it to the FTP opener instead
+  // of failing the SSH-session lookup.
+  if (String(payload?.fileProtocol || "").toLowerCase().trim() === "ftp") {
+    const openConnectionApi = require("./sftpBridge/openConnection.cjs");
+    return openConnectionApi.openSftp(_event, { ...payload, sourceSessionId: null });
+  }
+
   throwIfAborted(payload?.abortSignal);
   let sourceSessionId = sessionId;
   let source;
@@ -1997,7 +2005,7 @@ async function openSftpForSession(_event, payload) {
   async function probeScpCapability() {
     const bounded = createBoundedProbeSignal(payload?.abortSignal || null, probeTimeoutMs);
     try {
-      await getScpBackendForClient(client).homeDir({ signal: bounded.signal });
+      await resolveRemoteFileBackend(client).homeDir({ signal: bounded.signal });
       const { createSshExecAdapters } = require("./sftpBridge/scpBackend.cjs");
       const adapters = createSshExecAdapters(sshClient);
       const scpProbe = await adapters.exec(
@@ -2432,6 +2440,12 @@ async function openSftp(event, options) {
   }
   return openConnectionApi.openSftp(event, options);
 }
+// SCP and FTP sessions both bypass the SFTP channel: their file operations go
+// through a backend instead of an ssh2 channel (see remoteFileBackend.cjs).
+const {
+  isNonSftpFileModeClient,
+  resolveRemoteFileBackend,
+} = require("./sftpBridge/remoteFileBackend.cjs");
 const { createFileOpsApi } = require("./sftpBridge/fileOps.cjs");
 const fileOpsApi = createFileOpsApi({
   get sftpClients() { return sftpClients; },

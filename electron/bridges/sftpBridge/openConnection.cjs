@@ -759,11 +759,47 @@ function createOpenConnectionApi(ctx) {
     }
     
     /**
+     * Open an FTP-mode file session. Nothing SSH is dialled: the endpoint is
+     * probed with a single lftp `pwd`, which validates host/port/credentials and
+     * yields the directory the pane opens in.
+     */
+    async function openFtpSftpSession(event, options, connId) {
+      const { createFtpSftpClient, probeFtpSession } = require("./ftpSession.cjs");
+      const label = options.hostname || "FTP";
+      sendSftpProgress(event.sender, connId, label, "connecting", "FTP");
+      let client = null;
+      try {
+        client = createFtpSftpClient(connId, options, { webContentsId: event?.sender?.id });
+        const homeDir = await probeFtpSession(client);
+        sftpClients.set(connId, client);
+        sendSftpProgress(event.sender, connId, label, "connected", "FTP");
+        console.log(`[SFTP] Connection established: ${connId} (protocol=ftp ${label}:${client.__netcattyFtpConfig.port})`);
+        return { sftpId: connId, fileProtocol: "ftp", homeDir };
+      } catch (error) {
+        if (client) {
+          try { await client.end(); } catch { /* ignore */ }
+        }
+        sendSftpProgress(event.sender, connId, label, "error", error?.message || String(error));
+        throw error;
+      }
+    }
+
+    /**
      * Open a new SFTP connection
      * Supports jump host connections when options.jumpHosts is provided
      */
     async function openSftp(event, options) {
       const connId = options.sessionId || randomUUID();
+
+      // FTP mode never touches SSH. It exists for hosts whose terminal protocol
+      // has no SSH at all (telnet/serial devices that only serve FTP): dialling
+      // SSH there lands on a non-SSH banner and — because the SFTP dial runs
+      // with `readyTimeout: 0` so MFA can take its time — the file panel stayed
+      // on "Connecting…" forever instead of listing anything.
+      if (normalizeFileProtocol(options.fileProtocol) === "ftp") {
+        return await openFtpSftpSession(event, options, connId);
+      }
+
       const reuseEndpoint = buildConnectionReuseEndpoint(options, {
         sftpSudo: Boolean(options.sudo),
       });

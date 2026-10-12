@@ -26,6 +26,18 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
+/** App temp dir (AGENTS.md: temp files never go to os.tmpdir()). */
+function resolveAppTempDir() {
+  try {
+    const tempDirBridge = require('./tempDirBridge.cjs');
+    const dir = tempDirBridge.getTempDir?.();
+    if (typeof dir === 'string' && dir.trim()) return dir;
+  } catch {
+    /* bridge unavailable (unit tests): fall through */
+  }
+  return os.tmpdir();
+}
+
 /** Absolute paths worth trying when PATH is minimal (packaged apps on macOS). */
 const FALLBACK_LFTP_PATHS = [
   '/usr/bin/lftp',
@@ -52,7 +64,7 @@ function configure(deps) {
 function resolveTempDir(override) {
   if (typeof override === 'string' && override.trim()) return override;
   if (_deps?.tempDir) return _deps.tempDir;
-  return os.tmpdir();
+  return resolveAppTempDir();
 }
 
 function spawnImpl() {
@@ -89,6 +101,36 @@ function quote(value) {
 }
 
 /**
+ * Shared lftp prelude: fail fast, bound network waits, optional FTPS.
+ * Self-signed certificates are the norm on embedded/edge devices; the caller
+ * opts out of verification explicitly, it is never silent.
+ */
+function buildScriptPrelude({ secure = false, insecure = false, settings = [] } = {}) {
+  const lines = [
+    'set cmd:fail-exit yes',
+    'set net:timeout 15',
+    'set net:max-retries 2',
+  ];
+  if (secure) {
+    lines.push('set ftp:ssl-force yes', 'set ftp:ssl-protect-data yes');
+    if (insecure) lines.push('set ssl:verify-certificate no');
+  }
+  for (const setting of settings) {
+    const text = String(setting ?? '').trim();
+    if (text) lines.push(text);
+  }
+  return lines;
+}
+
+/** `open` line for one endpoint. Credentials stay inside the 0600 script. */
+function buildScriptOpenLine({ host, port = 21, user, password, secure = false }) {
+  if (!host) throw new Error('ftp host is required');
+  const credentials = user ? `-u ${quote(user)},${quote(password ?? '')}` : '';
+  const scheme = secure ? 'ftps' : 'ftp';
+  return `open ${credentials} -p ${Number(port) || 21} ${scheme}://${quote(host)}`.replace(/\s+/g, ' ').trim();
+}
+
+/**
  * Build the lftp script for one upload batch. Pure, so it can be asserted on
  * without spawning anything: no credentials may leak into argv is the invariant
  * that matters, and it is checked by looking at the produced script.
@@ -100,33 +142,11 @@ function quote(value) {
  * }} options
  */
 function buildLftpScript(options) {
-  const {
-    host,
-    port = 21,
-    user,
-    password,
-    secure = false,
-    insecure = false,
-    remoteDir,
-    files,
-  } = options;
-  if (!host) throw new Error('ftp host is required');
+  const { remoteDir, files } = options;
   if (!Array.isArray(files) || files.length === 0) throw new Error('no files to upload');
 
-  const lines = [
-    'set cmd:fail-exit yes',
-    'set net:timeout 15',
-    'set net:max-retries 2',
-  ];
-  if (secure) {
-    lines.push('set ftp:ssl-force yes', 'set ftp:ssl-protect-data yes');
-    // Self-signed certificates are the norm on embedded/edge devices; the
-    // caller opts out of verification explicitly, it is never silent.
-    if (insecure) lines.push('set ssl:verify-certificate no');
-  }
-  const credentials = user ? `-u ${quote(user)},${quote(password ?? '')}` : '';
-  const scheme = secure ? 'ftps' : 'ftp';
-  lines.push(`open ${credentials} -p ${Number(port) || 21} ${scheme}://${quote(host)}`.replace(/\s+/g, ' ').trim());
+  const lines = buildScriptPrelude(options);
+  lines.push(buildScriptOpenLine(options));
   if (remoteDir && String(remoteDir).trim()) {
     lines.push(`cd ${quote(String(remoteDir).trim())}`);
   }
@@ -143,34 +163,52 @@ function buildLftpScript(options) {
 }
 
 /**
- * Upload files into `remoteDir` on an FTP/FTPS host.
- *
- * @returns {Promise<{ ok: boolean, code?: string, error?: string }>}
+ * Build a complete lftp script: prelude, `open`, then caller-supplied commands.
+ * Used by the FTP file-protocol backend, whose every operation is one script.
  */
-async function uploadFiles(options) {
-  const lftpPath = findLftp();
-  if (!lftpPath) {
-    return {
-      ok: false,
-      code: 'lftp-not-found',
-      error: 'lftp is not installed. Install it (apt install lftp / brew install lftp) and retry.',
-    };
-  }
+function buildCommandScript(options) {
+  const commands = (options.commands || []).map((command) => String(command)).filter((c) => c.trim());
+  const lines = buildScriptPrelude(options);
+  lines.push(buildScriptOpenLine(options));
+  lines.push(...commands);
+  lines.push('bye');
+  return `${lines.join('\n')}\n`;
+}
 
-  let script;
-  try {
-    script = buildLftpScript(options);
-  } catch (error) {
-    return { ok: false, code: 'invalid-request', error: error.message };
-  }
+/** Result shape shared by every lftp invocation. */
+function createLftpResult(overrides = {}) {
+  return {
+    ok: true,
+    code: undefined,
+    error: undefined,
+    stdout: Buffer.alloc(0),
+    stderr: '',
+    exitCode: 0,
+    ...overrides,
+  };
+}
 
-  const dir = resolveTempDir(options.tempDir);
+function lftpUnavailable() {
+  return createLftpResult({
+    ok: false,
+    code: 'lftp-not-found',
+    error: 'lftp is not installed. Install it (apt install lftp / brew install lftp) and retry.',
+    exitCode: null,
+  });
+}
+
+/**
+ * Run one lftp script and capture its output. `stdout` is collected as a
+ * Buffer because the FTP backend reads remote files with `cat`.
+ */
+async function runScript(lftpPath, script, { timeoutMs, tempDir, scriptTag = 'cmd', onProcess = null } = {}) {
+  const dir = resolveTempDir(tempDir);
   fs.mkdirSync(dir, { recursive: true });
-  const scriptPath = path.join(dir, `nc-lftp-${process.pid}-${Date.now()}.script`);
+  const scriptPath = path.join(dir, `nc-lftp-${process.pid}-${Date.now()}-${scriptTag}.script`);
   fs.writeFileSync(scriptPath, script, { mode: 0o600 });
 
   try {
-    return await runLftp(lftpPath, scriptPath, options.timeoutMs);
+    return await runLftp(lftpPath, scriptPath, timeoutMs, onProcess ? { onProcess } : {});
   } finally {
     try {
       fs.unlinkSync(scriptPath);
@@ -180,16 +218,71 @@ async function uploadFiles(options) {
   }
 }
 
-function runLftp(lftpPath, scriptPath, timeoutMs) {
+/**
+ * Run FTP commands against one endpoint in a single lftp session.
+ * Every remote operation (list, stat, get, put, …) goes through here.
+ */
+async function runLftpCommands(options = {}) {
+  const lftpPath = findLftp();
+  if (!lftpPath) return lftpUnavailable();
+
+  let script;
+  try {
+    script = buildCommandScript(options);
+  } catch (error) {
+    return createLftpResult({ ok: false, code: 'invalid-request', error: error.message, exitCode: null });
+  }
+
+  return runScript(lftpPath, script, {
+    timeoutMs: options.timeoutMs,
+    tempDir: options.tempDir,
+    scriptTag: options.scriptTag || 'cmd',
+    onProcess: options.onProcess || null,
+  });
+}
+
+/**
+ * Upload files into `remoteDir` on an FTP/FTPS host.
+ *
+ * @returns {Promise<{ ok: boolean, code?: string, error?: string }>}
+ */
+async function uploadFiles(options) {
+  const lftpPath = findLftp();
+  if (!lftpPath) {
+    const unavailable = lftpUnavailable();
+    return { ok: false, code: unavailable.code, error: unavailable.error };
+  }
+
+  let script;
+  try {
+    script = buildLftpScript(options);
+  } catch (error) {
+    return { ok: false, code: 'invalid-request', error: error.message };
+  }
+
+  const result = await runScript(lftpPath, script, {
+    timeoutMs: options.timeoutMs,
+    tempDir: options.tempDir,
+    scriptTag: 'upload',
+  });
+  return result.ok ? { ok: true } : { ok: false, code: result.code, error: result.error };
+}
+
+function runLftp(lftpPath, scriptPath, timeoutMs, options = {}) {
   return new Promise((resolve) => {
     let settled = false;
+    const stdoutChunks = [];
     let stderr = '';
     let proc;
     const finish = (value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(value);
+      resolve(createLftpResult({
+        stdout: Buffer.concat(stdoutChunks),
+        stderr,
+        ...value,
+      }));
     };
 
     const timer = setTimeout(() => {
@@ -198,32 +291,44 @@ function runLftp(lftpPath, scriptPath, timeoutMs) {
       } catch {
         /* already gone */
       }
-      finish({ ok: false, code: 'timeout', error: 'lftp timed out' });
+      finish({ ok: false, code: 'timeout', error: 'lftp timed out', exitCode: null });
     }, Number(timeoutMs) > 0 ? Number(timeoutMs) : DEFAULT_TIMEOUT_MS);
 
     try {
       proc = spawnImpl()(lftpPath, ['-f', scriptPath], { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) {
-      finish({ ok: false, code: 'spawn-failed', error: `could not start lftp: ${error.message}` });
+      finish({ ok: false, code: 'spawn-failed', error: `could not start lftp: ${error.message}`, exitCode: null });
       return;
     }
 
+    if (options.onProcess) {
+      try {
+        options.onProcess(proc);
+      } catch {
+        /* observers must never break the transfer */
+      }
+    }
+
+    proc.stdout?.on('data', (chunk) => {
+      stdoutChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
     proc.stderr?.on('data', (chunk) => {
       // lftp prints progress prompts on stderr; only the tail is useful.
       stderr = `${stderr}${chunk}`.slice(-2000);
     });
     proc.on('error', (error) => {
-      finish({ ok: false, code: 'spawn-failed', error: `could not start lftp: ${error.message}` });
+      finish({ ok: false, code: 'spawn-failed', error: `could not start lftp: ${error.message}`, exitCode: null });
     });
     proc.on('close', (code) => {
       if (code === 0) {
-        finish({ ok: true });
+        finish({ ok: true, exitCode: 0 });
         return;
       }
       finish({
         ok: false,
         code: 'lftp-failed',
         error: redact(stderr.trim()) || `lftp exited with code ${code}`,
+        exitCode: code,
       });
     });
   });
@@ -326,8 +431,12 @@ module.exports = {
   registerHandlers,
   findLftp,
   buildLftpScript,
+  buildCommandScript,
+  buildScriptPrelude,
+  buildScriptOpenLine,
+  runLftpCommands,
   uploadFiles,
   getCapabilities,
   redact,
-  _internal: { quote, redact, isExecutable, materializeDropFile },
+  _internal: { quote, redact, isExecutable, materializeDropFile, resolveAppTempDir },
 };

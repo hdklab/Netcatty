@@ -449,11 +449,13 @@ function modeToPermissionsString(mode) {
 
 /**
  * Normalize file protocol preference from host/open options.
- * @returns {'auto'|'sftp'|'scp'}
+ * `ftp` is the lftp-backed mode for hosts with no SSH at all (telnet/serial
+ * devices that only serve FTP); see sftpBridge/ftpBackend.cjs.
+ * @returns {'auto'|'sftp'|'scp'|'ftp'}
  */
 function normalizeFileProtocol(value) {
   const v = String(value || "auto").toLowerCase().trim();
-  if (v === "sftp" || v === "scp") return v;
+  if (v === "sftp" || v === "scp" || v === "ftp") return v;
   return "auto";
 }
 

@@ -781,6 +781,7 @@ export const ruVaultMessages: Messages = {
   'hostDetails.sftp.fileProtocol.auto': 'Авто',
   'hostDetails.sftp.fileProtocol.sftp': 'Только SFTP',
   'hostDetails.sftp.fileProtocol.scp': 'Режим SCP',
+  'hostDetails.sftp.fileProtocol.ftp': 'Только FTP',
   'hostDetails.sftp.sudo': 'Режим sudo',
   'hostDetails.sftp.sudo.desc': 'Автоматически получать привилегии Root с помощью сохранённого пароля',
   'hostDetails.sftp.sudo.passwordWarning': 'Для режима sudo требуется пароль. Укажите его выше или убедитесь, что сервер разрешает sudo без пароля.',

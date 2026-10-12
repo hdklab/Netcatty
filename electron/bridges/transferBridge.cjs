@@ -15,7 +15,9 @@ const {
   requireSftpChannel,
   resolveEncodingForRequest,
 } = require("./sftpBridge.cjs");
-const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
+// SCP and FTP sessions both bypass the SFTP channel: every file operation
+// goes through their backend (see sftpBridge/remoteFileBackend.cjs).
+const { isNonSftpFileModeClient, resolveRemoteFileBackend } = require("./sftpBridge/remoteFileBackend.cjs");
 const {
   statLocal,
   openLocal,
@@ -274,8 +276,8 @@ async function restoreRemoteUploadModeBestEffort(client, sftpId, remotePath, enc
     // Post-commit: cancelTransfer will not abort. Bound the wait so a stalled
     // chmod cannot pin the transfer, SFTP lease, or admission slot.
     await awaitBestEffortBounded((async () => {
-      if (isScpModeClient(client)) {
-        const backend = getScpBackendForClient(client);
+      if (isNonSftpFileModeClient(client)) {
+        const backend = resolveRemoteFileBackend(client);
         if (typeof backend.chmod !== "function") return;
         await backend.chmod(remotePath, mode, { encoding });
         return;
@@ -654,8 +656,8 @@ async function resolveRemoteResumeCheckpoint(client, sftpId, filePath, encoding,
   const claimed = Math.max(0, Number(claimedCheckpoint) || 0);
   if (!claimed) return 0;
   try {
-    const stat = isScpModeClient(client)
-      ? await getScpBackendForClient(client).stat(filePath, { encoding })
+    const stat = isNonSftpFileModeClient(client)
+      ? await resolveRemoteFileBackend(client).stat(filePath, { encoding })
       : await client.stat(encodePathForSession(sftpId, filePath, encoding));
     return Math.min(claimed, Math.max(0, Number(stat?.size) || 0));
   } catch (error) {
@@ -829,7 +831,7 @@ async function hashLocalFile(filePath, options = {}) {
 }
 
 async function hashRemotePrefixViaSshCommand(client, remotePath, bytes, options = {}) {
-  if (!Number.isFinite(bytes) || bytes <= 0 || isScpModeClient(client)) return null;
+  if (!Number.isFinite(bytes) || bytes <= 0 || isNonSftpFileModeClient(client)) return null;
   // Sudo SFTP elevates the subsystem, but exec() still runs as the login user.
   // For a root-only source, head can fail while sha256sum/openssl still emit the
   // empty-input digest and exit 0 — skip the command path and use elevated SFTP.
@@ -892,7 +894,7 @@ async function hashRemotePrefixViaSshCommand(client, remotePath, bytes, options 
 }
 
 async function hashRemoteFile(client, sftpId, filePath, encoding, options = {}) {
-  if (isScpModeClient(client)) return null;
+  if (isNonSftpFileModeClient(client)) return null;
   const sshClient = client?.client;
   // The server-side helper has no portable byte progress and its command stream
   // is not consistently abortable across SSH backends. Visible/cancellable
@@ -987,7 +989,7 @@ async function hashRemotePrefix(client, sftpId, filePath, encoding, bytes, optio
   if (!Number.isFinite(bytes) || bytes < 0) return null;
   // Empty planned snapshot: fixed empty digest (no stream open required).
   if (bytes === 0) return EMPTY_SHA256_HEX;
-  if (isScpModeClient(client)) return null;
+  if (isNonSftpFileModeClient(client)) return null;
   await requireSftpChannel(client, { signal: options?.signal });
   const encodedPath = encodePathForSession(sftpId, filePath, encoding);
   // Resume still hashes the entire required prefix. Use the same bounded READ
@@ -1262,7 +1264,7 @@ async function preserveTransferredDestinationMtime(transfer, options = {}) {
     const client = sftpClients.get(transfer.targetSftpId);
     if (!client) return;
 
-    if (isScpModeClient(client)) {
+    if (isNonSftpFileModeClient(client)) {
       // SCP has no SETSTAT; best-effort touch via the SSH session.
       const sshClient = client.client;
       if (!sshClient || typeof sshClient.exec !== "function" || client.__netcattySingleChannelSsh || sshClient.__netcattySingleChannelSsh) return;
@@ -1832,7 +1834,7 @@ async function truncateStagedPathToCheckpoint(filePath, checkpointBytes) {
 async function truncateRemoteStagedToCheckpoint(client, stagedRemote, checkpointBytes) {
   const checkpoint = Math.max(0, Number(checkpointBytes) || 0);
   if (!client || !stagedRemote?.path) return;
-  if (isScpModeClient(client)) return;
+  if (isNonSftpFileModeClient(client)) return;
   try {
     const encoded = encodePathForSession(
       stagedRemote.sftpId,
@@ -2357,12 +2359,12 @@ async function uploadFile(
   const existingRemoteMode = Number.isFinite(options.existingMode)
     ? options.existingMode & 0o7777
     : null;
-  if (isScpModeClient(client)) {
+  if (isNonSftpFileModeClient(client)) {
     transfer.pauseSupported = false;
     transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers";
     transfer.uploadStrategy = "scp";
     logTransferDiag(transfer, "strategy", { strategy: "scp" });
-    const backend = getScpBackendForClient(client);
+    const backend = resolveRemoteFileBackend(client);
     // Stream the live local path directly — no whole-file digest / snapshot.
     // openReadStream is optional for scpBackend (falls back to createReadStream);
     // provide a plain file stream so tests/backends that always call it still work.
@@ -3511,7 +3513,7 @@ function openSftpReadHandle(sftp, remotePath, signal, timeoutMs) {
 }
 
 async function hashRemotePrefixWithSftpRanges(client, remotePath, bytes, options = {}) {
-  if (!Number.isFinite(bytes) || bytes <= 0 || isScpModeClient(client)) return null;
+  if (!Number.isFinite(bytes) || bytes <= 0 || isNonSftpFileModeClient(client)) return null;
   await requireSftpChannel(client, { signal: options.signal });
   const sftp = client.sftp;
   if (typeof sftp?.open !== "function" || typeof sftp?.read !== "function") return null;
@@ -4163,7 +4165,7 @@ async function assertLocalDownloadMatchesRemotePrefix(
   options = {},
 ) {
   if (!(prefixBytes > 0)) return;
-  if (isScpModeClient(client)) {
+  if (isNonSftpFileModeClient(client)) {
     // SCP cannot range-hash portably; fail closed when growth needs proof.
     throw createSourceContentChangedError();
   }
@@ -4580,8 +4582,8 @@ async function uploadFileConcurrent(
           try {
             const staged = transfer.stagedRemote;
             let size = null;
-            if (isScpModeClient(staged.client)) {
-              const st = await getScpBackendForClient(staged.client).stat(staged.path, {
+            if (isNonSftpFileModeClient(staged.client)) {
+              const st = await resolveRemoteFileBackend(staged.client).stat(staged.path, {
                 encoding: staged.encoding,
               });
               size = Number(st?.size);
@@ -4903,10 +4905,10 @@ async function downloadFile(
   encoding = "utf-8",
   runCancelablePreflight = async (operation) => operation(),
 ) {
-  if (isScpModeClient(client)) {
+  if (isNonSftpFileModeClient(client)) {
     transfer.pauseSupported = false;
     transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers";
-    const backend = getScpBackendForClient(client);
+    const backend = resolveRemoteFileBackend(client);
     return backend.downloadFile(remotePath, localPath, {
       fileSize,
       transfer,
@@ -5627,8 +5629,8 @@ async function startTransferNow(event, payload, onProgress) {
       if (!client) throw new Error("Source SFTP session not found");
       let size = 0;
       let mtimeMs;
-      if (isScpModeClient(client)) {
-        const st = await getScpBackendForClient(client).stat(sourcePath, {
+      if (isNonSftpFileModeClient(client)) {
+        const st = await resolveRemoteFileBackend(client).stat(sourcePath, {
           encoding: resolveEncodingForRequest(sourceSftpId, sourceEncoding),
           signal: transfer.signal,
         });
@@ -5885,8 +5887,8 @@ async function startTransferNow(event, payload, onProgress) {
       } else if (sourceType === 'sftp') {
         const client = sftpClients.get(sourceSftpId);
         if (!client) throw new Error("Source SFTP session not found");
-        if (isScpModeClient(client)) {
-          const st = await getScpBackendForClient(client).stat(sourcePath, {
+        if (isNonSftpFileModeClient(client)) {
+          const st = await resolveRemoteFileBackend(client).stat(sourcePath, {
             encoding: resolveEncodingForRequest(sourceSftpId, sourceEncoding),
             signal: transfer.signal,
           });
@@ -5916,7 +5918,7 @@ async function startTransferNow(event, payload, onProgress) {
 
     const sourceClient = sourceType === "sftp" ? sftpClients.get(sourceSftpId) : null;
     const targetClient = targetType === "sftp" ? sftpClients.get(targetSftpId) : null;
-    if ((sourceClient && isScpModeClient(sourceClient)) || (targetClient && isScpModeClient(targetClient))) {
+    if ((sourceClient && isNonSftpFileModeClient(sourceClient)) || (targetClient && isNonSftpFileModeClient(targetClient))) {
       transfer.resumable = false;
       transfer.pauseSupported = false;
       transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers; cancel and retry from the beginning instead";
@@ -6048,12 +6050,12 @@ async function startTransferNow(event, payload, onProgress) {
       const dir = path.dirname(targetPath);
       await ensureLocalDir(dir);
 
-      const encodedSourcePath = isScpModeClient(client)
+      const encodedSourcePath = isNonSftpFileModeClient(client)
         ? sourcePath
         : encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
       // SCP cannot resume, but it must still stage locally so a failed/cancelled
       // overwrite never truncates or removes the existing destination.
-      const stageLocalDownload = transfer.resumable || isScpModeClient(client);
+      const stageLocalDownload = transfer.resumable || isNonSftpFileModeClient(client);
       let downloadTargetPath = stageLocalDownload
         ? tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath))
         : targetPath;
@@ -6110,7 +6112,7 @@ async function startTransferNow(event, payload, onProgress) {
       downloadTargetPath = download.localPath;
       const downloadResult = download.result;
       if (
-        isScpModeClient(client)
+        isNonSftpFileModeClient(client)
         && Number.isFinite(downloadResult?.fileSize)
         && downloadResult.fileSize >= 0
       ) {
@@ -6324,7 +6326,7 @@ async function startTransferNow(event, payload, onProgress) {
           // stage offset afterward so downloadFile resumes at the durable point.
           sendProgress(lastObservedTransferred, fileSize, { force: true });
           transfer.checkpointBytes = transfer.downloadCheckpointBytes;
-          const encodedSourcePath = isScpModeClient(sourceClient)
+          const encodedSourcePath = isNonSftpFileModeClient(sourceClient)
             ? sourcePath
             : encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
           {
@@ -6347,7 +6349,7 @@ async function startTransferNow(event, payload, onProgress) {
           }
           const downloadProgress = (transferred, reportedTotal, options = {}) => {
             if (
-              isScpModeClient(sourceClient)
+              isNonSftpFileModeClient(sourceClient)
               && Number.isFinite(reportedTotal)
               && reportedTotal >= 0
               && reportedTotal !== fileSize
@@ -6389,7 +6391,7 @@ async function startTransferNow(event, payload, onProgress) {
           tempPath = download.localPath;
           const downloadResult = download.result;
           if (
-            isScpModeClient(sourceClient)
+            isNonSftpFileModeClient(sourceClient)
             && Number.isFinite(downloadResult?.fileSize)
             && downloadResult.fileSize >= 0
           ) {
@@ -6565,8 +6567,8 @@ async function startTransferNow(event, payload, onProgress) {
       if (transfer.stagedRemote) {
         const staged = transfer.stagedRemote;
         try {
-          if (isScpModeClient(staged.client)) {
-            await getScpBackendForClient(staged.client).remove(staged.path, {
+          if (isNonSftpFileModeClient(staged.client)) {
+            await resolveRemoteFileBackend(staged.client).remove(staged.path, {
               recursive: false,
               encoding: staged.encoding,
             });
@@ -6591,8 +6593,8 @@ async function startTransferNow(event, payload, onProgress) {
       if (transfer.stagedRemote) {
         const staged = transfer.stagedRemote;
         try {
-          if (isScpModeClient(staged.client)) {
-            await getScpBackendForClient(staged.client).remove(staged.path, { recursive: false, encoding: staged.encoding });
+          if (isNonSftpFileModeClient(staged.client)) {
+            await resolveRemoteFileBackend(staged.client).remove(staged.path, { recursive: false, encoding: staged.encoding });
           } else {
             await staged.client.delete(encodePathForSession(staged.sftpId, staged.path, staged.encoding));
           }
@@ -6988,8 +6990,8 @@ async function pauseTransfer(_event, payload) {
     } else if (transfer.stagedRemote) {
       try {
         const staged = transfer.stagedRemote;
-        const stat = isScpModeClient(staged.client)
-          ? await getScpBackendForClient(staged.client).stat(staged.path, { encoding: staged.encoding })
+        const stat = isNonSftpFileModeClient(staged.client)
+          ? await resolveRemoteFileBackend(staged.client).stat(staged.path, { encoding: staged.encoding })
           : await staged.client.stat(encodePathForSession(staged.sftpId, staged.path, staged.encoding));
         transfer.checkpointBytes = stat.size;
       } catch (statError) {
@@ -7206,8 +7208,8 @@ async function cleanupTransferArtifacts(_event, payload) {
     if (client) {
       const stagePath = buildRemoteTransferStagePath(payload.targetPath, transferId);
       try {
-        if (isScpModeClient(client)) {
-          await getScpBackendForClient(client).remove(stagePath, { recursive: false, encoding: payload.targetEncoding });
+        if (isNonSftpFileModeClient(client)) {
+          await resolveRemoteFileBackend(client).remove(stagePath, { recursive: false, encoding: payload.targetEncoding });
         } else {
           await client.delete(encodePathForSession(payload.targetSftpId, stagePath, payload.targetEncoding));
         }

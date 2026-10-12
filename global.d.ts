@@ -141,8 +141,12 @@ declare global {
     algorithmOverrides?: import("./domain/models").HostAlgorithmOverrides;
     // Use sudo for SFTP server
     sudo?: boolean;
-    // Remote file protocol: auto (SFTP then SCP fallback) | sftp | scp
-    fileProtocol?: 'auto' | 'sftp' | 'scp';
+    // Remote file protocol: auto (SFTP then SCP fallback) | sftp | scp |
+    // ftp (external lftp driver, for hosts with no SSH at all)
+    fileProtocol?: 'auto' | 'sftp' | 'scp' | 'ftp';
+    // FTP/FTPS endpoint flags, only read when fileProtocol is 'ftp'
+    secure?: boolean;
+    insecure?: boolean;
     // Saved host password used by background system tools when they need sudo.
     sudoAutofillPassword?: string;
     // Session log configuration for real-time streaming

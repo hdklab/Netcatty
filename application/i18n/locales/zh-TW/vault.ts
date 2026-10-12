@@ -157,6 +157,7 @@ export const zhTWVaultMessages: Messages = {
   'hostDetails.sftp.fileProtocol.auto': '自動',
   'hostDetails.sftp.fileProtocol.sftp': '僅 SFTP',
   'hostDetails.sftp.fileProtocol.scp': 'SCP 模式',
+  'hostDetails.sftp.fileProtocol.ftp': '僅 FTP',
   'hostDetails.sftp.sudo': 'Sudo 提權模式',
   'hostDetails.sftp.sudo.desc': '使用儲存的密碼自動取得 Root 權限',
   'hostDetails.sftp.sudo.passwordWarning': 'Sudo 模式需要密碼。請在上方設定密碼，或確保伺服器允許免密 sudo。',

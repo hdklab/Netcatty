@@ -134,13 +134,27 @@ function createFileOpsApi(ctx) {
       isScpModeClient,
       abortScpClientStreams,
     } = require("./scpBackend.cjs");
+    // SCP and FTP are both "not SFTP" file modes with the same backend shape.
+    const { resolveRemoteFileBackend } = require("./remoteFileBackend.cjs");
+    const { isFtpModeClient } = require("./ftpBackend.cjs");
 
     async function listSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
 
-      if (isScpModeClient(client)) {
-        const backend = getScpBackendForClient(client);
+      // FTP mode: the server's own LIST is the only listing available, so no
+      // encoding probing and no shell fallback — one lftp `cls -l` per call.
+      if (isFtpModeClient(client)) {
+        const backend = resolveRemoteFileBackend(client);
+        const basePath = payload.path || ".";
+        return await backend.list(basePath, {
+          encoding: "utf-8",
+          signal: payload?.abortSignal || null,
+        });
+      }
+
+      if (resolveRemoteFileBackend(client)) {
+        const backend = resolveRemoteFileBackend(client);
         const basePath = payload.path || ".";
         const requestedEncoding = normalizeEncoding(payload.encoding);
         let encoding = resolveEncodingForRequest(payload.sftpId, requestedEncoding);
@@ -151,7 +165,7 @@ function createFileOpsApi(ctx) {
           try {
             // Use tracked backend exec path (getScpBackendForClient wraps exec) so
             // closeSftp can abort a hung auto-detect probe on shared sessions.
-            const tracked = getScpBackendForClient(client);
+            const tracked = resolveRemoteFileBackend(client);
             const { buildListCommand, parseListRecords } = require("./scpShell.cjs");
             // Access list via a private-ish path: run list with utf-8 first internally
             // by exec through backend's run path — use list then re-detect from raw is heavy;
@@ -364,8 +378,8 @@ function createFileOpsApi(ctx) {
       if (!client) throw new Error("SFTP session not found");
       const signal = payload?.abortSignal || null;
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-      if (isScpModeClient(client)) {
-        return getScpBackendForClient(client).realpath(payload.path || ".", { encoding, signal });
+      if (resolveRemoteFileBackend(client)) {
+        return resolveRemoteFileBackend(client).realpath(payload.path || ".", { encoding, signal });
       }
       const sftp = await requireSftpChannel(client, { signal, timeoutMs: payload?.timeoutMs });
       const encodedPath = encodePath(payload.path || ".", encoding);
@@ -380,9 +394,9 @@ function createFileOpsApi(ctx) {
         const client = sftpClients.get(payload.sftpId);
         if (!client) throw new Error("SFTP session not found");
 
-        if (isScpModeClient(client)) {
+        if (resolveRemoteFileBackend(client)) {
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-        const backend = getScpBackendForClient(client);
+        const backend = resolveRemoteFileBackend(client);
         try {
           const attrs = await backend.stat(payload.path, {
             encoding,
@@ -423,9 +437,9 @@ function createFileOpsApi(ctx) {
         const client = sftpClients.get(payload.sftpId);
         if (!client) throw new Error("SFTP session not found");
 
-        if (isScpModeClient(client)) {
+        if (resolveRemoteFileBackend(client)) {
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-        const backend = getScpBackendForClient(client);
+        const backend = resolveRemoteFileBackend(client);
         try {
           const attrs = await backend.stat(payload.path, {
             encoding,
@@ -476,8 +490,8 @@ function createFileOpsApi(ctx) {
       // "command not found" and syntax errors on Linux.
       const normalized = payload.content.replace(/\r\n/g, '\n');
 
-      if (isScpModeClient(client)) {
-        const backend = getScpBackendForClient(client);
+      if (resolveRemoteFileBackend(client)) {
+        const backend = resolveRemoteFileBackend(client);
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
         const scpOpts = { encoding, signal: payload?.abortSignal || null };
         let existingMode = null;
@@ -539,9 +553,9 @@ function createFileOpsApi(ctx) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
 
-      if (isScpModeClient(client)) {
+      if (resolveRemoteFileBackend(client)) {
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-        await getScpBackendForClient(client).writeFile(payload.path, Buffer.from(payload.content), {
+        await resolveRemoteFileBackend(client).writeFile(payload.path, Buffer.from(payload.content), {
           encoding,
           signal: payload?.abortSignal || null,
         });
@@ -638,10 +652,12 @@ function createFileOpsApi(ctx) {
       }
     
       try {
-        if (isScpModeClient(client)) {
-          // Abort in-flight scp/exec channels first so agent Stop/timeout via
-          // closeSftp actually stops transfers without needing a serialized AbortSignal.
+        if (isScpModeClient(client) || isFtpModeClient(client)) {
+          // Abort in-flight work first so agent Stop/timeout via closeSftp
+          // actually stops transfers without a serialized AbortSignal:
+          // shell exec channels for SCP, the running lftp child for FTP.
           try { abortScpClientStreams(client); } catch { /* ignore */ }
+          try { client.__netcattyFtpBackend?.abortAll?.(); } catch { /* ignore */ }
           // Only tear down SSH sockets we own (fresh dials not registered in the
           // transport registry). Session-backed and transport-managed clients
           // return a lease instead of ending the shared/parkable connection.
@@ -726,9 +742,9 @@ function createFileOpsApi(ctx) {
      */
     async function mkdirSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
-      if (client && isScpModeClient(client)) {
+      if (client && resolveRemoteFileBackend(client)) {
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-        await getScpBackendForClient(client).mkdir(payload.path, {
+        await resolveRemoteFileBackend(client).mkdir(payload.path, {
           recursive: true,
           encoding,
           signal: payload?.abortSignal || null,
@@ -746,11 +762,11 @@ function createFileOpsApi(ctx) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
 
-      if (isScpModeClient(client)) {
+      if (resolveRemoteFileBackend(client)) {
         throwIfAborted(payload?.abortSignal || null);
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
         if (payload.expectedType) {
-          const stat = await getScpBackendForClient(client).stat(payload.path, {
+          const stat = await resolveRemoteFileBackend(client).stat(payload.path, {
             encoding,
             signal: payload?.abortSignal || null,
           });
@@ -763,7 +779,7 @@ function createFileOpsApi(ctx) {
             throw error;
           }
         }
-        const backend = getScpBackendForClient(client);
+        const backend = resolveRemoteFileBackend(client);
         if (payload.expectedType === "symlink") {
           // Keep the final operation non-recursive. If another client replaces
           // the link with a directory after the check above, rm -f must fail
@@ -868,9 +884,9 @@ function createFileOpsApi(ctx) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
 
-      if (isScpModeClient(client)) {
+      if (resolveRemoteFileBackend(client)) {
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-        await getScpBackendForClient(client).rename(payload.oldPath, payload.newPath, {
+        await resolveRemoteFileBackend(client).rename(payload.oldPath, payload.newPath, {
           encoding,
           signal: payload?.abortSignal || null,
         });
@@ -913,9 +929,9 @@ function createFileOpsApi(ctx) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
 
-      if (isScpModeClient(client)) {
+      if (resolveRemoteFileBackend(client)) {
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-        const st = await getScpBackendForClient(client).stat(payload.path, {
+        const st = await resolveRemoteFileBackend(client).stat(payload.path, {
           encoding,
           signal: payload?.abortSignal || null,
         });
@@ -946,11 +962,11 @@ function createFileOpsApi(ctx) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
 
-      if (isScpModeClient(client)) {
+      if (resolveRemoteFileBackend(client)) {
         // SCP shell stat already reports the link node (no follow).
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
         try {
-          const st = await getScpBackendForClient(client).stat(payload.path, {
+          const st = await resolveRemoteFileBackend(client).stat(payload.path, {
             encoding,
             signal: payload?.abortSignal || null,
           });
@@ -1017,9 +1033,18 @@ function createFileOpsApi(ctx) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
 
-      if (isScpModeClient(client)) {
+      if (isFtpModeClient(client)) {
+        // FTP has no permission bits. The backend's chmod is a deliberate no-op
+        // (the transfer pipeline calls it after a commit and must not fail), so
+        // the UI-facing path has to report the limitation itself.
+        const error = new Error("FTP servers do not support changing permissions");
+        error.code = "ENOTSUP";
+        throw error;
+      }
+
+      if (resolveRemoteFileBackend(client)) {
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-        await getScpBackendForClient(client).chmod(payload.path, payload.mode, {
+        await resolveRemoteFileBackend(client).chmod(payload.path, payload.mode, {
           encoding,
           signal: payload?.abortSignal || null,
         });
@@ -1063,7 +1088,7 @@ function createFileOpsApi(ctx) {
 
       let archiveSize = 0;
       try {
-        if (!isScpModeClient(client) && typeof lstatAsync === "function") {
+        if (!resolveRemoteFileBackend(client) && typeof lstatAsync === "function") {
           const sftp = await requireSftpChannel(client, { signal });
           const encodedPath = encodePath(archivePath, encoding);
           const attrs = await lstatAsync(sftp, encodedPath);
@@ -1109,14 +1134,19 @@ function createFileOpsApi(ctx) {
       const signal = payload?.abortSignal || null;
       throwIfAborted(signal);
 
-      if (isScpModeClient(client)) {
+      if (isFtpModeClient(client)) {
+        // Learned when the session was probed at connect time (one lftp `pwd`).
+        return { success: true, homeDir: client.__netcattyFtpHomeDir || "/" };
+      }
+
+      if (resolveRemoteFileBackend(client)) {
         try {
           // Prefer payload encoding; otherwise session-resolved state from prior lists.
           const requestedEncoding = normalizeEncoding(
             payload?.encoding || sftpEncodingState.get(sftpId)?.requested || "auto",
           );
           const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
-          const home = await getScpBackendForClient(client).homeDir({
+          const home = await resolveRemoteFileBackend(client).homeDir({
             signal: payload?.abortSignal || null,
             encoding: encoding === "auto" ? "utf-8" : encoding,
             // When $HOME has GB18030 bytes and we still thought utf-8, promote session

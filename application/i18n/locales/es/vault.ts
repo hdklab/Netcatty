@@ -734,6 +734,7 @@ export const esVaultMessages: Messages = {
   'hostDetails.sftp.fileProtocol.auto': 'Auto',
   'hostDetails.sftp.fileProtocol.sftp': 'Solo SFTP',
   'hostDetails.sftp.fileProtocol.scp': 'Modo SCP',
+  'hostDetails.sftp.fileProtocol.ftp': 'Solo FTP',
   'hostDetails.sftp.sudo': 'Modo Sudo',
   'hostDetails.sftp.sudo.desc': 'Adquiere automáticamente privilegios de root usando la contraseña guardada',
   'hostDetails.sftp.sudo.passwordWarning': 'El modo Sudo requiere una contraseña. Configura una arriba, o asegúrate de que el servidor permita sudo sin contraseña.',
