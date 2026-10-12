@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.91] - 2026-10-12
+
+### 功能
+- **没有 SSH 的设备也能用文件面板（FTP 文件浏览）**：telnet / 串口设备（例：`192.168.1.3` 只有 telnet:23 + FTP:21、没有 22）此前打开文件面板会永远停在「Connecting to …」，一个文件都列不出来——面板按 `host.port`(=23) 去拨 SSH，而主进程为 MFA 场景故意设的 `readyTimeout: 0` 让设备回完 telnet IAC 之后既不超时也不报错。现在没有 SSH 传输的主机自动走 FTP 文件模式，主机详情的「文件协议」下拉同时新增 **仅 FTP** 选项。后端复用外部 `lftp`，覆盖列目录 / 详情 / 新建目录 / 删除 / 重命名 / 读 / 写 / 上传 / 下载，上传与下载带进度和可中止
+- **拖拽上传在没有 cwd 的设备上也可用**：没有 OSC7 的 telnet / 串口 shell 拿不到当前目录，现在文件落到 FTP 登录目录，并在提示里写明落点
+
+### 修复
+- 设备 `ls -l` 带硬链接数一列时（`-rwxr-xr-x    1 0        0          114924 Jan  1  1970 ECT8676_DPD_V2.2.9.4.bin`）列表解析结果为空、面板显示 0 项 → 正则容忍可选硬链接列，并保留 `cls -1` 与 MS-DOS 行格式兜底
+- FTP 上传三处参数／语义错误会**把成功判成失败**或直接中止：`rm "/路径" -f` 被 lftp 当成「删名为 -f 的文件」（改为 `rm -rf "/路径"`）；`put -o` 的参数顺序非法（改为 `put "<本地>" -o "<远端>"`）；上传到 100% 后 `chmod` 抛「不支持 chmod」（FTP 上改为 no-op，UI 侧单独提示不支持）
+- lftp 输出里的 `ftp://***:***@host:port/…` 不再回传渲染层（`scrubCredentials` / `pathFromLftpUrlLine`）
+
+### 设计原理
+- FTP 能力映射到既有 SCP 后端接口，由 `remoteFileBackend.cjs` 统一解析，`fileOps.cjs` / `transferBridge.cjs` 不需要为协议分叉；FTP 没有的符号链接元数据用「列父目录」实现 `stat`，`chmod` 显式降级为 no-op 并由 UI 承担提示
+- FTP 模式**完全不碰 SSH**：`openSftp` 顶部直接分流（`sourceSessionId: null`），从根上消除「在 telnet 端口上拨 SSH 并永久挂起」
+- lftp 一条命令一个进程，句柄被跟踪，关闭会话时一并 kill；lftp 脚本文件权限 0600 且口令不进 argv
+
 ## [1.1.90] - 2026-10-12
 
 ### 修复
