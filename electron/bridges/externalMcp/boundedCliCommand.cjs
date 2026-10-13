@@ -20,6 +20,10 @@ function runBoundedCliCommand(deps, command, args = [], options = {}) {
     Number(options.killGraceMs) || DEFAULT_EXTERNAL_MCP_CLI_KILL_GRACE_MS,
   );
   const signal = options.signal || null;
+  // Some CLIs confirm interactively (`hermes mcp add` asks "Enable all N
+  // tools?"). Callers that know the wanted answer feed it here instead of
+  // letting stdin be closed, which those prompts read as "cancel".
+  const stdinInput = typeof options.input === "string" ? options.input : null;
 
   return new Promise((resolve, reject) => {
     let child;
@@ -126,12 +130,16 @@ function runBoundedCliCommand(deps, command, args = [], options = {}) {
     try {
       const spawnSpec = deps.prepareCommandForSpawn(command, args);
       child = deps.spawn(spawnSpec.command, spawnSpec.args || [], {
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [stdinInput === null ? "ignore" : "pipe", "pipe", "pipe"],
         cwd: options.cwd || undefined,
         env: options.env || process.env,
         shell: spawnSpec.shell,
         windowsHide: true,
       });
+      if (stdinInput !== null) {
+        // A prompt that reads to EOF cancels; end the stream after the answer.
+        child.stdin?.end?.(stdinInput);
+      }
     } catch (error) {
       settled = true;
       reject(error);

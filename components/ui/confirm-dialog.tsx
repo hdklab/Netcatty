@@ -15,6 +15,8 @@ interface ConfirmDialogProps {
   title: string;
   message?: string;
   confirmLabel: string;
+  /** Overrides the cancel button label (defaults to the shared "Cancel"). */
+  cancelLabel?: string;
   busy?: boolean;
   destructive?: boolean;
   onOpenChange: (open: boolean) => void;
@@ -26,6 +28,7 @@ export const ConfirmDialog = memo(function ConfirmDialog({
   title,
   message,
   confirmLabel,
+  cancelLabel,
   busy = false,
   destructive = false,
   onOpenChange,
@@ -51,7 +54,7 @@ export const ConfirmDialog = memo(function ConfirmDialog({
             onClick={() => onOpenChange(false)}
             disabled={busy}
           >
-            {t("common.cancel")}
+            {cancelLabel ?? t("common.cancel")}
           </Button>
           <Button
             type="button"

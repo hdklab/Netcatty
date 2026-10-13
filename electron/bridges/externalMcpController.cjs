@@ -22,6 +22,9 @@ const {
   buildUniversalSetupPrompt,
 } = require("./externalMcp/universalSetupPrompt.cjs");
 const {
+  createAgentMcpSetup,
+} = require("./externalMcp/agentMcpSetup.cjs");
+const {
   DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES,
   normalizeSessionIdleTimeoutMinutes,
 } = require("./mcpServerBridge/sessionIdleManager.cjs");
@@ -59,6 +62,7 @@ function createExternalMcpController(options = {}) {
     createGrokSetup: options.createGrokSetup || createExternalMcpGrokSetup,
     readSkillContent: options.readSkillContent || readBundledNetcattySkillContent,
     buildUniversalSetupPrompt: options.buildUniversalSetupPrompt || buildUniversalSetupPrompt,
+    createAgentMcpSetup: options.createAgentMcpSetup || createAgentMcpSetup,
     randomBytes: options.randomBytes || ((size) => crypto.randomBytes(size)),
     Date: options.Date || Date,
     setTimeout: options.setTimeout || setTimeout,
@@ -86,6 +90,7 @@ function createExternalMcpController(options = {}) {
   let codexSetup = null;
   let claudeSetup = null;
   let grokSetup = null;
+  let agentMcpSetup = null;
 
   function getNow() {
     return deps.Date.now();
@@ -131,6 +136,43 @@ function createExternalMcpController(options = {}) {
     if (!grokSetup) {
       grokSetup = deps.createGrokSetup({ launcherPath, discoveryEnv });
     }
+  }
+
+  /**
+   * Agent-keyed installer for Netcatty's MCP server. codex/claude/grok reuse the
+   * External MCP cards' own setups (injected above); hermes/opencode shell out to
+   * the CLI's `mcp add`; dsh gets a managed row in its profile patch file.
+   */
+  function ensureAgentMcpSetup() {
+    if (!agentMcpSetup) {
+      agentMcpSetup = deps.createAgentMcpSetup({
+        getLauncherPath: () => deps.getLauncherPath() || null,
+        getDiscoveryFilePath: () => discoveryFilePath,
+        getClientSetupStatus: async (agentKey) => {
+          ensureClientSetup();
+          if (agentKey === "codex") return await codexSetup.getStatus();
+          if (agentKey === "claude") return await claudeSetup.getStatus();
+          if (agentKey === "grok") return await grokSetup.getStatus();
+          return { ok: false, state: "error", error: "Unsupported client." };
+        },
+        installClientSetup: async (agentKey) => {
+          ensureClientSetup();
+          if (agentKey === "codex") return await codexSetup.addToCodex();
+          if (agentKey === "claude") return await claudeSetup.addToClaude();
+          if (agentKey === "grok") return await grokSetup.addToGrok();
+          return { ok: false, state: "error", error: "Unsupported client." };
+        },
+        resolveCli: async (command) => {
+          const shellUtils = require("./ai/shellUtils.cjs");
+          const shellEnv = await shellUtils.getShellEnv();
+          const fromPath = shellUtils.resolveCliFromPath(command, shellEnv) || null;
+          if (fromPath) return fromPath;
+          const desktopCliResolver = require("./externalMcp/desktopCliResolver.cjs");
+          return desktopCliResolver.resolveDesktopManagedCli(command) || null;
+        },
+      });
+    }
+    return agentMcpSetup;
   }
 
   function getBridge() {
@@ -470,6 +512,7 @@ function createExternalMcpController(options = {}) {
     codexSetup = null;
     claudeSetup = null;
     grokSetup = null;
+    agentMcpSetup = null;
     ensureClientSetup();
   }
 
@@ -512,6 +555,39 @@ function createExternalMcpController(options = {}) {
   async function addToGrok() {
     ensureClientSetup();
     return await grokSetup.addToGrok();
+  }
+
+  /** Whether Netcatty's MCP server is already wired into this agent's CLI. */
+  async function getAgentMcpStatus(payload = {}) {
+    return await ensureAgentMcpSetup().getStatus({ agentKey: payload?.agentKey });
+  }
+
+  /**
+   * Wire Netcatty's MCP server into an agent's own configuration. External MCP
+   * is turned on first: the launcher only serves while it is on, and the client
+   * CLIs verify the connection while registering.
+   */
+  async function installAgentMcp(payload = {}) {
+    const agentKey = String(payload?.agentKey || "");
+    const status = await ensureAgentMcpSetup().getStatus({ agentKey });
+    if (!status.supported) {
+      return { ok: false, agentKey, state: status.state || "unsupported", installed: false };
+    }
+    // The launcher only serves while External MCP is on, and the client CLIs
+    // verify the connection while registering — make sure the runtime is up
+    // first. setEnabled is idempotent and awaits an in-flight start.
+    await setEnabled(true);
+    if (!isEnabled()) {
+      return {
+        ok: false,
+        agentKey,
+        state: "external_mcp_unavailable",
+        installed: false,
+        error: error || "External MCP could not be started.",
+      };
+    }
+    const result = await ensureAgentMcpSetup().install({ agentKey });
+    return { externalMcpEnabled: true, discoveryPath: discoveryFilePath || null, ...result };
   }
 
   async function getUniversalSetupPrompt() {
@@ -580,6 +656,14 @@ function createExternalMcpController(options = {}) {
       if (!guard(event)) return { ok: false, error: "Unauthorized IPC sender" };
       return await addToGrok();
     });
+    ipcMain.handle("netcatty:external-mcp:agent:get-status", async (event, payload) => {
+      if (!guard(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      return await getAgentMcpStatus(payload || {});
+    });
+    ipcMain.handle("netcatty:external-mcp:agent:install", async (event, payload) => {
+      if (!guard(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      return await installAgentMcp(payload || {});
+    });
   }
 
   return {
@@ -601,6 +685,8 @@ function createExternalMcpController(options = {}) {
     addToClaude,
     getGrokStatus,
     addToGrok,
+    getAgentMcpStatus,
+    installAgentMcp,
     getUniversalSetupPrompt,
     EXTERNAL_MCP_CHAT_SESSION_ID: deps.chatSessionId,
   };

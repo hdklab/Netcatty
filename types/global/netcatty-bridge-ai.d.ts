@@ -242,6 +242,30 @@ declare global {
     externalMcpClaudeAdd?(): Promise<Record<string, unknown>>;
     externalMcpGrokGetStatus?(): Promise<Record<string, unknown>>;
     externalMcpGrokAdd?(): Promise<Record<string, unknown>>;
+    /** Is Netcatty's MCP server already registered inside this agent's CLI? */
+    externalMcpAgentGetStatus?(agentKey: string): Promise<{
+      ok: boolean;
+      agentKey?: string;
+      supported?: boolean;
+      installed?: boolean;
+      state?: string;
+      detail?: string | null;
+      patchFile?: string;
+      profile?: string;
+      error?: string | null;
+    }>;
+    /** Register Netcatty's MCP server in the agent's own config (enables External MCP). */
+    externalMcpAgentInstall?(agentKey: string): Promise<{
+      ok: boolean;
+      agentKey?: string;
+      installed?: boolean;
+      state?: string;
+      patchFile?: string;
+      profile?: string;
+      externalMcpEnabled?: boolean;
+      discoveryPath?: string | null;
+      error?: string | null;
+    }>;
     aiSdkAgentCancel?(requestId: string, chatSessionId?: string): Promise<{ ok: boolean; error?: string }>;
     aiSdkAgentCleanup?(chatSessionId: string): Promise<{ ok: boolean }>;
     aiSdkAgentElicitationResponse?(elicitationId: string, action: string, content?: Record<string, unknown>): Promise<{ ok: boolean; error?: string }>;

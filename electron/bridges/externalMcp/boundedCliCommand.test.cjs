@@ -25,6 +25,41 @@ function depsFor(child) {
   };
 }
 
+test("bounded external MCP CLI feeds stdin only when an answer is supplied", async () => {
+  const spawned = [];
+  const makeChild = () => {
+    const child = createChild();
+    child.stdin = new EventEmitter();
+    child.stdin.writes = [];
+    child.stdin.end = (value) => child.stdin.writes.push(value);
+    return child;
+  };
+
+  const withInput = makeChild();
+  const withInputDeps = depsFor(withInput);
+  withInputDeps.spawn = (command, args, options) => {
+    spawned.push(options.stdio);
+    return withInput;
+  };
+  const pending = runBoundedCliCommand(withInputDeps, "hermes", ["mcp", "add", "netcatty"], { input: "Y\n" });
+  assert.deepEqual(spawned[0], ["pipe", "pipe", "pipe"]);
+  assert.deepEqual(withInput.stdin.writes, ["Y\n"]);
+  withInput.emit("close", 0);
+  await pending;
+
+  const withoutInput = makeChild();
+  const withoutInputDeps = depsFor(withoutInput);
+  withoutInputDeps.spawn = (command, args, options) => {
+    spawned.push(options.stdio);
+    return withoutInput;
+  };
+  const second = runBoundedCliCommand(withoutInputDeps, "codex", ["mcp", "list"]);
+  assert.deepEqual(spawned[1], ["ignore", "pipe", "pipe"]);
+  assert.deepEqual(withoutInput.stdin.writes, []);
+  withoutInput.emit("close", 0);
+  await second;
+});
+
 test("bounded external MCP CLI times out and escalates termination", async () => {
   const child = createChild();
   await assert.rejects(

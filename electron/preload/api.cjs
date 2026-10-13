@@ -1953,6 +1953,12 @@ function createPreloadApi(ctx) {
   externalMcpGrokAdd: async () => {
     return ipcRenderer.invoke("netcatty:external-mcp:grok:add");
   },
+  externalMcpAgentGetStatus: async (agentKey) => {
+    return ipcRenderer.invoke("netcatty:external-mcp:agent:get-status", { agentKey });
+  },
+  externalMcpAgentInstall: async (agentKey) => {
+    return ipcRenderer.invoke("netcatty:external-mcp:agent:install", { agentKey });
+  },
   // MCP Server session metadata
   aiMcpUpdateSessions: async (sessions, chatSessionId) => {
     return ipcRenderer.invoke("netcatty:ai:mcp:update-sessions", { sessions, chatSessionId });

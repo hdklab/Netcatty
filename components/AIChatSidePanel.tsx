@@ -31,7 +31,9 @@ import {
   subscribeComposerModelPrefs,
 } from '../infrastructure/ai/composerModelPrefs';
 import { toast } from './ui/toast';
+import { ConfirmDialog } from './ui/confirm-dialog';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
+import { useExternalMcpToggleState } from '../application/state/useExternalMcpToggleState';
 import {
   getReadyUserSkillOptions,
   getNextSelectedUserSkillSlugsMap,
@@ -772,13 +774,95 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     schedule: scheduleWhenAiComposerIdle,
   });
 
+  // Enabling an agent may need Netcatty's MCP server registered in that agent's
+  // own CLI first (see handleEnableDiscoveredAgent); this holds the pending ask.
+  const [agentMcpPrompt, setAgentMcpPrompt] = useState<{
+    agent: DiscoveredAgent;
+    patchFile?: string;
+    profile?: string;
+  } | null>(null);
+  const [isInstallingAgentMcp, setIsInstallingAgentMcp] = useState(false);
+  const { enabled: externalMcpEnabled, setEnabled: setExternalMcpEnabled } = useExternalMcpToggleState();
+
   const handleEnableDiscoveredAgent = useCallback(
     (agent: DiscoveredAgent) => {
-      const config = enableAgent(agent);
-      setExternalAgents?.((prev) => [...prev, config]);
+      const bridge = getNetcattyBridge();
+      const getStatus = bridge?.externalMcpAgentGetStatus?.bind(bridge);
+      if (!getStatus) {
+        const config = enableAgent(agent);
+        setExternalAgents?.((prev) => [...prev, config]);
+        return;
+      }
+      void (async () => {
+        let status: { supported?: boolean; installed?: boolean; patchFile?: string; profile?: string } | null = null;
+        try {
+          status = await getStatus(agent.command);
+        } catch {
+          status = null;
+        }
+        // Only ask when Netcatty can actually register itself and has not yet:
+        // the agent would otherwise run without any Netcatty tools.
+        if (status?.supported && !status.installed) {
+          setAgentMcpPrompt({ agent, patchFile: status.patchFile, profile: status.profile });
+          return;
+        }
+        const config = enableAgent(agent);
+        setExternalAgents?.((prev) => [...prev, config]);
+      })();
     },
     [enableAgent, setExternalAgents],
   );
+
+  const enablePendingAgent = useCallback(() => {
+    const pending = agentMcpPrompt;
+    setAgentMcpPrompt(null);
+    if (!pending) return;
+    const config = enableAgent(pending.agent);
+    setExternalAgents?.((prev) => [...prev, config]);
+  }, [agentMcpPrompt, enableAgent, setExternalAgents]);
+
+  const handleConfirmAgentMcpInstall = useCallback(() => {
+    const pending = agentMcpPrompt;
+    if (!pending) return;
+    const bridge = getNetcattyBridge();
+    setIsInstallingAgentMcp(true);
+    // Installing turns External MCP on (the launcher only serves while it is on).
+    // Drive it through the shared toggle so the stored switch and every consumer
+    // stay in sync, rather than letting the main process flip it silently.
+    if (!externalMcpEnabled) setExternalMcpEnabled(true);
+    void (async () => {
+      try {
+        const result = (await bridge?.externalMcpAgentInstall?.(pending.agent.command)) as
+          | { ok?: boolean; error?: string | null }
+          | undefined;
+        if (result?.ok) {
+          toast.success(t('ai.agentMcp.installed', { name: pending.agent.name }));
+        } else {
+          toast.error(
+            result?.error || t('ai.agentMcp.installIncomplete', { name: pending.agent.name }),
+            t('ai.agentMcp.installFailedTitle'),
+          );
+        }
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : String(error),
+          t('ai.agentMcp.installFailedTitle'),
+        );
+      } finally {
+        setIsInstallingAgentMcp(false);
+        enablePendingAgent();
+      }
+    })();
+  }, [agentMcpPrompt, enablePendingAgent, externalMcpEnabled, setExternalMcpEnabled, t]);
+
+  const agentMcpPromptMessage = useMemo(() => {
+    if (!agentMcpPrompt) return "";
+    const base = t('ai.agentMcp.prompt.message', { name: agentMcpPrompt.agent.name });
+    // dsh takes its MCP rows from its profile, so name the file being written.
+    return agentMcpPrompt.patchFile
+      ? `${base}\n${t('ai.agentMcp.prompt.file', { path: agentMcpPrompt.patchFile })}`
+      : base;
+  }, [agentMcpPrompt, t]);
 
   const messages = activeSession?.messages ?? [];
   const selectedUserSkillSlugs = useMemo(
@@ -1940,6 +2024,18 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         onOpenVaultSection={onOpenVaultSection}
       />
       </div>
+      <ConfirmDialog
+        open={Boolean(agentMcpPrompt)}
+        title={t('ai.agentMcp.prompt.title')}
+        message={agentMcpPromptMessage}
+        confirmLabel={t('ai.agentMcp.prompt.install')}
+        cancelLabel={t('ai.agentMcp.prompt.skip')}
+        busy={isInstallingAgentMcp}
+        onOpenChange={(open) => {
+          if (!open) enablePendingAgent();
+        }}
+        onConfirm={handleConfirmAgentMcpInstall}
+      />
     </React.Profiler>
   );
 };
