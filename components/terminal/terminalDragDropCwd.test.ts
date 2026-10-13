@@ -8,6 +8,7 @@ import {
   ActiveTerminalCwdUnavailableError,
   DEFAULT_RZ_MISSING_FALLBACK_TIMEOUT_MS,
   handleTerminalDropEntries,
+  openTerminalDropTransferCenter,
   resolveTerminalDropErrorMessage,
 } from "./hooks/useTerminalDragDrop";
 import { resolvePreferredTerminalCwd } from "./sftpCwd";
@@ -32,6 +33,26 @@ const dropEntries: DropEntry[] = [
 
 test("terminal drag-drop allows the full ZMODEM startup window before falling back", () => {
   assert.equal(DEFAULT_RZ_MISSING_FALLBACK_TIMEOUT_MS, 15_000);
+});
+
+test("terminal drag-drop opens the transfer center so upload progress is visible", () => {
+  const seen: string[] = [];
+  const scope = globalThis as unknown as {
+    window?: { dispatchEvent: (event: { type: string }) => boolean };
+  };
+  const previous = scope.window;
+  scope.window = {
+    dispatchEvent: (event) => {
+      seen.push(event.type);
+      return true;
+    },
+  };
+  try {
+    openTerminalDropTransferCenter();
+  } finally {
+    scope.window = previous;
+  }
+  assert.deepEqual(seen, ["netcatty:open-sftp-transfer-center"]);
 });
 
 test("terminal drag-drop shows actionable guidance when the active directory is unknown", () => {

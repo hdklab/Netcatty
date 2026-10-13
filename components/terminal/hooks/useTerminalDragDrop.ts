@@ -25,6 +25,19 @@ import {
   extractRootPathsFromDropEntries,
   type TerminalProps,
 } from "../terminalHelpers";
+import { createUploadTaskCallbacks } from "../../../application/state/sftp/uploadTaskCallbacks";
+import { startUploadScanningTask } from "../../../lib/uploadService";
+
+/**
+ * The transfer center is a popover in the top bar, so an upload started from a
+ * terminal drop used to run with nothing but a badge appearing — the user never
+ * saw progress. Folder drops already opened it; single-file (SFTP fallback) and
+ * FTP drops now do too.
+ */
+export function openTerminalDropTransferCenter() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("netcatty:open-sftp-transfer-center"));
+}
 
 interface UseTerminalDragDropOptions {
   host: Host;
@@ -127,6 +140,8 @@ async function openSftpForTerminalDrop({
     password: resolvedSudoPassword ?? host.password,
     username: resolvedLoginUsername ?? host.username,
   });
+  // Show the queued upload's progress row instead of relying on the badge.
+  openTerminalDropTransferCenter();
   onOpenSftp(
     uploadHost,
     initialPath,
@@ -364,18 +379,45 @@ export async function handleTerminalDropEntries({
       if (ftpFiles.length === 0) {
         throw new Error("No files to upload");
       }
-      const result = await terminalBackend.ftpUpload({
-        ...plan.plan,
-        files: ftpFiles.map((file) => ({
-          path: file.path,
-          name: file.name,
-          remoteName: file.remoteName,
-          data: file.data,
-        })),
-      });
+      // FTP uploads are one blocking lftp call with no byte stream, so the
+      // transfer center gets an indeterminate row for the duration — otherwise
+      // the drop looks like nothing happened until the final toast.
+      const first = ftpFiles[0];
+      const uploadLabel = ftpFiles.length > 1
+        ? `${first.remoteName || first.name} +${ftpFiles.length - 1}`
+        : (first.remoteName || first.name);
+      const progressTask = startUploadScanningTask(
+        createUploadTaskCallbacks({
+          ownerId: `terminal-drop:${sessionId}`,
+          connectionId: "ftp-drop",
+          targetPath: plan.plan.remoteDir || "/",
+          targetHostId: host.id,
+          targetHostLabel: host.label,
+        }),
+        undefined,
+        { label: uploadLabel },
+      );
+      openTerminalDropTransferCenter();
+      let result: { ok: boolean; code?: string; error?: string };
+      try {
+        result = await terminalBackend.ftpUpload({
+          ...plan.plan,
+          files: ftpFiles.map((file) => ({
+            path: file.path,
+            name: file.name,
+            remoteName: file.remoteName,
+            data: file.data,
+          })),
+        });
+      } catch (error) {
+        progressTask.fail(error);
+        throw error;
+      }
       if (!result.ok) {
+        progressTask.fail(new Error(result.error || "FTP upload failed"));
         throw new Error(result.error || "FTP upload failed");
       }
+      progressTask.complete();
       // Always say where the file landed: with no tracked cwd the upload goes to
       // the FTP login directory, which is rarely the shell's directory.
       toast.success(
