@@ -202,3 +202,13 @@ test("scripts side panel stacked view renders wrap-around chips and keeps run be
   assert.match(chip[0], /onRunParallel/);
   assert.match(chip[0], /onEdit/);
 });
+
+test("scripts side panel opens with every script package collapsed", () => {
+  // Expansion is user-driven only — no first-sight auto-expand, so reopening the
+  // panel never spills a large library open (chevron / Expand All still work).
+  assert.doesNotMatch(source, /isRootPackagePath/);
+  assert.doesNotMatch(source, /seenPackagesRef/);
+  assert.match(source, /useState<Set<string>>\(new Set\(\)\)/);
+  assert.match(source, /const togglePackage = useCallback/);
+  assert.match(source, /const expandAllGroups = useCallback/);
+});

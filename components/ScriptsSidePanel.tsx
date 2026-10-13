@@ -70,11 +70,6 @@ const SCRIPT_ROW_HEIGHT = 34;
 const STACKED_INITIAL_RENDER_COUNT = 120;
 const STACKED_RENDER_BATCH = 120;
 
-const isRootPackagePath = (path: string): boolean => {
-  const body = path.startsWith('/') ? path.slice(1) : path;
-  return body.length > 0 && !body.includes('/');
-};
-
 interface ScriptsSidePanelProps {
   snippets: Snippet[];
   packages: string[];
@@ -358,35 +353,10 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     return new Set(collectScriptsSidePanelPackagePaths(packages, snippets));
   }, [packages, snippets, isVisible]);
 
-  // Track every package we've ever observed so we can tell "new" from
-  // "previously-seen-but-user-collapsed". Without this, any unrelated refresh
-  // that reduced prev.size (because the user collapsed a row) would
-  // incorrectly trip a bulk re-expand.
-  const seenPackagesRef = useRef<Set<string>>(new Set());
-
-  // Default: auto-expand packages the first time they appear, so the user sees
-  // everything without drilling in. After that, respect the user's collapse
-  // choices across unrelated refreshes.
-  useEffect(() => {
-    if (!isVisible) return;
-    const seen = seenPackagesRef.current;
-    const newlySeen: string[] = [];
-    normalizedPackages.forEach((p) => {
-      if (!seen.has(p)) {
-        seen.add(p);
-        newlySeen.push(p);
-      }
-    });
-    if (newlySeen.length === 0) return;
-    setExpandedPaths((prev) => {
-      const next = new Set(prev);
-      // Only auto-expand root packages on first sight — expanding the full
-      // tree upfront was freezing the panel on large snippet libraries.
-      newlySeen.filter(isRootPackagePath).forEach((p) => next.add(p));
-      return next;
-    });
-  }, [normalizedPackages, isVisible]);
-
+  // Packages start collapsed: the library opens as a compact pack list, and the
+  // user drills in (chevron, expand-all) instead of being handed a fully
+  // expanded tree. Expansion is never auto-restored on remount, so reopening the
+  // panel does not spill a large library open again.
   const togglePackage = useCallback((path: string) => {
     setExpandedPaths((prev) => {
       const next = new Set(prev);
@@ -1652,6 +1622,7 @@ const PackageRow = memo<PackageRowProps>(({
     <button
       type="button"
       onClick={onToggle}
+      aria-expanded={row.isExpanded}
       className="vault-drop-indicator-row w-full flex items-center gap-1.5 pr-3 py-1.5 text-left hover:bg-accent/50 transition-colors"
       style={{ paddingLeft: 8 + row.depth * 14 }}
       data-pkg-path={row.path}
