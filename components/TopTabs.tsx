@@ -1041,7 +1041,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           {showSftpTab && (
             <RootTopTab
               tabId="sftp"
-              label="SFTP"
+              label={t('terminal.layer.sftp')}
               icon={<Folder size={14} />}
               className="rounded-t-md"
               compact={rootTabsCompact}

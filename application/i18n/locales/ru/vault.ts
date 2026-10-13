@@ -586,7 +586,7 @@ export const ruVaultMessages: Messages = {
   'sftp.preview.fitToWindow': 'Подогнать по окну',
 
   // Settings > SFTP File Associations
-  'settings.tab.sftpFileAssociations': 'SFTP',
+  'settings.tab.sftpFileAssociations': 'Передача файлов',
   'settings.sftp.transferConcurrency': 'Параллелизм передачи',
   'settings.sftp.transferConcurrency.desc': 'Максимальное число файлов, одновременно передаваемых для одной цели, включая содержимое папок и отдельно выбранные файлы. Большие значения могут ускорить передачу, но перегрузить некоторые серверы.',
   'settings.sftp.transferPoolIdleTtl': 'Удержание transfer-соединений',

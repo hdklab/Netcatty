@@ -100,7 +100,7 @@ export const zhTWTerminalMessages: Messages = {
   'sftp.preview.fitToWindow': '適應視窗',
 
   // Settings > SFTP File Associations
-  'settings.tab.sftpFileAssociations': 'SFTP',
+  'settings.tab.sftpFileAssociations': '檔案傳輸',
   'settings.sftp.transferConcurrency': '傳輸併發數',
   'settings.sftp.transferConcurrency.desc': '同一目標同時傳輸的檔案數量上限，包括資料夾內檔案和單獨多選的檔案。較高的值可能提高速度，但可能導致某些伺服器過載。',
   'settings.sftp.transferPoolIdleTtl': '傳輸連線保活時間',

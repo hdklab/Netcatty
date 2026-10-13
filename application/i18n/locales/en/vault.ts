@@ -548,7 +548,7 @@ export const enVaultMessages: Messages = {
   'sftp.preview.fitToWindow': 'Fit to Window',
 
   // Settings > SFTP File Associations
-  'settings.tab.sftpFileAssociations': 'SFTP',
+  'settings.tab.sftpFileAssociations': 'File Transfer',
   'settings.sftp.transferConcurrency': 'Transfer Concurrency',
   'settings.sftp.transferConcurrency.desc': 'Maximum number of files transferred in parallel for the same endpoint, including folder contents and separately selected files. Higher values may improve speed but can overwhelm some servers.',
   'settings.sftp.transferPoolIdleTtl': 'Transfer connection keep-alive',

@@ -548,7 +548,7 @@ export const esVaultMessages: Messages = {
   'sftp.preview.fitToWindow': 'Ajustar a la ventana',
 
   // Settings > SFTP File Associations
-  'settings.tab.sftpFileAssociations': 'SFTP',
+  'settings.tab.sftpFileAssociations': 'Transferencia de archivos',
   'settings.sftp.transferConcurrency': 'Concurrencia de transferencias',
   'settings.sftp.transferConcurrency.desc': 'Cantidad máxima de archivos transferidos en paralelo para el mismo endpoint, incluidos los contenidos de carpetas y los archivos seleccionados por separado. Los valores más altos pueden mejorar la velocidad, pero pueden abrumar a algunos servidores.',
   'settings.sftp.transferPoolIdleTtl': 'Mantener activa la conexión de transferencia',

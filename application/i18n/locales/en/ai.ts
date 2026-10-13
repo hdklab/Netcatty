@@ -640,7 +640,7 @@ export const enAiMessages: Messages = {
   // Unified tooltips for terminal workspace and top tabs (issue #954)
   'terminal.layer.addTerminal': 'Add Terminal',
   'terminal.layer.switchToSplitView': 'Switch to Split View',
-  'terminal.layer.sftp': 'SFTP',
+  'terminal.layer.sftp': 'File Transfer',
   'terminal.layer.scripts': 'Scripts',
   'terminal.layer.history': 'History',
   'terminal.layer.theme': 'Theme',

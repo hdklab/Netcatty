@@ -631,7 +631,7 @@ export const esAiMessages: Messages = {
   // Unified tooltips for terminal workspace and top tabs (issue #954)
   'terminal.layer.addTerminal': 'Agregar terminal',
   'terminal.layer.switchToSplitView': 'Cambiar a vista dividida',
-  'terminal.layer.sftp': 'SFTP',
+  'terminal.layer.sftp': 'Transferencia de archivos',
   'terminal.layer.scripts': 'Scripts',
   'terminal.layer.history': 'Historial',
   'terminal.layer.theme': 'Tema',
