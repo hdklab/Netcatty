@@ -212,3 +212,38 @@ test("scripts side panel opens with every script package collapsed", () => {
   assert.match(source, /const togglePackage = useCallback/);
   assert.match(source, /const expandAllGroups = useCallback/);
 });
+
+test("scripts side panel files a stacked chip into a script package by drag and drop", () => {
+  const stacked = source.match(/viewMode === 'stacked' \? \([\s\S]*?\) : \(/);
+  assert.ok(stacked, "stacked branch should exist in the content area");
+  // Package headers are drop targets in both views…
+  assert.match(stacked[0], /data-pkg-path=\{item\.row\.path\}/);
+  assert.match(stacked[0], /onDragOver=\{handleRowDragOver\}/);
+  assert.match(stacked[0], /onDrop=\{handleRowDrop\}/);
+  // …and chips are drag sources carrying the shared payload, so the same
+  // handleRowDrop → moveSnippetsToPackage path as the list view runs.
+  assert.match(stacked[0], /draggable=\{Boolean\(onSnippetsChange\)\}/);
+  const chip = source.match(/const SnippetChip = memo[\s\S]*?SnippetChip\.displayName/);
+  assert.ok(chip, "SnippetChip component should exist");
+  assert.match(chip[0], /draggable=\{draggable\}/);
+  assert.match(chip[0], /writeSnippetDragPayload\(event\.dataTransfer, dragIds\?\.length \? dragIds : \[snippet\.id\]\)/);
+  assert.match(chip[0], /primaryOnlyDragHandlers\(draggable\)/);
+  assert.match(source, /moveSnippetsToPackage\(sourceSnippetIds, targetPackage\)/);
+});
+
+test("scripts side panel files the whole multi-selection into a script package", () => {
+  // A drag that grabs a selected row carries every selected id…
+  assert.match(source, /const SNIPPET_DRAG_IDS = 'snippet-ids';/);
+  assert.match(source, /const snippetDragIds = useCallback/);
+  assert.match(source, /isMultiSelectMode && selectedSnippetIds\.has\(snippetId\)/);
+  assert.match(source, /readSnippetDragIds\(event\.dataTransfer\)/);
+  // …and selection must not disable dragging, or the feature is unreachable.
+  assert.doesNotMatch(source, /draggable=\{Boolean\(onSnippetsChange\) && !isMultiSelectMode\}/);
+  assert.doesNotMatch(source, /draggable=\{draggable && !isMultiSelectMode\}/);
+  // One vault write for the batch, plus the target package registered when the
+  // path only existed implicitly — the association is complete after the drop.
+  assert.match(source, /const moveSnippetsToPackage = useCallback/);
+  assert.match(source, /onSnippetsChange\(snippets\.map\(\(item\) =>/);
+  assert.match(source, /onPackagesChange\(\[\.\.\.packages, targetPackage\]\)/);
+  assert.match(source, /if \(!onSnippetsChange\) return;/);
+});

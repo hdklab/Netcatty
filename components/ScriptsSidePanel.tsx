@@ -162,6 +162,36 @@ const getVerticalDropIntent = (
 const hasDragType = (dataTransfer: DataTransfer, type: string) =>
   Array.from(dataTransfer.types).includes(type);
 
+/** Payload keys shared with the vault tree (`SnippetsManager`) drag contract. */
+const SNIPPET_DRAG_ID = 'snippet-id';
+const SNIPPET_DRAG_IDS = 'snippet-ids';
+
+/**
+ * A drag carries the whole multi-selection when the grabbed row is part of it,
+ * and 'snippet-id' always holds the grabbed id so the existing single-item
+ * paths (reorder, dragover gating) keep working unchanged.
+ */
+const writeSnippetDragPayload = (dataTransfer: DataTransfer, ids: string[]) => {
+  if (ids.length === 0) return;
+  dataTransfer.setData(SNIPPET_DRAG_ID, ids[0]);
+  dataTransfer.setData(SNIPPET_DRAG_IDS, JSON.stringify(ids));
+};
+
+/** Read every dragged snippet id, tolerant of a plain single-item payload. */
+const readSnippetDragIds = (dataTransfer: DataTransfer): string[] => {
+  const raw = dataTransfer.getData(SNIPPET_DRAG_IDS);
+  if (raw) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(String);
+    } catch {
+      // Fall through to the single-id key.
+    }
+  }
+  const single = dataTransfer.getData(SNIPPET_DRAG_ID);
+  return single ? [single] : [];
+};
+
 /** Collect every package path (including implied ancestors) shown in the tree. */
 export function collectScriptsSidePanelPackagePaths(
   packages: string[],
@@ -600,15 +630,30 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     ? t('scripts.recording.active')
     : t('scripts.recording.start');
 
-  const moveSnippetToPackage = useCallback((snippetId: string, packagePath: string | null) => {
-    if (!onSnippetsChange) return;
+  /**
+   * File one or more snippets into a package. Multi-selection drags land here with
+   * every selected id, so the whole batch is written in a single vault update and
+   * the target package path is registered when it only existed implicitly (a
+   * descendant package implies its ancestors) — the association is always real
+   * afterwards, not just a highlight in this panel.
+   */
+  const moveSnippetsToPackage = useCallback((snippetIds: string[], packagePath: string | null) => {
     const targetPackage = packagePath || '';
-    const snippet = snippets.find((item) => item.id === snippetId);
-    if (!snippet || (snippet.package || '') === targetPackage) return;
-    onSnippetsChange(snippets.map((item) =>
-      item.id === snippetId ? { ...item, package: targetPackage } : item,
-    ));
-  }, [onSnippetsChange, snippets]);
+    const requested = new Set(snippetIds);
+    const movableIds = snippets
+      .filter((item) => requested.has(item.id) && (item.package || '') !== targetPackage)
+      .map((item) => item.id);
+    if (movableIds.length > 0) {
+      if (!onSnippetsChange) return;
+      const moving = new Set(movableIds);
+      onSnippetsChange(snippets.map((item) =>
+        moving.has(item.id) ? { ...item, package: targetPackage } : item,
+      ));
+    }
+    if (!targetPackage || !onPackagesChange) return;
+    if (packages.includes(targetPackage)) return;
+    onPackagesChange([...packages, targetPackage]);
+  }, [onPackagesChange, onSnippetsChange, packages, snippets]);
 
   const movePackageToPackage = useCallback((source: string, target: string | null) => {
     if (!onPackagesChange || !onSnippetsChange) return;
@@ -721,7 +766,8 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
 
     const targetSnippetId = row.getAttribute('data-snippet-id');
     const targetPackage = row.getAttribute('data-pkg-path');
-    const sourceSnippetId = event.dataTransfer.getData('snippet-id');
+    const sourceSnippetIds = readSnippetDragIds(event.dataTransfer);
+    const sourceSnippetId = sourceSnippetIds[0] ?? '';
     const sourcePackage = event.dataTransfer.getData('pkg-path');
 
     if (sourceSnippetId && targetSnippetId) {
@@ -738,7 +784,8 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     if (sourceSnippetId && targetPackage) {
       event.preventDefault();
       event.stopPropagation();
-      moveSnippetToPackage(sourceSnippetId, targetPackage);
+      // Multi-select drags file the whole selection in one update.
+      moveSnippetsToPackage(sourceSnippetIds, targetPackage);
       return;
     }
     if (sourcePackage && targetPackage) {
@@ -750,12 +797,25 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     }
   }, [
     movePackageToPackage,
-    moveSnippetToPackage,
+    moveSnippetsToPackage,
     onPackagesChange,
     onSnippetsChange,
     reorderPackageToTarget,
     reorderSnippetToTarget,
   ]);
+
+  /**
+   * Ids a drag starting on this snippet should carry: the whole selection when the
+   * grabbed row is selected, so a multi-select drag files every selected script.
+   */
+  const snippetDragIds = useCallback((snippetId: string): string[] => {
+    if (isMultiSelectMode && selectedSnippetIds.has(snippetId)) {
+      return snippets
+        .filter((snippet) => selectedSnippetIds.has(snippet.id))
+        .map((snippet) => snippet.id);
+    }
+    return [snippetId];
+  }, [isMultiSelectMode, selectedSnippetIds, snippets]);
 
   const handleAddSnippet = useCallback(() => {
     window.dispatchEvent(new CustomEvent('netcatty:snippets:add'));
@@ -1204,8 +1264,12 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                       type="button"
                       onClick={() => togglePackage(item.row.path)}
                       aria-expanded={item.row.isExpanded}
-                      className="w-full basis-full flex items-center gap-1.5 pt-1.5 pb-0.5 text-left rounded-sm hover:bg-accent/40 transition-colors"
+                      className="vault-drop-indicator-row w-full basis-full flex items-center gap-1.5 pt-1.5 pb-0.5 text-left rounded-sm hover:bg-accent/40 transition-colors"
                       style={{ paddingLeft: 8 + Math.min(item.row.depth, 4) * 10 }}
+                      data-pkg-path={item.row.path}
+                      onDragOver={handleRowDragOver}
+                      onDrop={handleRowDrop}
+                      onDragEnd={clearScriptsDropIndicator}
                     >
                       <ChevronRight
                         size={11}
@@ -1263,6 +1327,8 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                     subtitle={chipSubtitle}
                     selected={selectedSnippetIds.has(snippet.id)}
                     multiSelect={isMultiSelectMode}
+                    draggable={Boolean(onSnippetsChange)}
+                    dragIds={snippetDragIds(snippet.id)}
                     onClick={() => handleSnippetClick(snippet)}
                     onEdit={() => handleEditSnippet(snippet)}
                     onDelete={() => handleDeleteSnippet(snippet.id)}
@@ -1360,7 +1426,8 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                     depth={item.row.depth}
                     selected={selectedSnippetIds.has(item.row.snippet.id)}
                     multiSelect={isMultiSelectMode}
-                    draggable={Boolean(onSnippetsChange) && !isMultiSelectMode}
+                    draggable={Boolean(onSnippetsChange)}
+                    dragIds={snippetDragIds(item.row.snippet.id)}
                     sortableTarget={true}
                     onDragOver={handleRowDragOver}
                     onDrop={handleRowDrop}
@@ -1685,6 +1752,8 @@ interface SnippetRowProps {
   selected?: boolean;
   multiSelect?: boolean;
   draggable: boolean;
+  /** Ids this drag carries — the whole multi-selection when the row is selected. */
+  dragIds?: string[];
   sortableTarget: boolean;
   onDragOver: (event: React.DragEvent<HTMLElement>) => void;
   onDrop: (event: React.DragEvent<HTMLElement>) => void;
@@ -1709,6 +1778,7 @@ const SnippetRow = memo<SnippetRowProps>(({
   selected = false,
   multiSelect = false,
   draggable,
+  dragIds,
   sortableTarget,
   onDragOver,
   onDrop,
@@ -1738,7 +1808,7 @@ const SnippetRow = memo<SnippetRowProps>(({
             return;
           }
           event.dataTransfer.effectAllowed = 'move';
-          event.dataTransfer.setData('snippet-id', snippet.id);
+          writeSnippetDragPayload(event.dataTransfer, dragIds?.length ? dragIds : [snippet.id]);
         }}
         onDragOver={onDragOver}
         onDrop={onDrop}
@@ -1820,6 +1890,11 @@ interface SnippetChipProps {
   subtitle?: string;
   selected?: boolean;
   multiSelect?: boolean;
+  /** Chips are drag sources so a script can be dropped onto a package header
+   * in the stacked view (the list view drags rows the same way). */
+  draggable?: boolean;
+  /** Ids this drag carries — the whole multi-selection when the chip is selected. */
+  dragIds?: string[];
   onClick: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -1836,13 +1911,16 @@ interface SnippetChipProps {
 /**
  * Compact chip for the stacked (wrap) view. Shares the same click → run /
  * execute and right-click context menu as the list rows; only the layout is
- * denser. Drag reordering stays list-view-only.
+ * denser. A chip can be dragged onto a package header to file it there, but
+ * before/after reordering stays list-view-only (a wrap layout has no row axis).
  */
 const SnippetChip = memo<SnippetChipProps>(({
   snippet,
   subtitle,
   selected = false,
   multiSelect = false,
+  draggable = false,
+  dragIds,
   onClick,
   onEdit,
   onDelete,
@@ -1859,7 +1937,20 @@ const SnippetChip = memo<SnippetChipProps>(({
     {/* Radix ContextMenuTrigger needs a real DOM element (Tooltip.Root renders
         none), so mirror SnippetRow and wrap the tooltip in a plain div. */}
     <ContextMenuTrigger asChild>
-      <div className="min-w-0 max-w-full">
+      <div
+        className="min-w-0 max-w-full"
+        draggable={draggable}
+        {...primaryOnlyDragHandlers(draggable)}
+        onDragStart={(event) => {
+          if (!draggable || isNonPrimaryPointer(event) || isNonPrimaryPointer(event.nativeEvent)) {
+            event.preventDefault();
+            return;
+          }
+          event.dataTransfer.effectAllowed = 'move';
+          writeSnippetDragPayload(event.dataTransfer, dragIds?.length ? dragIds : [snippet.id]);
+        }}
+        onDragEnd={clearScriptsDropIndicator}
+      >
         <Tooltip>
           <TooltipTrigger asChild>
             <button
