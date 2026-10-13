@@ -132,6 +132,8 @@ export const STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE = 'netcatty_sftp_default_view_mo
 /** Compact vs comfortable SFTP file-list row density. */
 export const STORAGE_KEY_SFTP_LIST_DENSITY = 'netcatty_sftp_list_density_v1';
 export const STORAGE_KEY_SFTP_HOST_VIEW_MODES = 'netcatty_sftp_host_view_modes_v1';
+/** Absolute path of the external `lftp` binary (Settings → 文件传输). */
+export const STORAGE_KEY_FTP_LFTP_PATH = 'netcatty_lftp_path_v1';
 export const STORAGE_KEY_SFTP_VISIBLE_COLUMNS = 'netcatty_sftp_visible_columns_v1';
 export const STORAGE_KEY_SFTP_DIRECTORIES_FIRST = 'netcatty_sftp_directories_first_v1';
 /** Dense SFTP toolbar actions: show / collapse / hide + order. */

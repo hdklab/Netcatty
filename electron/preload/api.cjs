@@ -696,6 +696,14 @@ function createPreloadApi(ctx) {
   ftpCapabilities: () => {
     return ipcRenderer.invoke("netcatty:ftp:capabilities");
   },
+  // Settings → 文件传输: explicit lftp binary path, so machines without lftp on
+  // PATH (Windows, minimal-PATH macOS bundles) can still use FTP hosts.
+  ftpSetLftpPath: (path) => {
+    return ipcRenderer.invoke("netcatty:ftp:set-lftp-path", path);
+  },
+  ftpGetLftpStatus: () => {
+    return ipcRenderer.invoke("netcatty:ftp:lftp-status");
+  },
   ftpUpload: (payload) => {
     return ipcRenderer.invoke("netcatty:ftp:upload", payload);
   },

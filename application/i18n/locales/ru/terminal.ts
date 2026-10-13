@@ -891,5 +891,17 @@ export const ruTerminalMessages: Messages = {
   'sftp.editor.discardChanges': 'Отбросить',
   'sftp.editor.saveAndClose': 'Сохранить и закрыть',
   'sftp.editor.quitBlockedByDirty': 'Есть несохранённые редакторы — перед выходом сохраните изменения или отбросьте их',
+  'settings.ftpClient.title': 'Клиент FTP (lftp)',
+  'settings.ftpClient.desc': 'Просмотр и передача файлов для узлов, поддерживающих только FTP (устройства telnet или последовательного порта), выполняются внешним клиентом lftp. Если он не установлен или его нет в PATH, укажите путь к исполняемому файлу здесь.',
+  'settings.ftpClient.pathLabel': 'Путь к lftp',
+  'settings.ftpClient.pathPlaceholder': 'например C:\\Program Files\\lftp\\lftp.exe или /opt/homebrew/bin/lftp',
+  'settings.ftpClient.pathHint': 'Оставьте пустым, чтобы искать lftp в PATH и обычных местах установки.',
+  'settings.ftpClient.recheck': 'Проверить снова',
+  'settings.ftpClient.clear': 'Очистить',
+  'settings.ftpClient.status.checking': 'Проверка…',
+  'settings.ftpClient.status.resolved': 'Будет запущен: {path}',
+  'settings.ftpClient.status.configuredMissing': 'Указанный путь не является исполняемым файлом: {path}',
+  'settings.ftpClient.status.env': 'Используется NETCATTY_LFTP_PATH: {path}',
+  'settings.ftpClient.status.missing': 'lftp не найден — установите его или укажите путь выше.',
 
 };

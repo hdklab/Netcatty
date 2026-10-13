@@ -38,17 +38,102 @@ function resolveAppTempDir() {
   return os.tmpdir();
 }
 
-/** Absolute paths worth trying when PATH is minimal (packaged apps on macOS). */
-const FALLBACK_LFTP_PATHS = [
-  '/usr/bin/lftp',
-  '/usr/local/bin/lftp',
-  '/opt/homebrew/bin/lftp',
-  '/opt/local/bin/lftp',
-];
+/**
+ * Common install locations, per platform. Auto-detection has to cover more than
+ * PATH: a packaged macOS app inherits launchd's minimal PATH, Windows installs
+ * ship `lftp.exe` (and often never touch PATH), and Nix profiles put binaries in
+ * per-user/profile dirs that a GUI launch never sees.
+ *
+ * Pure on purpose (platform/env/home injected) so Windows and macOS layouts are
+ * unit-testable from a Linux dev box.
+ */
+function buildLftpCandidates({
+  platform = process.platform,
+  env = process.env,
+  home = os.homedir(),
+} = {}) {
+  const homeDir = typeof home === 'string' && home.trim() ? home.trim() : '';
+  if (platform === 'win32') {
+    const programFiles = env.ProgramFiles || 'C:\\Program Files';
+    const programFilesX86 = env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+    const localAppData = env.LOCALAPPDATA || '';
+    const userProfile = env.USERPROFILE || homeDir;
+    const programData = env.ProgramData || 'C:\\ProgramData';
+    return [
+      path.win32.join(programFiles, 'lftp', 'lftp.exe'),
+      path.win32.join(programFilesX86, 'lftp', 'lftp.exe'),
+      localAppData ? path.win32.join(localAppData, 'Programs', 'lftp', 'lftp.exe') : '',
+      userProfile ? path.win32.join(userProfile, 'scoop', 'shims', 'lftp.exe') : '',
+      path.win32.join(programData, 'chocolatey', 'bin', 'lftp.exe'),
+      'C:\\msys64\\usr\\bin\\lftp.exe',
+      'C:\\cygwin64\\bin\\lftp.exe',
+      'C:\\cygwin\\bin\\lftp.exe',
+    ].filter(Boolean);
+  }
+
+  const unix = [
+    '/usr/bin/lftp',
+    '/usr/local/bin/lftp',
+    '/bin/lftp',
+    '/opt/homebrew/bin/lftp',
+    '/opt/homebrew/opt/lftp/bin/lftp',
+    '/usr/local/opt/lftp/bin/lftp',
+    '/opt/local/bin/lftp',
+    '/snap/bin/lftp',
+    '/run/current-system/sw/bin/lftp',
+    '/nix/var/nix/profiles/default/bin/lftp',
+  ];
+  if (platform === 'darwin') {
+    unix.push('/opt/homebrew/sbin/lftp', '/usr/local/sbin/lftp');
+  }
+  if (homeDir) {
+    unix.push(
+      path.posix.join(homeDir, '.nix-profile', 'bin', 'lftp'),
+      path.posix.join(homeDir, '.local', 'bin', 'lftp'),
+      path.posix.join(homeDir, 'bin', 'lftp'),
+    );
+  }
+  return unix;
+}
+
+/** Windows ships the binary as `lftp.exe`, so a bare-name scan never matches. */
+const LFTP_BINARY_NAMES = process.platform === 'win32' ? ['lftp.exe', 'lftp'] : ['lftp'];
 
 const DEFAULT_TIMEOUT_MS = 120000;
 
 let _deps = null;
+
+/**
+ * Path configured in Settings → 文件传输 (FTP client). Empty means "not set".
+ * It wins over the env var and PATH so a user without lftp on PATH (typically
+ * Windows) can point the app at their own binary.
+ */
+let configuredLftpPath = '';
+
+/**
+ * @param {string} value absolute path chosen in the settings UI, or '' to clear
+ * @returns {{ ok: boolean, configuredPath: string, resolvedPath: string | null }}
+ */
+function setLftpPath(value) {
+  configuredLftpPath = typeof value === 'string' ? value.trim() : '';
+  return { ok: true, ...getLftpStatus() };
+}
+
+/** Effective resolution order, for the settings UI to show what will be used. */
+function getLftpStatus() {
+  const resolved = resolveLftp();
+  return {
+    configuredPath: configuredLftpPath,
+    configuredUsable: configuredLftpPath ? isExecutable(configuredLftpPath) : false,
+    envPath: process.env.NETCATTY_LFTP_PATH || '',
+    resolvedPath: resolved.path,
+    /** Where resolvedPath came from: settings / env / path / auto / none. */
+    source: resolved.source,
+    /** True when the binary was found without any user configuration. */
+    autoDetected: resolved.source === 'path' || resolved.source === 'auto',
+    platform: process.platform,
+  };
+}
 
 /**
  * @param {{ tempDir?: string, spawnImpl?: typeof spawn, log?: (msg: string) => void }} deps
@@ -71,19 +156,41 @@ function spawnImpl() {
   return _deps?.spawnImpl || spawn;
 }
 
-/** Locate the `lftp` executable, or null when the machine has none. */
-function findLftp() {
+/**
+ * Resolve the `lftp` executable and where the answer came from.
+ * Order: the path set in Settings, `NETCATTY_LFTP_PATH`, a PATH scan (trying
+ * `lftp.exe` on Windows), then the platform's common install locations — the
+ * last one is what makes a GUI launch on macOS/NixOS/Windows work without the
+ * user configuring anything.
+ *
+ * @returns {{ path: string | null, source: 'settings' | 'env' | 'path' | 'auto' | 'none' | 'settings-invalid' | 'env-invalid' }}
+ */
+function resolveLftp() {
+  if (configuredLftpPath) {
+    return isExecutable(configuredLftpPath)
+      ? { path: configuredLftpPath, source: 'settings' }
+      : { path: null, source: 'settings-invalid' };
+  }
   const override = process.env.NETCATTY_LFTP_PATH;
   if (override) {
-    return isExecutable(override) ? override : null;
+    return isExecutable(override)
+      ? { path: override, source: 'env' }
+      : { path: null, source: 'env-invalid' };
   }
   const fromPath = (process.env.PATH || '')
     .split(path.delimiter)
     .filter(Boolean)
-    .map((dir) => path.join(dir, 'lftp'))
+    .flatMap((dir) => LFTP_BINARY_NAMES.map((name) => path.join(dir, name)))
     .find((candidate) => isExecutable(candidate));
-  if (fromPath) return fromPath;
-  return FALLBACK_LFTP_PATHS.find((candidate) => isExecutable(candidate)) || null;
+  if (fromPath) return { path: fromPath, source: 'path' };
+
+  const detected = buildLftpCandidates().find((candidate) => isExecutable(candidate));
+  return detected ? { path: detected, source: 'auto' } : { path: null, source: 'none' };
+}
+
+/** Locate the `lftp` executable, or null when the machine has none. */
+function findLftp() {
+  return resolveLftp().path;
 }
 
 function isExecutable(filePath) {
@@ -192,7 +299,9 @@ function lftpUnavailable() {
   return createLftpResult({
     ok: false,
     code: 'lftp-not-found',
-    error: 'lftp is not installed. Install it (apt install lftp / brew install lftp) and retry.',
+    error: process.platform === 'win32'
+      ? 'lftp was not found. Install lftp and set its path in Settings → File Transfer → FTP client path.'
+      : 'lftp is not installed. Install it (apt install lftp / brew install lftp) or set its path in Settings → File Transfer → FTP client path.',
     exitCode: null,
   });
 }
@@ -384,6 +493,12 @@ function materializeDropFile(file, stagingDir) {
 /** IPC surface used by the renderer's terminal drag-and-drop path. */
 function registerHandlers(ipcMain) {
   ipcMain.handle('netcatty:ftp:capabilities', () => getCapabilities());
+  // Settings → 文件传输: an explicit lftp path beats PATH/env so Windows and
+  // minimal-PATH macOS installs can point at their own binary.
+  ipcMain.handle('netcatty:ftp:set-lftp-path', (_event, value) =>
+    setLftpPath(typeof value === 'string' ? value : value?.path),
+  );
+  ipcMain.handle('netcatty:ftp:lftp-status', () => getLftpStatus());
   ipcMain.handle('netcatty:ftp:upload', async (_event, payload = {}) => {
     const incoming = Array.isArray(payload.files) ? payload.files : [];
     if (incoming.length === 0) {
@@ -430,6 +545,8 @@ module.exports = {
   configure,
   registerHandlers,
   findLftp,
+  setLftpPath,
+  getLftpStatus,
   buildLftpScript,
   buildCommandScript,
   buildScriptPrelude,
@@ -438,5 +555,5 @@ module.exports = {
   uploadFiles,
   getCapabilities,
   redact,
-  _internal: { quote, redact, isExecutable, materializeDropFile, resolveAppTempDir },
+  _internal: { quote, redact, isExecutable, materializeDropFile, resolveAppTempDir, buildLftpCandidates, resolveLftp },
 };

@@ -513,6 +513,30 @@ declare global {
       timeoutMs?: number;
       files: Array<{ path?: string; name: string; remoteName?: string; data?: ArrayBuffer | string }>;
     }): Promise<{ ok: boolean; code?: string; error?: string }>;
+    /**
+     * Settings → 文件传输: absolute path of the user's own `lftp`. Wins over the
+     * `NETCATTY_LFTP_PATH` env var and the PATH scan; `''` clears it.
+     */
+    ftpSetLftpPath?(path: string): Promise<{
+      ok: boolean;
+      configuredPath: string;
+      configuredUsable: boolean;
+      envPath: string;
+      resolvedPath: string | null;
+      source: 'settings' | 'env' | 'path' | 'auto' | 'none' | 'settings-invalid' | 'env-invalid';
+      autoDetected: boolean;
+      platform: string;
+    }>;
+    /** What the FTP backend would actually execute right now. */
+    ftpGetLftpStatus?(): Promise<{
+      configuredPath: string;
+      configuredUsable: boolean;
+      envPath: string;
+      resolvedPath: string | null;
+      source: 'settings' | 'env' | 'path' | 'auto' | 'none' | 'settings-invalid' | 'env-invalid';
+      autoDetected: boolean;
+      platform: string;
+    }>;
     onZmodemOverwriteRequest?(
       sessionId: string,
       cb: (payload: { sessionId: string; requestId: string; filename: string }) => void

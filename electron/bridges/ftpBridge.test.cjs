@@ -242,3 +242,70 @@ test('getCapabilities reports whether an lftp is usable, and redact strips crede
     'open -u [REDACTED] ftp://h failed; password: [REDACTED]',
   );
 });
+
+test('lftp auto-detection covers the common per-platform install locations', () => {
+  const win = ftpBridge._internal.buildLftpCandidates({
+    platform: 'win32',
+    env: {
+      ProgramFiles: 'D:\\PF',
+      'ProgramFiles(x86)': 'D:\\PF86',
+      LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local',
+      USERPROFILE: 'C:\\Users\\me',
+      ProgramData: 'D:\\ProgramData',
+    },
+    home: 'C:\\Users\\me',
+  });
+  assert.ok(win.every((candidate) => candidate.toLowerCase().endsWith('.exe')), win.join(' | '));
+  assert.ok(win.includes(path.win32.join('D:\\PF', 'lftp', 'lftp.exe')));
+  assert.ok(win.includes('C:\\Users\\me\\scoop\\shims\\lftp.exe'));
+  assert.ok(win.some((candidate) => /msys64|cygwin/i.test(candidate)));
+
+  const mac = ftpBridge._internal.buildLftpCandidates({ platform: 'darwin', env: {}, home: '/Users/me' });
+  assert.ok(mac.includes('/opt/homebrew/bin/lftp'));      // Apple Silicon brew
+  assert.ok(mac.includes('/usr/local/bin/lftp'));         // Intel brew
+  assert.ok(mac.includes('/opt/local/bin/lftp'));         // MacPorts
+  assert.ok(mac.includes('/Users/me/.nix-profile/bin/lftp'));
+
+  const linux = ftpBridge._internal.buildLftpCandidates({ platform: 'linux', env: {}, home: '/home/me' });
+  assert.ok(linux.includes('/usr/bin/lftp'));
+  assert.ok(linux.includes('/run/current-system/sw/bin/lftp'));   // NixOS system profile
+  assert.ok(linux.includes('/home/me/.local/bin/lftp'));
+});
+
+test('a path set in Settings wins over the env var and reports its source', async () => {
+  const settingsDir = tempDir();
+  const envDir = tempDir();
+  const settingsPath = writeFakeLftp(settingsDir);
+  const envPath = writeFakeLftp(envDir);
+  try {
+    await withLftp(envPath, async () => {
+      const configured = ftpBridge.setLftpPath(settingsPath);
+      assert.equal(configured.resolvedPath, settingsPath);
+      assert.equal(configured.source, 'settings');
+      assert.equal(configured.autoDetected, false);
+
+      const cleared = ftpBridge.setLftpPath('');
+      assert.equal(cleared.resolvedPath, envPath);
+      assert.equal(cleared.source, 'env');
+      assert.equal(cleared.autoDetected, false);
+    });
+  } finally {
+    ftpBridge.setLftpPath('');
+    fs.rmSync(settingsDir, { recursive: true, force: true });
+    fs.rmSync(envDir, { recursive: true, force: true });
+  }
+});
+
+test('a configured path that is not executable is reported, not silently replaced', () => {
+  try {
+    const status = ftpBridge.setLftpPath('/definitely/not/here/lftp');
+    assert.equal(status.resolvedPath, null);
+    assert.equal(status.source, 'settings-invalid');
+    assert.equal(status.configuredUsable, false);
+    // An explicit-but-broken setting must not fall back to PATH: the settings UI
+    // shows the problem instead of the transfer failing later with no clue.
+    assert.equal(ftpBridge.findLftp(), null);
+  } finally {
+    ftpBridge.setLftpPath('');
+  }
+});

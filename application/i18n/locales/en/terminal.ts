@@ -884,5 +884,17 @@ export const enTerminalMessages: Messages = {
   'sftp.editor.discardChanges': 'Discard',
   'sftp.editor.saveAndClose': 'Save and close',
   'sftp.editor.quitBlockedByDirty': 'Unsaved editors — please save or discard before quitting',
+  'settings.ftpClient.title': 'FTP client (lftp)',
+  'settings.ftpClient.desc': 'Browsing and transfers for hosts that only speak FTP (telnet or serial devices) run through the external lftp client. If it is not installed, or not on PATH, point at the binary here.',
+  'settings.ftpClient.pathLabel': 'lftp path',
+  'settings.ftpClient.pathPlaceholder': 'e.g. C:\\Program Files\\lftp\\lftp.exe or /opt/homebrew/bin/lftp',
+  'settings.ftpClient.pathHint': 'Leave empty to detect lftp from PATH and the usual install locations.',
+  'settings.ftpClient.recheck': 'Re-check',
+  'settings.ftpClient.clear': 'Clear',
+  'settings.ftpClient.status.checking': 'Checking…',
+  'settings.ftpClient.status.resolved': 'Will run: {path}',
+  'settings.ftpClient.status.configuredMissing': 'The configured path is not an executable file: {path}',
+  'settings.ftpClient.status.env': 'Using NETCATTY_LFTP_PATH: {path}',
+  'settings.ftpClient.status.missing': 'lftp was not found — install it, or set its path above.',
 
 };
