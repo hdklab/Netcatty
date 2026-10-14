@@ -5,6 +5,7 @@ import { zhTWTerminalMessages } from './zh-TW/terminal';
 import { zhTWAiMessages } from './zh-TW/ai';
 import { zhTwSystemManagerMessages } from './zh-TW/systemManager';
 import { zhTWScriptsMessages } from './zh-TW/scripts';
+import { zhTWWorkflowMessages } from './zh-TW/workflow';
 
 export type { Messages } from './types';
 
@@ -15,6 +16,7 @@ const zhTW: Messages = {
   ...zhTWAiMessages,
   ...zhTwSystemManagerMessages,
   ...zhTWScriptsMessages,
+  ...zhTWWorkflowMessages,
 };
 
 export default zhTW;

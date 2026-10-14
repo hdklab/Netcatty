@@ -5,6 +5,7 @@ import { enTerminalMessages } from './en/terminal';
 import { enAiMessages } from './en/ai';
 import { enSystemManagerMessages } from './en/systemManager';
 import { enScriptsMessages } from './en/scripts';
+import { enWorkflowMessages } from './en/workflow';
 
 export type { Messages } from './types';
 
@@ -15,6 +16,7 @@ const en: Messages = {
   ...enAiMessages,
   ...enSystemManagerMessages,
   ...enScriptsMessages,
+  ...enWorkflowMessages,
 };
 
 export default en;

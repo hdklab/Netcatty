@@ -5,6 +5,7 @@ import { esTerminalMessages } from './es/terminal';
 import { esAiMessages } from './es/ai';
 import { esSystemManagerMessages } from './es/systemManager';
 import { esScriptsMessages } from './es/scripts';
+import { esWorkflowMessages } from './es/workflow';
 
 export type { Messages } from './types';
 
@@ -15,6 +16,7 @@ const es: Messages = {
   ...esAiMessages,
   ...esSystemManagerMessages,
   ...esScriptsMessages,
+  ...esWorkflowMessages,
 };
 
 export default es;

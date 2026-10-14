@@ -5,6 +5,7 @@ import { ruTerminalMessages } from './ru/terminal';
 import { ruAiMessages } from './ru/ai';
 import { ruSystemManagerMessages } from './ru/systemManager';
 import { ruScriptsMessages } from './ru/scripts';
+import { ruWorkflowMessages } from './ru/workflow';
 
 export type { Messages } from './types';
 
@@ -15,6 +16,7 @@ const ru: Messages = {
   ...ruAiMessages,
   ...ruSystemManagerMessages,
   ...ruScriptsMessages,
+  ...ruWorkflowMessages,
 };
 
 export default ru;
