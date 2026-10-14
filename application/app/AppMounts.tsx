@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useActiveTabId, useIsSftpActive, useIsVaultActive } from '../state/activeTabStore';
+import { useActiveTabId, useIsSftpActive, useIsVaultActive, useIsWorkflowsActive } from '../state/activeTabStore';
 import { useTerminalHostTreeLayoutWidth } from '../state/terminalHostTreeStore';
 import { isTerminalContentTabSurface } from './workTabSurface';
 import { cn } from '../../lib/utils';
@@ -8,6 +8,7 @@ import { LazyLoadBoundary } from '../../components/ui/lazy-load-boundary';
 import type { LogView as LogViewType } from '../state/logViewState';
 import type { SftpView as SftpViewComponent } from '../../components/SftpView';
 import type { TerminalLayer as TerminalLayerComponent } from '../../components/TerminalLayer';
+import type { WorkflowView as WorkflowViewComponent } from '../../components/workflow/WorkflowView';
 
 // Visibility container for VaultView - isolates isActive subscription
 export const VaultViewContainer: React.FC<{
@@ -160,6 +161,50 @@ export const SftpViewMount: React.FC<SftpViewProps> = (props) => {
         <LazySftpView {...props} />
       </Suspense>
     </LazyLoadBoundary>
+  );
+};
+
+type WorkflowViewProps = React.ComponentProps<typeof WorkflowViewComponent>;
+
+const WorkflowViewFallback = ({ visible }: { visible: boolean }) => {
+  if (!visible) return null;
+  return (
+    <div className="netcatty-lazy-fade-in absolute inset-0 z-20 bg-background" aria-hidden="true" />
+  );
+};
+
+const LazyWorkflowView = lazy(() =>
+  import('../../components/workflow/WorkflowView').then((m) => ({ default: m.WorkflowView })),
+);
+
+/**
+ * Workflow surface: mounts lazily on first activation and then stays mounted
+ * (hidden while another root tab is active) so an open canvas keeps its state.
+ */
+export const WorkflowViewMount: React.FC<WorkflowViewProps> = (props) => {
+  const isActive = useIsWorkflowsActive();
+  const [shouldMount, setShouldMount] = useState(isActive);
+
+  useEffect(() => {
+    if (isActive) setShouldMount(true);
+  }, [isActive]);
+
+  if (!shouldMount) return null;
+
+  return (
+    <div
+      className={cn('absolute inset-0', isActive ? 'z-20' : '')}
+      data-inactive-app-surface={isActive ? undefined : 'true'}
+      style={isActive
+        ? undefined
+        : { visibility: 'hidden', pointerEvents: 'none', position: 'absolute', zIndex: -1 }}
+    >
+      <LazyLoadBoundary name="Workflows" resetKey={isActive ? 'active' : 'idle'}>
+        <Suspense fallback={<WorkflowViewFallback visible={isActive} />}>
+          <LazyWorkflowView {...props} />
+        </Suspense>
+      </LazyLoadBoundary>
+    </div>
   );
 };
 

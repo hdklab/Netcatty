@@ -1,4 +1,4 @@
-import { Folder, FolderLock, Lock, Menu, MoreHorizontal, Plus, Settings, Sparkles } from 'lucide-react';
+import { Folder, FolderLock, Lock, Menu, MoreHorizontal, Plus, Settings, Sparkles, Workflow } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fromEditorTabId, isEditorTabId, toEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
 import { topTabsSessionsEqual } from '../domain/topTabsSessionsEqual';
@@ -1048,6 +1048,13 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               shortcutNumber={tabShortcutNumbers?.get('sftp')}
             />
           )}
+          <RootTopTab
+            tabId="workflows"
+            label={t('workflow.title')}
+            icon={<Workflow size={14} />}
+            className="rounded-t-md"
+            compact={rootTabsCompact}
+          />
         </div>
 
         {/* Scrollable tabs container with fade masks */}

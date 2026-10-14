@@ -71,6 +71,10 @@ export const STORAGE_KEY_VAULT_HOST_PANEL_WIDTH = 'netcatty_vault_host_panel_wid
 export const STORAGE_KEY_SNIPPET_SCRIPT_EDITOR_HEIGHT = 'netcatty_snippet_script_editor_height_v1';
 /** Automation script Monaco editor height (px) in vault sidebar. */
 export const STORAGE_KEY_SCRIPT_EDITOR_HEIGHT = 'netcatty_script_editor_height_v1';
+/** Workflow orchestration definitions (node graphs). */
+export const STORAGE_KEY_WORKFLOWS = 'netcatty_workflows_v1';
+/** Local run history for workflows, pruned per workflow. */
+export const STORAGE_KEY_WORKFLOW_RUNS = 'netcatty_workflow_runs_v1';
 /** Terminal compose bar total height (px). */
 export const STORAGE_KEY_COMPOSE_BAR_HEIGHT = 'netcatty_compose_bar_height_v1';
 /** Snippet IDs pinned to the terminal compose bar quick strip. */

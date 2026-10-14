@@ -408,7 +408,7 @@ export const ActiveTabAutoScroller: React.FC<ActiveTabAutoScrollerProps> = memo(
 ActiveTabAutoScroller.displayName = 'ActiveTabAutoScroller';
 
 interface RootTopTabProps {
-  tabId: 'vault' | 'sftp';
+  tabId: 'vault' | 'sftp' | 'workflows';
   label: string;
   icon: React.ReactNode;
   className?: string;

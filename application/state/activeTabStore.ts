@@ -87,6 +87,7 @@ export const useIsTabActive = (tabId: string) => {
 // Stable snapshot functions - defined once outside components
 const getIsVaultActive = () => activeTabStore.getActiveTabId() === 'vault';
 const getIsSftpActive = () => activeTabStore.getActiveTabId() === 'sftp';
+const getIsWorkflowsActive = () => activeTabStore.getActiveTabId() === 'workflows';
 
 // Check if vault is active
 export const useIsVaultActive = () => {
@@ -103,6 +104,15 @@ export const useIsSftpActive = () => {
     activeTabStore.subscribe,
     getIsSftpActive,
     getIsSftpActive,
+  );
+};
+
+// Check if the workflow surface is active
+export const useIsWorkflowsActive = () => {
+  return useSyncExternalStore(
+    activeTabStore.subscribe,
+    getIsWorkflowsActive,
+    getIsWorkflowsActive,
   );
 };
 

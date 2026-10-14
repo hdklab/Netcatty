@@ -282,7 +282,7 @@ function AppViewInner({ domains }: AppViewProps) {
     toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, terminalPaneMagnificationRef, sftpPaneMagnificationRef, toggleWorkspaceViewMode, unmanageSource,
     readPersistedHosts, readPersistedManagedSources, updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources,
     updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, vaultFocusRequest, workspaceRenameTarget, workspaces,
-    VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper,
+    VaultViewContainer, SftpViewMount, TerminalLayerMount, WorkflowViewMount, LogViewWrapper,
   } = ctx;
 
   // Chrome-visible settings slice comes from settingsChromeStore, not from the
@@ -703,6 +703,15 @@ function AppViewInner({ domains }: AppViewProps) {
           setEditorWordWrap={setEditorWordWrap}
           terminalSettings={terminalSettings}
           paneMagnificationRef={sftpPaneMagnificationRef}
+        />
+
+        <WorkflowViewMount
+          hosts={hosts}
+          keys={keys}
+          identities={identities}
+          knownHosts={effectiveKnownHosts}
+          terminalSettings={terminalSettings}
+          sessions={sessions}
         />
 
         <TerminalLayerMount
