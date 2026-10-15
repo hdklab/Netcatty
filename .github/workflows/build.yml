@@ -313,20 +313,45 @@ jobs:
           echo "Setting version to ${VERSION}"
           npm pkg set version="${VERSION}"
 
+      - name: Trust self-signed macOS signing certificate
+        if: matrix.name == 'macos'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+        run: bash scripts/mac-selfsigned-cert.sh trust
+
       - name: Build package
         env:
           ELECTRON_BUILDER_PUBLISH: "never"
           # macOS code signing & notarization (only for macOS builds)
-          # Signing identity comes from CSC_LINK when it exists; never let the
-          # runner's keychain discovery decide (a fork has no identity and a
-          # hard failure there is exactly what killed the macOS leg).
+          # - Signing comes from CSC_LINK when it exists; never let the runner's
+          #   keychain discovery decide (a fork has no Apple identity, and a hard
+          #   failure there is exactly what killed the macOS leg).
+          # - The identity is named explicitly because
+          #   CSC_IDENTITY_AUTO_DISCOVERY=false plus an anonymous CSC_LINK would
+          #   switch signing off entirely.
+          # - This fork signs with one fixed SELF-SIGNED certificate
+          #   (docs/mac-code-signing.md). Without a certificate the build stays
+          #   ad-hoc, which is what breaks in-app updates on macOS: Squirrel.Mac
+          #   checks an update against the running app's designated requirement,
+          #   and an ad-hoc app's requirement is a `cdhash` that changes with
+          #   every build.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           CSC_LINK: ${{ matrix.name == 'macos' && secrets.MAC_CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.name == 'macos' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          CSC_NAME: ${{ matrix.name == 'macos' && secrets.MAC_CSC_LINK != '' && 'Netcatty Self-Signed' || '' }}
           APPLE_ID: ${{ matrix.name == 'macos' && secrets.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.name == 'macos' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ matrix.name == 'macos' && secrets.APPLE_TEAM_ID || '' }}
         run: npm run ${{ matrix.pack_script }}
+
+      - name: Verify macOS code signature
+        if: matrix.name == 'macos'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+        run: bash scripts/mac-selfsigned-cert.sh verify-release
 
       - name: Test tray panel layout
         run: npm run test:tray-panel-layout

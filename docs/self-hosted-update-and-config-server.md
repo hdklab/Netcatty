@@ -119,8 +119,11 @@ git tag -a v1.1.86 -m "release: v1.1.86" && git push origin v1.1.86
   installer-only release is not a feed.
 - A local `package.json` version that lags the tag is expected (CI injects it);
   installed apps read the release version, not the repo one.
-- macOS artifacts are unsigned, so macOS does not auto-update; Linux
-  (AppImage/deb/rpm/pacman) and Windows do.
+- macOS artifacts are signed with the fork's one fixed self-signed certificate
+  (`docs/mac-code-signing.md`), which is what makes Squirrel.Mac accept in-app
+  updates. Without the `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD` secrets the macOS
+  build is ad-hoc signed and cannot auto-update at all. Linux and Windows are
+  unaffected.
 
 ## Config / vault storage
 
