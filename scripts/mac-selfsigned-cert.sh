@@ -178,6 +178,12 @@ cmd_create() {
 }
 
 # ----------------------------------------------------------------- trust -----
+#
+# Only macOS needs this, and it is deliberately openssl-free: the build runner's
+# PATH usually resolves `openssl` to Homebrew's OpenSSL 3, which cannot read the
+# legacy (RC2/3DES) PKCS#12 that macOS LibreSSL writes unless -legacy is passed.
+# `security` reads the p12 natively, so the certificate is exported from the
+# keychain instead.
 
 # Turn a CSC_LINK-shaped value (path, file:// URL, http(s) URL or base64 blob)
 # into a local p12 path.
@@ -212,7 +218,6 @@ resolve_p12() {
 
 cmd_trust() {
   need_macos trust
-  require_cmd openssl
 
   local p12="" password="" keychain="" positional=()
   while [[ $# -gt 0 ]]; do
@@ -239,37 +244,50 @@ cmd_trust() {
   work_dir="$(mktemp -d "${TMPDIR:-/tmp}/netcatty-trust.XXXXXX")"
   local local_p12
   local_p12="$(resolve_p12 "$p12" "$work_dir/link.p12")"
-  local cert_pem="$work_dir/cert.pem"
-  openssl pkcs12 -in "$local_p12" -clcerts -nokeys -passin "pass:${password}" \
-    -out "$cert_pem" >/dev/null 2>&1 || die "cannot read the p12 (wrong password?)"
 
-  local cn_hash
-  cn_hash="$(openssl x509 -in "$cert_pem" -noout -subject_hash)"
   [[ -n "$keychain" ]] || keychain="$work_dir/signing.keychain-db"
-
   if ! security list-keychains -d user | grep -q "$keychain"; then
     security create-keychain -p netcatty "$keychain" >/dev/null
   fi
   security unlock-keychain -p netcatty "$keychain" >/dev/null
+
   # Importing the p12 (private key included) is what makes the identity show up
   # as a codesigning identity — exactly what electron-builder looks for in its
-  # own throwaway keychain.
-  security import "$local_p12" -k "$keychain" -P "$password" \
-    -T /usr/bin/codesign -T /usr/bin/productbuild >/dev/null
+  # own throwaway keychain. The import also validates the password, and `security`
+  # reads the p12 natively (no openssl, see the note above the function).
+  local import_args=(-k "$keychain" -P "$password" -T /usr/bin/codesign)
+  [[ -x /usr/bin/productbuild ]] && import_args+=(-T /usr/bin/productbuild)
+  local import_log="$work_dir/import.log"
+  if ! security import "$local_p12" "${import_args[@]}" >"$import_log" 2>&1; then
+    cat "$import_log" >&2
+    die "cannot import the p12 into the keychain (wrong password?)"
+  fi
   security set-key-partition-list -S apple-tool:,apple: -s -k netcatty "$keychain" >/dev/null
 
+  local cert_pem="$work_dir/cert.pem"
+  security find-certificate -a -p "$keychain" > "$cert_pem" 2>/dev/null || true
+  [[ -s "$cert_pem" ]] || die "the p12 contains no certificate"
+
   # electron-builder resolves the signing identity through
-  # `security find-identity -v`, which only reports *trusted* certificates.
-  # The trust setting is per certificate, not per keychain, so setting it here
-  # also covers the keychain electron-builder creates for the build.
-  if ! security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$cert_pem" 2>/dev/null; then
-    if sudo -n true 2>/dev/null; then
-      security add-trusted-cert -d -r trustRoot -p codeSign \
-        -k /Library/Keychains/System.keychain "$cert_pem" \
-        || die "could not set the certificate trust setting"
-    else
-      die "could not set the certificate trust setting (tried the user domain; no passwordless sudo for the admin domain)"
+  # `security find-identity -v`, which only reports *trusted* certificates, and a
+  # self-signed certificate is trusted nowhere by default. The trust setting is
+  # per certificate (not per keychain), so setting it here also covers the
+  # throwaway keychain electron-builder creates for each build.
+  #
+  # Order matters: the admin domain needs root but no interaction, so it goes
+  # first (CI runners have passwordless sudo, and a headless session cannot
+  # answer the user-domain authorization dialog); the user domain is the fallback
+  # for a dev Mac, where approving the system dialog is fine.
+  local trust_log="$work_dir/trust.log"
+  if sudo -n true 2>/dev/null; then
+    if ! sudo -n security add-trusted-cert -d -r trustRoot -p codeSign \
+      -k /Library/Keychains/System.keychain "$cert_pem" >"$trust_log" 2>&1; then
+      cat "$trust_log" >&2
+      die "could not set the certificate trust setting in the admin domain"
     fi
+  elif ! security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$cert_pem" >"$trust_log" 2>&1; then
+    cat "$trust_log" >&2
+    die "could not set the certificate trust setting (no passwordless sudo for the admin domain; approve the system dialog and retry)"
   fi
 
   local identities
@@ -278,7 +296,7 @@ cmd_trust() {
   if ! printf '%s' "$identities" | grep -qE '[0-9]+\) '; then
     die "the certificate is imported but still not a valid codesigning identity"
   fi
-  info "certificate trusted (sha1 subject hash ${cn_hash}); electron-builder will find it"
+  info "certificate trusted; electron-builder will find it"
 }
 
 # ---------------------------------------------------------------- verify -----
