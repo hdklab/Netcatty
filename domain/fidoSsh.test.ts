@@ -74,7 +74,7 @@ test("detectFidoSshKeyType reads sk algorithm from base64-only private PEM", () 
 test("decodeOpenSshPrivateKeyBody works without Node Buffer (renderer)", () => {
   const pem = makeSkPrivatePem(SK_SSH_ED25519);
   const originalBuffer = globalThis.Buffer;
-  // @ts-expect-error intentional renderer simulation
+  // Intentional renderer simulation: the renderer has no Node Buffer.
   delete globalThis.Buffer;
   try {
     assert.equal(typeof globalThis.Buffer, "undefined");

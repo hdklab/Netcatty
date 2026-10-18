@@ -2,7 +2,13 @@ import { useCallback } from "react";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 
 export const useKeychainBackend = () => {
-  const generateKeyPair = useCallback(async (options: { type: "RSA" | "ECDSA" | "ED25519"; bits?: number; comment?: string }) => {
+  const generateKeyPair = useCallback(async (options: {
+    type: "RSA" | "ECDSA" | "ED25519" | "ED25519-SK" | "ECDSA-SK";
+    bits?: number;
+    comment?: string;
+    resident?: boolean;
+    verifyRequired?: boolean;
+  }) => {
     const bridge = netcattyBridge.get();
     return bridge?.generateKeyPair?.(options);
   }, []);
