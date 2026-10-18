@@ -1,5 +1,63 @@
 # Changelog
 
+## [1.1.97] - 2026-10-18
+
+### 功能
+- **Vault 新增「监控」：自建监控面板，一眼看多台主机**：左侧导航新增「监控」，可新建、命名、复制、删除多个面板，每个面板跨分组挑选已有主机（同时最多 256 台），在「列表」与「图表」之间切换，支持按名称 / 分组 / 标签 / 备注搜索主机、选择更新频率（1 / 2 / 3 / 5 / 10 / 30 / 60 秒）与趋势范围。此前只能逐台连上去看 `top`，跨主机的负载对比没有任何入口
+- **监控卡片与列表给出完整读数**：CPU、内存、磁盘、网络、延迟（含远端处理时间），主机提供时额外采集 GPU 信息；列表可自定义显示的列、调整列宽与排序，连接不可用的主机会被明确标出而不是留空；主机集合做了虚拟化，几百台也不会一次渲染完
+- **终端侧栏内置浏览器：打开的是「主机那侧」的网页**：终端侧栏在 SFTP / 笔记之外新增「浏览器」，每个终端保有自己的标签页与网络路由；`127.0.0.1` / `localhost` 指向该 SSH 主机自身，因此只监听在远端回环上的面板、Jupyter、内网后台都能直接打开。终端里的 HTTP(S) 链接默认在侧栏打开，可在 设置 > 终端 > 行为 改回系统浏览器
+- **浏览器标签、书签与下载**：标签页新建 / 关闭 / 重排、后退前进刷新、地址栏、应用与书签菜单、下载面板；书签分「本主机」与「所有主机」两种作用域并随加密云同步走（含自定义图标），浏览历史、Cookie、密码与打开的标签不同步
+- **SSH 安全密钥（FIDO2）回归**：ED25519-SK / ECDSA-SK 都可用于登录、SFTP、端口转发与证书认证；需要确认时弹出 PIN / 触摸对话框，「带 PIN」「只需触摸」「PIN 错误」「设备未插入」「等待超时」分别呈现，签名请求路由回发起它的那个窗口，多窗口并发不会串台；agent 里没有可用密钥时显式回退到已保存密码
+- **云同步新增「智能合并（不传播删除）」**：新策略 `smartMergePreserve` 下，只在单侧消失的条目会保留下来，只有所有设备都删过才真正消失——恢复旧备份或重装机器时，不再因为本地少了一批主机就把其它设备的 25 台主机一起抹掉。默认仍是原来的 `smartMerge`，需要手动切换
+- **AI 会话历史可以参与云同步（可选）**：打开后聊天记录随加密 payload 一起同步；关闭时行为与之前完全一致。此前会话从不跨机器，也进不了任何备份
+- **本地备份历史可以清空**：同步设置里新增清空入口，二次确认后删除磁盘上的本地备份，保留正在使用与中断恢复用的快照，删除失败可以重试
+- **AI 会话可以分叉，也可以撤销上一轮**：从任意一条已完成的回复分叉出新会话（原会话保留），或撤销最后一轮并在安全边界上建分支——不再需要「复制一份聊天再手动删」。撤销到的分支仍留在查看范围内，撤销碰到历史上限时原会话也不会被覆盖
+- **各 SDK Agent 的模型选择器统一**：目录来源（实时 / 上次可用 / 内置预设）与成功拉取时间统一显示，实时拉取期间显示加载态，失败时回落到上次可用的目录；Copilot 改用托管临时目录里的无窗口启动包装，不再闪控制台窗口
+- **命令历史「清空全部历史」**：一次清掉本地 shell 历史、自动补全建议与 compose 历史，正在编辑的草稿保留，其它窗口同步清空，清空后仍能继续记录新命令
+- **Unix 路径高亮规则**：关键词高亮新增可开关、可改色的 `Unix paths` 规则，识别 `/var/log/syslog`、`~/projects/netcatty`、带引号含空格的路径与中文路径，不误伤 `TCP/IP`、`https://…`、`./foo` 这类文本
+- **窗口透明度一键切换**：⌘U / Ctrl+Shift+U 在「上次的透明度」与 100% 之间切换（没有记录时回到 0.85），记忆只在本次会话内；输入法组字用的按键不会误触发
+- **Vault 里可以把选中的主机移动到分组**（多选后一次落组），主机详情面板把「测试连接」提到面板头部，代码片段的多个新建入口合并为一个「新建」下拉（键盘可达，选择后焦点保留）
+
+### 修复
+- **大目录与大列表不再卡顿**：SFTP 文件面板在打开 / 隐藏时先把窗口钳制在可视范围内再测量（#3724），展开的文件夹传输列表改为虚拟化并在后台列目录更新后重新钳制保留窗口（#3722），AI 历史搜索在大会话库上保持响应且待匹配结果会与当前会话对齐（#3719），同步待处理指示器的负载改为合批采集（#3718）
+- **纯 ASCII 输入不再做无用的拼音匹配**：终端参数补全与 Vault 主机字段搜索走 ASCII 快路径，中文与拼音匹配结果不变（#3717、#3721）
+- **分离编辑器窗口的更新被隔离**：打字不再带着整个编辑器树一起重渲染（#3716）
+- **内置浏览器空闲时不再轮询面板布局**（#3723）
+- **SSH 取消后台任务改用带内 Ctrl+C**：不再发 SSH signal 通道请求，日志里不再刷取消噪声，原有重试与结果语义不变（#3725）
+- 远端没有返回退出码时如实上报（此前会被当成成功）；agent 不可用后仍保留密码回退；主机复用改为按实际协议设置匹配，不再拿配置不一致的主机凑一个会话（#3669）
+- **SFTP 传输建立连接失败会明确报错**（#3702），下载通道被关闭导致的中断计为失败；可写的 GVFS 目标不再丢失文件权限保护
+- 端口转发在重复失败时不再丢掉「端口耗尽」状态（#3679）
+- **云同步**：断开提示更清楚、失败可以重试，删除主机或跳板机后清理残留引用，聊天的删除、轮次顺序与恢复边界按预期保留
+- **AI**：聊天图片附件改为 data URL 发送（#3681），Bash 的 `PS0` 在 agent 命令回显期间被静默（#3683），停止 agent 命令时保留已有 shell hooks，OpenCode 插件报错不再中断已恢复的会话（#3677），OSC 上下文之间不再丢终端回复（#3678），`host_open` 改为优先复用已有会话（#3614）
+- 本地 shell（CMD）会话可以保存进分组（#3616）；本地 shell 的屏幕快照在会话缺失时仍保留显示（#3674）
+- 监控运行时的更新与应用协调隔离（#3710），一次面板刷新不再牵动全局重渲染
+- **打包体积**：省略重复的 renderer 依赖与未使用的 native 文件，macOS arm64 `.app` 从 394.9 MB 降到 360.7 MB、ZIP 从 150.8 MB 降到 143.1 MB，依赖版本未变（#3726）
+- 同步设置面板的样式与其它设置页对齐（#3728）
+
+### 变更
+- 脚本侧栏统一为列表视图，移除堆叠（chip）视图与 `netcatty:scripts:sidePanelView` 键，升级后直接落到列表；拖拽归类、批量操作等列表能力不受影响（#3711）
+
+### 设计原理
+- 监控的领域层仍是纯逻辑（`domain/monitorPanels.ts` 面板与主机顺序、`domain/monitorRuntime.ts` 快照与历史合并、`domain/monitorChart.ts` 趋势、`domain/monitorTableLayout.ts` 列布局），采样全部由主进程 `electron/bridges/monitorBridge.cjs` 驱动，走 `sshBridge/sharedStats.cjs` 复用终端的 SSH 长连接：同一台主机出现在多个面板时只采一份，GPU 数据由 `sshBridge/monitorGpuStats.cjs` 异步补齐，不拖慢主采样
+- 面板按 `MonitorPanelDemand`（面板可见性 + 主机集合）驱动启停，`application/state/monitorRuntimeStore.ts` 保存运行期读数、`monitorPanelsStorage.ts` 只保存配置（`netcatty_monitor_panels_v1`、`netcatty_monitor_table_columns_v1`、`netcatty_monitor_hidden_columns_v1`）；读数和趋势绝不持久化，面板配置作为 `monitorPanels` 实体参与现有云同步、导入导出与备份
+- 浏览器每个不受信任页面都跑在独立的 `WebContentsView` 里（无 Node、无 preload、无任何 Netcatty 桥），每个主机一个 session 分区，因此不同主机的 Cookie / localStorage / service worker 互不可见；页面视图创建时先挂死胡同代理，等 SSH + SOCKS5 就绪后才换成唯一的上游代理（没有 `DIRECT` 兜底），并显式去掉 Chromium 对 `localhost` 的隐式绕过
+- 主进程的 `HostBrowserManager` 为每个浏览器面板开一条临时 SSH 连接（沿用现有认证、known-host 策略与跳板链）和只绑 `127.0.0.1`、由系统分配端口的 SOCKS5 监听器，关闭面板即释放；WebRTC / UDP 与不支持的 scheme 直接拒绝，而不是悄悄走本地直连。书签是 id 化的独立同步实体（`domain/browserBookmark.ts`、`electron/hostBrowser/bookmarkStore.cjs`），旧 payload 缺少书签数组按「没有」处理，不会当成删除全部
+- FIDO2 走 OpenSSH 自己的 askpass / agent 协议：`electron/bridges/fidoAskpass.cjs` 解析 `confirm` / `verify-required` 提示并生成 PIN / 触摸对话框，`fidoAgentManager.cjs` 为每个调用方开专属 agent socket 以定位发起来源，`fidoSkHelper.cjs` 与 `patches/ssh2+1.17.0.patch` 负责 SK 签名帧与证书选择器；ssh2、Mosh、ET 共用这套 socket，所以窗口归属与恢复逻辑一致
+- 同步合并在原有三方合并（base 快照 + 字段指纹 + 墓碑）上增加 `preserveDeletions`：只有 base、本地、远端都不存在的实体才删除，`domain/syncStrategy.ts` 暴露为 `smartMergePreserve` 并串进 `providerSyncMethods` / `syncAllStorageMethods` / `useAutoSync` 的每个合并调用点；AI 会话按 id 组织成独立实体，`domain/convergentSync/payload.ts` 与 `application/convergentSyncMigration.ts` 负责旧 payload 的兼容迁移，是否上传由 `netcatty_cloud_sync_ai_sessions_v1` 开关决定
+- Catty 的 Anthropic 提示缓存改为按 provider 判定后显式打点（`infrastructure/ai/harness/cattyPromptCache.ts` + 策略门只在官方端点开启），跨步复用时不再打乱 cache-control 顺序，缓存命中的 token 通过 `infrastructure/ai/openAIChatCacheUsage.ts` 计入用量
+- 模型目录保留「上次可用」快照（路径经 `app.getPath` 解析、条目数有上限），list-models 返回 `source: 'live' | 'last-known-good'` 与 `fetchedAt`，渲染层缓存一并保存来源，预检缓存命中时原样回放；Copilot 的包装脚本按 `resolve` 结果生成到 Netcatty 托管临时目录，`windowsHide: true` 启动
+- 性能修复的共同手法是「先设界再测量、能走快路径就不进慢路径」：SFTP 面板用窗口上界替代整表测量、传输列表只挂可视行，搜索匹配对纯 ASCII 直接跳过拼音索引，同步指示器把多次变更合并成一次采集，分离编辑器把状态更新按 pane 隔离
+- 命令历史拆成 `application/state/commandHistoryStore.ts` 与 `composeBarHistoryStore.ts`，沿用旧键 `netcatty:commandHistory`，新增 `netcatty:commandHistoryCleared` 让 histfile 播种尊重「用户清空过」，清空动作通过窗口间广播保持一致
+- 透明度切换只记在 `lastNonFullOpacityRef`（会话内），绑定 `toggleOpacity`（⌘U / Ctrl+Shift+U）；输入法组字期间的按键被当作非激活输入，不会顺手切透明度
+- 打包侧把只给 Vite 用的库改为 devDependency（运行时由 bundle 提供），`scripts/afterPackMacUuid.cjs` 在打包后裁掉其它平台 / 架构的 node-pty、serialport 预编译产物，保留匹配的 universal 二进制与重建后的运行时文件
+
+### 已知限制
+- FIDO2 需要兼容的安全密钥与带 SK 支持的 OpenSSH；Linux 上用软件 SK provider 跑通了两种算法、证书、SFTP、转发的真实 OpenSSH 集成测试，真实 USB / CTAP 设备在 Windows / macOS 上仍需要真机验证；密码回退的前提是这台主机存过密码
+- 浏览器没有本地兜底：SSH 路由一断就是整面板的「连接不可用」，不会退回本机直连；回环 SOCKS5 监听器不带认证、也不排他（本机其它进程理论上可用），所以只绑 `127.0.0.1`、随面板关闭即释放；WebRTC / UDP 与不支持的 scheme 一律拒绝；macOS 已实机验收，Windows / Linux 的打包运行时验收仍在补
+- 监控读数与趋势只在本机内存里，不持久化也不同步（面板配置会同步），GPU 信息取决于主机是否提供，同时监控上限 256 台不同主机
+- AI 会话同步是可选开关，且只在已经开启云同步时生效；关闭后聊天记录照旧只在本机
+- #3682 的「归档链接预填 tar / zip 命令」在发布前被撤回：真实 SFTP 定位、自动执行的多行片段与粘贴控件会拿着旧文件名在已经切换过的目录里拼命令，因此这次不带该能力，链接点击回到原有行为，需求（#3269）仍开着
+
 ## [1.1.93] - 2026-10-15
 
 ### 功能
