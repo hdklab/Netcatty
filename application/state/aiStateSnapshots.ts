@@ -2,6 +2,7 @@ import { localStorageAdapter } from '../../infrastructure/persistence/localStora
 import {
   STORAGE_KEY_AI_ACTIVE_SESSION_MAP,
   STORAGE_KEY_AI_SESSIONS,
+  STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS,
 } from '../../infrastructure/config/storageKeys';
 import type {
   AIDraft,
@@ -47,18 +48,16 @@ export const AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE = 'netcatty:ai-panel-view-by-s
 export type DraftsByScope = Partial<Record<string, AIDraft>>;
 export type PanelViewByScope = Partial<Record<string, AIPanelView>>;
 
-export function cleanupSdkAgentSessions(sessionIds: string[]) {
+export async function cleanupSdkAgentSessions(sessionIds: string[]): Promise<void> {
   const bridge = getAIBridge();
   if (sessionIds.length === 0) return;
   const runtime = getAgentRuntime();
-  for (const sessionId of sessionIds) {
-    // `aiSdkAgentCleanup` aborts every in-flight stream of that chat, so a chat
-    // whose turn is still running must be left alone: the turn would die with an
-    // empty assistant message and its answer would never reach the panel. It is
-    // collected by a later pass, once the turn has settled.
-    if (runtime.hasActiveTurn(sessionId)) continue;
-    void bridge?.aiSdkAgentCleanup?.(sessionId).catch(() => {});
-  }
+  // `aiSdkAgentCleanup` aborts every in-flight stream of that chat, so a chat
+  // whose turn is still running must be left alone: the turn would die with an
+  // empty assistant message and its answer would never reach the panel. It is
+  // collected by a later pass, once the turn has settled.
+  const targets = sessionIds.filter((sessionId) => !runtime.hasActiveTurn(sessionId));
+  await Promise.all(targets.map((sessionId) => bridge?.aiSdkAgentCleanup?.(sessionId).catch(() => {})));
 }
 
 export function cleanupDeletedAIChatSessions(sessionIds: string[]) {
@@ -496,6 +495,11 @@ export function serializeSessionsForStorage(
  * could not be persisted even after escalation (it stays memory-only).
  */
 export function writeSessionsForStorage(sessions: AISession[]): boolean {
+  // Synced records are authoritative after restart: silently evicting a
+  // session or turn here would turn local retention into cloud deletion.
+  if (localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled) {
+    return localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, sessions);
+  }
   let previousLength = Number.POSITIVE_INFINITY;
   for (const configuredBudget of [MAX_SESSIONS_JSON_BYTES, ...RETRY_SESSIONS_JSON_BYTES]) {
     // A real quota failure means the next attempt must be smaller even when

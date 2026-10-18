@@ -1,3 +1,4 @@
+import { zhTWMonitorMessages } from './zh-TW/monitor';
 import type { Messages } from './types';
 import { zhTWCoreMessages } from './zh-TW/core';
 import { zhTWVaultMessages } from './zh-TW/vault';
@@ -10,6 +11,7 @@ import { zhTWWorkflowMessages } from './zh-TW/workflow';
 export type { Messages } from './types';
 
 const zhTW: Messages = {
+  ...zhTWMonitorMessages,
   ...zhTWCoreMessages,
   ...zhTWVaultMessages,
   ...zhTWTerminalMessages,

@@ -1,3 +1,4 @@
+import { ruMonitorMessages } from './ru/monitor';
 import type { Messages } from './types';
 import { ruCoreMessages } from './ru/core';
 import { ruVaultMessages } from './ru/vault';
@@ -10,6 +11,7 @@ import { ruWorkflowMessages } from './ru/workflow';
 export type { Messages } from './types';
 
 const ru: Messages = {
+  ...ruMonitorMessages,
   ...ruCoreMessages,
   ...ruVaultMessages,
   ...ruTerminalMessages,

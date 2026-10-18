@@ -186,6 +186,7 @@ export interface StepEndEvent extends AgentEventBase {
   modelId?: string;
   finishReason?: string;
   promptTokens: number;
+  cachedPromptTokens?: number;
   completionTokens: number;
   totalTokens: number;
 }

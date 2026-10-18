@@ -1,3 +1,4 @@
+import { enMonitorMessages } from './en/monitor';
 import type { Messages } from './types';
 import { enCoreMessages } from './en/core';
 import { enVaultMessages } from './en/vault';
@@ -10,6 +11,7 @@ import { enWorkflowMessages } from './en/workflow';
 export type { Messages } from './types';
 
 const en: Messages = {
+  ...enMonitorMessages,
   ...enCoreMessages,
   ...enVaultMessages,
   ...enTerminalMessages,

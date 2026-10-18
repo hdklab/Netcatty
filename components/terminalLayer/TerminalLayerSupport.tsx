@@ -697,6 +697,7 @@ const AIChatPanelInstance: React.FC<{
                     addDraftFiles={aiConfig.addDraftFiles}
                     removeDraftFile={aiConfig.removeDraftFile}
                     createSession={aiConfig.createSession}
+                    undoLastTurnInSession={aiConfig.undoLastTurnInSession}
                     deleteSession={aiConfig.deleteSession}
                     updateSessionTitle={aiConfig.updateSessionTitle}
                     updateSessionExternalSessionId={aiConfig.updateSessionExternalSessionId}
@@ -704,6 +705,7 @@ const AIChatPanelInstance: React.FC<{
                     updateLastMessage={aiConfig.updateLastMessage}
                     updateMessageById={aiConfig.updateMessageById}
                     persistContextCompaction={aiConfig.persistContextCompaction}
+                    forkSessionFromMessage={aiConfig.forkSessionFromMessage}
                     providers={aiConfig.providers}
                     activeProviderId={aiConfig.activeProviderId}
                     activeModelId={aiConfig.activeModelId}
@@ -1028,6 +1030,7 @@ export interface TerminalLayerProps {
   onAddKnownHost?: (knownHost: KnownHost) => void;
   onCommandExecuted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
   onDeleteShellHistoryEntry?: (entryId: string) => void;
+  onClearCommandHistory?: () => void;
   onTerminalDataCapture?: (sessionId: string, data: string) => void;
   onCreateWorkspaceFromSessions: (baseSessionId: string, joiningSessionId: string, hint: Exclude<SplitHint, null>) => void;
   onAddSessionToWorkspace: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
