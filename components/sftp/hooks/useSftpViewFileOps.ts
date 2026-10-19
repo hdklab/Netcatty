@@ -11,6 +11,7 @@ import { toast } from "../../ui/toast";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { getFileExtension, getLanguageId, FileOpenerType, SystemAppInfo } from "../../../lib/sftpFileUtils";
 import { isNavigableDirectory } from "../utils";
+import { resolveCrossPaneDownloadTarget } from "../crossPaneDownloadTarget";
 import { resolveDownloadSourceSnapshot } from "../../../application/state/sftp/downloadSourceSnapshot";
 import { reportSftpUploadResults } from "../reportSftpUploadResults";
 import { editorTabStore } from "../../../application/state/editorTabStore";
@@ -481,8 +482,32 @@ export const useSftpViewFileOps = ({
           return;
         }
 
-        // For remote SFTP files/directories, use transfer-center downloads
-        // (dedicated pool sessions via downloadToLocal).
+        // Downloading delivers the entry into the other pane's folder: this
+        // machine when that pane is local, a second remote host when both panes
+        // are remote. One rule covers both layouts, so no native picker appears
+        // while the opposite pane is usable.
+        const crossPaneTarget = resolveCrossPaneDownloadTarget(
+          side,
+          sftpRef.current.leftPane,
+          sftpRef.current.rightPane,
+        );
+        if (crossPaneTarget) {
+          await sftpRef.current.startTransfer(
+            [{ name: file.name, isDirectory }],
+            side,
+            crossPaneTarget.side,
+            {
+              sourceConnectionId: pane.connection.id,
+              sourcePath: fullPath ? getParentPath(fullPath) : pane.connection.currentPath,
+              targetPath: crossPaneTarget.directory,
+            },
+          );
+          return;
+        }
+
+        // No usable opposite pane (disconnected, reconnecting, or the same
+        // connection): fall back to transfer-center downloads (dedicated pool
+        // sessions via downloadToLocal) with the native pickers.
         if (!showSaveDialog || !getSftpIdForConnection) {
           toast.error(t("sftp.error.downloadFailed"), "SFTP");
           return;
@@ -681,6 +706,27 @@ export const useSftpViewFileOps = ({
           LOCAL_BLOB_DOWNLOAD_CONCURRENCY,
           async (file) => {
             await handleDownloadFileForSide(side, file);
+          },
+        );
+        return;
+      }
+
+      // Same rule as the single-file path: the whole selection is delivered into
+      // the opposite pane's folder — local or a second remote host.
+      const crossPaneTarget = resolveCrossPaneDownloadTarget(
+        side,
+        sftpRef.current.leftPane,
+        sftpRef.current.rightPane,
+      );
+      if (crossPaneTarget) {
+        await sftpRef.current.startTransfer(
+          files.map((entry) => ({ name: entry.name, isDirectory: isNavigableDirectory(entry) })),
+          side,
+          crossPaneTarget.side,
+          {
+            sourceConnectionId: pane.connection.id,
+            sourcePath: pane.connection.currentPath,
+            targetPath: crossPaneTarget.directory,
           },
         );
         return;
