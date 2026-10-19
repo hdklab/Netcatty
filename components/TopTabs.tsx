@@ -1,4 +1,4 @@
-import { Folder, FolderLock, Lock, Menu, MoreHorizontal, Plus, Settings, Sparkles, Workflow } from 'lucide-react';
+import { FolderLock, Lock, Menu, MoreHorizontal, Plus, Settings, Sparkles } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fromEditorTabId, isEditorTabId, toEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
 import { topTabsSessionsEqual } from '../domain/topTabsSessionsEqual';
@@ -1028,7 +1028,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           paddingRight: showWindowControls ? 0 : 12,
         }}
       >
-        {/* Fixed left tabs: Vaults and SFTP */}
+        {/* Fixed left tab: Vaults. SFTP and Workflows live in the vault sidebar nav. */}
         <div ref={fixedLeftTabsRef} className="flex items-end gap-0 flex-shrink-0 app-drag">
           <RootTopTab
             tabId="vault"
@@ -1037,23 +1037,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             className="rounded"
             compact={rootTabsCompact}
             shortcutNumber={tabShortcutNumbers?.get('vault')}
-          />
-          {showSftpTab && (
-            <RootTopTab
-              tabId="sftp"
-              label={t('terminal.layer.sftp')}
-              icon={<Folder size={14} />}
-              className="rounded-t-md"
-              compact={rootTabsCompact}
-              shortcutNumber={tabShortcutNumbers?.get('sftp')}
-            />
-          )}
-          <RootTopTab
-            tabId="workflows"
-            label={t('workflow.title')}
-            icon={<Workflow size={14} />}
-            className="rounded-t-md"
-            compact={rootTabsCompact}
           />
         </div>
 

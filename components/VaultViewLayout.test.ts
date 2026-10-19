@@ -4,6 +4,31 @@ import test from "node:test";
 
 const vaultViewLayoutSource = readFileSync(new URL("./vault/VaultViewLayout.tsx", import.meta.url), "utf8");
 const pluginImporterCommitHookSource = readFileSync(new URL("../application/state/usePluginImporterCommit.ts", import.meta.url), "utf8");
+const topTabsSource = readFileSync(new URL("./TopTabs.tsx", import.meta.url), "utf8");
+
+test("file transfer and workflows entries live in the vault sidebar, not the top tab bar", () => {
+  assert.doesNotMatch(topTabsSource, /tabId="sftp"/);
+  assert.doesNotMatch(topTabsSource, /tabId="workflows"/);
+  assert.match(topTabsSource, /tabId="vault"/);
+
+  // Both entries stay root-view switches, so they reuse the existing root tab ids.
+  assert.match(vaultViewLayoutSource, /activeTabStore\.setActiveTabId\("sftp"\)/);
+  assert.match(vaultViewLayoutSource, /activeTabStore\.setActiveTabId\("workflows"\)/);
+  // Same collapsed-sidebar rule as the other nav items: hidden label, tooltip only.
+  assert.match(vaultViewLayoutSource, /\{!sidebarCollapsed && t\("terminal\.layer\.sftp"\)\}/);
+  assert.match(vaultViewLayoutSource, /\{!sidebarCollapsed && t\("workflow\.title"\)\}/);
+  assert.match(vaultViewLayoutSource, /<Folder size=\{16\} className="flex-shrink-0" \/>/);
+  assert.match(vaultViewLayoutSource, /<Workflow size=\{16\} className="flex-shrink-0" \/>/);
+
+  // Order: right under "Hosts", before Monitor.
+  const hostsIndex = vaultViewLayoutSource.indexOf('t("vault.nav.hosts")');
+  const sftpIndex = vaultViewLayoutSource.indexOf('activeTabStore.setActiveTabId("sftp")');
+  const workflowIndex = vaultViewLayoutSource.indexOf('activeTabStore.setActiveTabId("workflows")');
+  const monitorIndex = vaultViewLayoutSource.indexOf("<MonitorNavButton");
+  assert.ok(hostsIndex > 0 && hostsIndex < sftpIndex, "SFTP entry follows the hosts nav item");
+  assert.ok(sftpIndex < workflowIndex, "workflows entry follows the file transfer entry");
+  assert.ok(workflowIndex < monitorIndex, "both entries sit above Monitor");
+});
 
 test("vault stage aligns its content to the top tab bar", () => {
   assert.match(vaultViewLayoutSource, /className="flex min-w-0 flex-1 py-0 pr-2 pb-2 pl-0"/);

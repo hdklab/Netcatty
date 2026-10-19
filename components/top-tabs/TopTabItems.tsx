@@ -392,7 +392,7 @@ export const ActiveTabAutoScroller: React.FC<ActiveTabAutoScrollerProps> = memo(
   const activeTabId = useActiveTabId();
 
   useLayoutEffect(() => {
-    if (!activeTabId || activeTabId === 'vault' || activeTabId === 'sftp') return;
+    if (!activeTabId || activeTabId === 'vault' || activeTabId === 'sftp' || activeTabId === 'workflows') return;
     const container = tabsContainerRef.current;
     if (!container) return;
 

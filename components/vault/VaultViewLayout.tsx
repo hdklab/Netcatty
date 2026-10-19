@@ -29,6 +29,9 @@ import { LazyLoadBoundary } from "../ui/lazy-load-boundary";
 import { toast } from "../ui/toast";
 import { AppWordmark } from "../AppWordmark";
 import { openHostBrowser } from "../../application/hostBrowser";
+import { Folder, Workflow } from "lucide-react";
+import { activeTabStore } from "../../application/state/activeTabStore";
+import { useSettingsChromeStore } from "../../application/state/settingsChromeStore";
 
 type VaultViewLayoutContext = Record<string, any>;
 
@@ -129,6 +132,9 @@ function VaultConnectionLogsSection({
 }
 
 export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
+  // Standalone SFTP entry mirrors the old top tab: the setting still decides
+  // whether that root view is reachable at all.
+  const { showSftpTab } = useSettingsChromeStore();
   const {
     Activity,
     allGroupPaths,
@@ -621,6 +627,54 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
               {sidebarCollapsed && (
                 <TooltipContent side="right">
                   {t("vault.nav.hosts")}
+                </TooltipContent>
+              )}
+            </Tooltip>
+            {/* Root-view entries that used to live in the top tab bar. They are
+                not vault sections: clicking swaps the active root tab. */}
+            {showSftpTab && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <RippleButton
+                    variant="ghost"
+                    className={cn(
+                      "w-full h-10",
+                      sidebarCollapsed
+                        ? "justify-center p-0"
+                        : "justify-start gap-3",
+                    )}
+                    onClick={() => activeTabStore.setActiveTabId("sftp")}
+                  >
+                    <Folder size={16} className="flex-shrink-0" />
+                    {!sidebarCollapsed && t("terminal.layer.sftp")}
+                  </RippleButton>
+                </TooltipTrigger>
+                {sidebarCollapsed && (
+                  <TooltipContent side="right">
+                    {t("terminal.layer.sftp")}
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            )}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <RippleButton
+                  variant="ghost"
+                  className={cn(
+                    "w-full h-10",
+                    sidebarCollapsed
+                      ? "justify-center p-0"
+                      : "justify-start gap-3",
+                  )}
+                  onClick={() => activeTabStore.setActiveTabId("workflows")}
+                >
+                  <Workflow size={16} className="flex-shrink-0" />
+                  {!sidebarCollapsed && t("workflow.title")}
+                </RippleButton>
+              </TooltipTrigger>
+              {sidebarCollapsed && (
+                <TooltipContent side="right">
+                  {t("workflow.title")}
                 </TooltipContent>
               )}
             </Tooltip>
