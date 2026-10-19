@@ -248,9 +248,14 @@ const TextEditorModal: React.FC<TextEditorModalProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
+      {/* Esc belongs to the editor: Monaco's find widget / suggest popup and Vim's
+          NORMAL mode all consume it, and Radix's default would close the whole
+          file instead (dropping the cursor/scroll state). The header X,
+          Cmd/Ctrl+W and the window close button still close the editor. */}
       <DialogContent
         className="max-w-5xl h-[85vh] flex flex-col p-0 gap-0"
         hideCloseButton
+        onEscapeKeyDown={(event) => event.preventDefault()}
       >
         {/* Radix requires a DialogTitle inside every DialogContent for a11y.
             The Pane's own header already shows the filename visually, so we
