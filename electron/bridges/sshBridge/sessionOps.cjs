@@ -190,6 +190,7 @@ function createSessionOpsApi(ctx) {
           openingTimeoutMs: 5000,
           runTimeoutMs: 5000,
           maxOutputBytes: 256 * 1024,
+          invalidateOnOpenTimeout: !session.conn,
         });
         return { success: true, stdout, stderr };
       } catch (err) {
@@ -307,6 +308,7 @@ function createSessionOpsApi(ctx) {
           openingTimeoutMs: 8000,
           runTimeoutMs: 8000,
           maxOutputBytes: 10 * 1024 * 1024,
+          invalidateOnOpenTimeout: !session.conn,
         });
         return { success: true, ...parse(stdout) };
       } catch (err) {
@@ -745,7 +747,10 @@ function createSessionOpsApi(ctx) {
     home=$(id -P 2>/dev/null | awk -F: 'NR == 1 { print $9; exit }')
     emit_home "$home"
     emit_home "$HOME"
-    exit 1`;
+    exit 1`.replace(/^[ \t]*#[^\n]*\n/gm, "");
+        // Omit explanatory comments before quoting this static probe. Dropbear
+        // closes the entire transport for exec requests over 9000 bytes (#3731).
+        // Preserve the directory checks above to avoid regressing #3493.
         // Capture sshd's pid in the exec'd POSIX sh (`$PPID` is sshd because
         // `exec` replaced the login shell). Do not `exec` the inner posixScript:
         // that would skip the watchdog cleanup after it.
@@ -757,14 +762,14 @@ function createSessionOpsApi(ctx) {
         )}`;
 
         void executeBoundedSshCommand(session.conn, cmd, {
-          // Do not shorten channel opening: a timeout there invalidates the
-          // shared SSH transport. Only bound the best-effort command itself.
+          // Directory tracking is auxiliary work on the terminal transport.
+          // Preserve it on a slow open; the executor fences further probes.
           openingTimeoutMs: 5000,
           runTimeoutMs: timeoutMs,
           maxOutputBytes: 256 * 1024,
           setTimeoutFn: setTimeout,
           clearTimeoutFn: clearTimeout,
-          invalidateOnOpenTimeout: !isTargetedRecovery,
+          invalidateOnOpenTimeout: false,
         }).then(({ stdout, stderr, code }) => {
               if (!isCurrentPwdOwner()) {
                 settle({ success: false, error: 'Session changed during cwd probe' });
@@ -1015,6 +1020,7 @@ function createSessionOpsApi(ctx) {
           openingTimeoutMs: 3000,
           runTimeoutMs: 3000,
           maxOutputBytes: 1024 * 1024,
+          invalidateOnOpenTimeout: false,
         }).then(({ stdout, stderr: errOut }) => {
             if (settled) return;
             try {
@@ -1349,6 +1355,9 @@ function createSessionOpsApi(ctx) {
       const statsExecOptions = {
         signal: session.statsSignal,
         invalidateTransportOnAbort: false,
+        // Preserve shared terminal transports; dedicated Mosh/ET companions
+        // still need timeout teardown so their existing recovery can reconnect.
+        invalidateOnOpenTimeout: !session.conn,
         openingTimeoutMs: statsRunTimeoutMs,
         runTimeoutMs: statsRunTimeoutMs,
         maxOutputBytes: 1024 * 1024,
