@@ -15,7 +15,6 @@ import type { DynamicTabTitleMode, KeyBinding, TerminalTabDoubleClickBehavior } 
 
 import { getTopTabInsertionTarget, getWorkspaceSessionDragId, hasWorkspaceSessionDrag } from '../application/state/terminalDragData';
 import {
-  useTerminalHostTreeLayoutWidth,
   useTerminalHostTreeOpen,
   useToggleTerminalHostTree,
 } from '../application/state/terminalHostTreeStore';
@@ -56,8 +55,44 @@ const dragRegionNoSelect = { WebkitAppRegion: 'drag', userSelect: 'none' } as Re
 const noDragRegionStyle = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
 const emptyTabStyle: React.CSSProperties = {};
 
-export function computeHostTreeTabGutter(hostTreeLayoutWidth: number, toggleRight: number): number {
-  return Math.max(0, hostTreeLayoutWidth - toggleRight);
+/** Gap between the fixed Vaults root tab and the work-tab strip. */
+export const WORK_TAB_STRIP_GAP_PX = 8;
+/** Gap between the last work tab and the quick-switcher "+" button. */
+export const WORK_TAB_PLUS_GAP_PX = 4;
+
+const TERMINAL_CONTENT_COLUMN_SELECTOR = '[data-section="terminal-workspace-column"]';
+
+/**
+ * Gutter that pushes the work-tab strip until its left edge lines up with the
+ * terminal main content area.
+ *
+ * `stripNaturalLeft` is where the strip rests with a zero gutter: the right edge
+ * of the host-tree toggle slot, i.e. after the fixed root tab plus
+ * WORK_TAB_STRIP_GAP_PX. Full-bleed content (host tree collapsed, content left
+ * at the top-tabs root) therefore keeps the gutter at 0 and the strip simply
+ * sits right after the root tab instead of being pulled underneath it.
+ */
+export function computeWorkTabStripGutter(contentLeft: number, stripNaturalLeft: number): number {
+  if (!Number.isFinite(contentLeft) || !Number.isFinite(stripNaturalLeft)) return 0;
+  return Math.max(0, contentLeft - stripNaturalLeft);
+}
+
+/**
+ * Left edge of the live terminal content column relative to the top-tabs root.
+ * Returns null when no laid-out terminal surface exists (no terminal mounted),
+ * which leaves the gutter at 0 for views without a terminal.
+ */
+export function measureTerminalContentLeft(root: Element | null): number | null {
+  if (!root) return null;
+  const columns = root.ownerDocument.querySelectorAll(TERMINAL_CONTENT_COLUMN_SELECTOR);
+  const rootLeft = root.getBoundingClientRect().left;
+  for (let index = 0; index < columns.length; index += 1) {
+    const rect = columns[index].getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      return rect.left - rootLeft;
+    }
+  }
+  return null;
 }
 
 export function shouldShowHostTreeToggle({
@@ -254,7 +289,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     });
   }, [hotkeyScheme, showTabNumberBadges, showSftpTab, shellOnlyTabNumberShortcuts, shortcutModifierHeld, orderedTabs, editorTabs]);
   const isHostTreeOpen = useTerminalHostTreeOpen();
-  const hostTreeLayoutWidth = useTerminalHostTreeLayoutWidth();
   const toggleHostTree = useToggleTerminalHostTree();
   const activeTabId = useActiveTabId();
   // Presentation (dynamic title / coding-CLI icon) is applied per-tab inside
@@ -453,8 +487,8 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   const updateHostTreeTabGutter = useCallback((options?: { deferClose?: boolean }) => {
     if (hostTreeGutterExiting) return;
 
-    if (!effectiveShowHostTreeToggle || hostTreeLayoutWidth <= 0) {
-      if (!effectiveShowHostTreeToggle && options?.deferClose) {
+    if (!effectiveShowHostTreeToggle) {
+      if (options?.deferClose) {
         if (hostTreeGutterCloseRafRef.current !== null) {
           window.cancelAnimationFrame(hostTreeGutterCloseRafRef.current);
         }
@@ -472,34 +506,54 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
       hostTreeGutterCloseRafRef.current = null;
     }
     const root = tabsContainerRef.current?.closest('[data-top-tabs-root]') as HTMLElement | null;
-    const toggleSlot = hostTreeToggleSlotRef.current;
-    if (!root || !toggleSlot) {
-      setHostTreeTabGutter(Math.max(0, hostTreeLayoutWidth));
+    if (!root) {
+      setHostTreeTabGutter(0);
       return;
     }
+    // Measure instead of assuming the terminal content starts at the stored
+    // host-tree width: the content column is the source of truth, and it stays
+    // pinned to the viewport's left edge while the host tree is collapsed.
     const rootLeft = root.getBoundingClientRect().left;
-    const toggleRight = toggleSlot.getBoundingClientRect().right - rootLeft;
-    setHostTreeTabGutter(computeHostTreeTabGutter(hostTreeLayoutWidth, toggleRight));
-  }, [effectiveShowHostTreeToggle, hostTreeGutterExiting, hostTreeLayoutWidth]);
+    const toggleSlot = hostTreeToggleSlotRef.current;
+    const stripNaturalLeft = toggleSlot
+      ? toggleSlot.getBoundingClientRect().right - rootLeft
+      : Math.max(0, (fixedLeftTabsRef.current?.getBoundingClientRect().right ?? rootLeft) - rootLeft)
+        + WORK_TAB_STRIP_GAP_PX;
+    const contentLeft = measureTerminalContentLeft(root);
+    setHostTreeTabGutter(
+      contentLeft === null ? 0 : computeWorkTabStripGutter(contentLeft, stripNaturalLeft),
+    );
+  }, [effectiveShowHostTreeToggle, hostTreeGutterExiting]);
 
   const updateHostTreeTabGutterRef = useRef(updateHostTreeTabGutter);
   updateHostTreeTabGutterRef.current = updateHostTreeTabGutter;
 
   useLayoutEffect(() => {
-    updateHostTreeTabGutter({ deferClose: true });
-  }, [hostTreeLayoutWidth, updateHostTreeTabGutter]);
-
-  useLayoutEffect(() => {
-    const syncGutter = () => updateHostTreeTabGutterRef.current();
+    const root = tabsContainerRef.current?.closest('[data-top-tabs-root]') as HTMLElement | null;
+    let observedColumn: Element | null = null;
+    // The terminal content column is the alignment target; re-measure whenever its
+    // own box moves (host tree slide, focus sidebar, side panel, AI sidebar drag)
+    // and re-register when the terminal layer remounts.
+    function observeContentColumn() {
+      const column = root?.ownerDocument.querySelector(TERMINAL_CONTENT_COLUMN_SELECTOR) ?? null;
+      if (!column || column === observedColumn) return;
+      if (observedColumn) ro.unobserve(observedColumn);
+      observedColumn = column;
+      ro.observe(column);
+    }
+    function syncGutter() {
+      observeContentColumn();
+      updateHostTreeTabGutterRef.current();
+    }
+    const ro = new ResizeObserver(() => syncGutter());
     updateHostTreeTabGutterRef.current({ deferClose: true });
     const rafId = window.requestAnimationFrame(() => syncGutter());
     const settleTimer = window.setTimeout(syncGutter, 320);
-    const root = tabsContainerRef.current?.closest('[data-top-tabs-root]') as HTMLElement | null;
-    const ro = new ResizeObserver(() => syncGutter());
     if (root) ro.observe(root);
     if (fixedLeftTabsRef.current) ro.observe(fixedLeftTabsRef.current);
     if (tabsContainerRef.current) ro.observe(tabsContainerRef.current);
     if (hostTreeToggleSlotRef.current) ro.observe(hostTreeToggleSlotRef.current);
+    observeContentColumn();
     window.addEventListener('resize', syncGutter);
     return () => {
       window.cancelAnimationFrame(rafId);
@@ -1040,6 +1094,13 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           />
         </div>
 
+        {/* Breathing room between the fixed root tab and the work-tab strip. */}
+        <div
+          className="flex-shrink-0 self-end app-drag"
+          style={{ ...dragRegionStyle, width: WORK_TAB_STRIP_GAP_PX }}
+          aria-hidden
+        />
+
         {/* Scrollable tabs container with fade masks */}
         <div
           className="relative min-w-0 flex-1 flex app-drag"
@@ -1140,7 +1201,10 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
                       size="icon"
                       data-section="top-tabs-quick-switcher-toggle"
                       className="h-7 w-7 flex-shrink-0 app-no-drag mb-0 rounded-none"
-                      style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
+                      style={{
+                        color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
+                        marginLeft: WORK_TAB_PLUS_GAP_PX,
+                      }}
                       onClick={onOpenQuickSwitcher}
                     >
                       <Plus size={14} />

@@ -17,7 +17,10 @@ Object.defineProperty(globalThis, "requestAnimationFrame", {
 });
 
 const {
-  computeHostTreeTabGutter,
+  WORK_TAB_PLUS_GAP_PX,
+  WORK_TAB_STRIP_GAP_PX,
+  computeWorkTabStripGutter,
+  measureTerminalContentLeft,
   resolveWorkspaceSessionTabDropTarget,
   shouldKeepHostTreeToggleSurface,
   shouldShowHostTreeToggle,
@@ -56,12 +59,63 @@ const externalMcpToggleSource = readFileSync(new URL("../application/state/useEx
 const zhTwAiSource = readFileSync(new URL("../application/i18n/locales/zh-TW/ai.ts", import.meta.url), "utf8");
 const terminalViewSource = readFileSync(new URL("./terminal/TerminalView.tsx", import.meta.url), "utf8");
 
-test("host tree tab gutter fills the remaining sidebar width", () => {
-  assert.equal(computeHostTreeTabGutter(280, 120), 160);
+test("work tab strip gutter lines the strip up with the terminal content edge", () => {
+  // Preview profile, host tree open: terminal content starts at 184px and the
+  // strip rests at 78px (vault tab 12..42, 8px gap, 28px toggle slot).
+  assert.equal(computeWorkTabStripGutter(184, 78), 106);
 });
 
-test("host tree tab gutter never goes negative", () => {
-  assert.equal(computeHostTreeTabGutter(120, 280), 0);
+test("work tab strip gutter never pulls the strip past its natural left", () => {
+  // Host tree collapsed: the terminal content is full-bleed at 0, so the strip
+  // stays right after the vault tab instead of sliding under it.
+  assert.equal(computeWorkTabStripGutter(0, 78), 0);
+  assert.equal(computeWorkTabStripGutter(Number.NaN, 78), 0);
+});
+
+test("work tab strip gutter is measured from the terminal content column", () => {
+  assert.match(topTabsSource, /data-section="terminal-workspace-column"/);
+  assert.match(topTabsSource, /measureTerminalContentLeft\(root\)/);
+  assert.match(topTabsSource, /computeWorkTabStripGutter\(contentLeft, stripNaturalLeft\)/);
+  // The host-tree width alone is no longer the gutter source of truth.
+  assert.doesNotMatch(topTabsSource, /computeHostTreeTabGutter/);
+  assert.doesNotMatch(topTabsSource, /useTerminalHostTreeLayoutWidth/);
+});
+
+test("measureTerminalContentLeft reads the laid-out content column, not the host tree width", () => {
+  const rect = (left: number, width: number) => ({
+    left,
+    right: left + width,
+    width,
+    height: 600,
+    top: 0,
+    bottom: 600,
+    x: left,
+    y: 0,
+  });
+  const root = (columnRects: Array<{ left: number; width: number }>) => ({
+    ownerDocument: {
+      querySelectorAll: () => columnRects.map((columnRect) => ({
+        getBoundingClientRect: () => rect(columnRect.left, columnRect.width),
+      })),
+    },
+    getBoundingClientRect: () => rect(0, 1268),
+  }) as unknown as Element;
+
+  // Tree open, preview profile: the column starts 184px from the top-tabs root.
+  assert.equal(measureTerminalContentLeft(root([{ left: 184, width: 1084 }])), 184);
+  // A collapsed/hibernated column with no box is skipped for the live one.
+  assert.equal(measureTerminalContentLeft(root([{ left: 0, width: 0 }, { left: 184, width: 1084 }])), 184);
+  // No terminal surface at all -> no measurement, caller keeps the gutter at 0.
+  assert.equal(measureTerminalContentLeft(root([])), null);
+  assert.equal(measureTerminalContentLeft(null), null);
+  assert.match(topTabsSource, /contentLeft === null \? 0 : computeWorkTabStripGutter/);
+});
+
+test("vault root tab and the plus button keep their breathing room", () => {
+  assert.ok(WORK_TAB_STRIP_GAP_PX >= 8);
+  assert.ok(WORK_TAB_PLUS_GAP_PX >= 4);
+  assert.match(topTabsSource, /width: WORK_TAB_STRIP_GAP_PX/);
+  assert.match(topTabsSource, /marginLeft: WORK_TAB_PLUS_GAP_PX/);
 });
 
 test("host tree tab surface stays mounted when root pages are active", () => {
