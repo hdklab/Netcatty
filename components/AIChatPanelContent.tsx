@@ -112,6 +112,8 @@ interface AIChatPanelContentProps {
   parked?: boolean;
   /** Disable header transitions while send preflight is in flight. */
   sending?: boolean;
+  /** Optional slot rendered directly above the composer (agent todo panel). */
+  todoPanel?: React.ReactNode;
 }
 
 export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
@@ -188,6 +190,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   onOpenVaultSection,
   parked = false,
   sending = false,
+  todoPanel,
 }) => {
   const mentionHosts = React.useMemo(
     () => terminalSessions.map((session) => ({
@@ -390,6 +393,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                     {t('ai.chat.loadingModels')}
                   </div>
                 ) : null}
+                {todoPanel}
                 <ChatInput
                   parked={parked}
                   value={inputValue}

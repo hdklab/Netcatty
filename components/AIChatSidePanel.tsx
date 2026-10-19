@@ -99,6 +99,8 @@ import {
   type SdkRuntimeModelCatalogSource,
 } from './AIChatSidePanelHelpers';
 import { AIChatPanelContent } from './AIChatPanelContent';
+import AgentTodoPanel from './ai/AgentTodoPanel';
+import { clearAgentTodo, useAgentTodo } from '../infrastructure/ai/harness/agentTodoStore';
 import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from './terminalLayer/terminalSidePanelChrome';
 import {
   getAIPanelProfilerProps,
@@ -444,6 +446,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     [normalizedPanelView, historySessions],
   );
   const activeSessionId = normalizedPanelView.mode === 'session' ? normalizedPanelView.sessionId : null;
+  // Live todo list published by `manage_todo_list` for the active chat session.
+  const agentTodo = useAgentTodo(activeSessionId);
   const isStreaming = activeSessionId ? streamingSessionIds.has(activeSessionId) : false;
 
   // Composer safety net: the Send/Stop button reads the shared streaming set,
@@ -2094,6 +2098,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       }
 
       deleteSession(sessionId, scopeKey);
+      // Turn-scoped todo state must not outlive the chat that produced it.
+      clearAgentTodo(sessionId);
 
       if (deletingActiveSession || deletingLastScopedSession) {
         setShowHistory(false);
@@ -2142,6 +2148,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         parked={!isVisible}
         sending={isSending || isUndoingLastTurn}
         t={t}
+        todoPanel={<AgentTodoPanel todos={agentTodo} t={t} />}
         currentAgentId={currentAgentId}
         externalAgents={externalAgents}
         discoveredAgents={discoveredAgents}

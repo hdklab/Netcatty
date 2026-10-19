@@ -179,7 +179,7 @@ test("listCattyToolSpecs includes renderer harness tools and the shared terminal
   const specs = listCattyToolSpecs();
   assert.ok(specs.length >= 40);
   const harness = specs.filter((spec) => spec.capabilityId.startsWith("harness."));
-  assert.equal(harness.length, 6);
+  assert.equal(harness.length, 7);
   for (const spec of harness) {
     const screenRead = spec.capabilityId === "harness.terminal.read_context";
     assert.equal(spec.localExecution, !screenRead);
@@ -189,6 +189,7 @@ test("listCattyToolSpecs includes renderer harness tools and the shared terminal
   assert.ok(harnessIds.includes("harness.tool_output.read"));
   assert.ok(harnessIds.includes("harness.workspace.get_info"));
   assert.ok(harnessIds.includes("harness.terminal.read_context"));
+  assert.ok(harnessIds.includes("harness.todo.manage"));
 });
 
 test("only terminal reading is exposed from harness on MCP", () => {

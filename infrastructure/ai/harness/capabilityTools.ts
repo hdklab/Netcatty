@@ -38,6 +38,8 @@ import {
   type CattyToolContext,
 } from './cattyRuntimeContext';
 import { normalizeFtpUploadFiles } from '../../../lib/ftpDragDrop';
+import { AGENT_TODO_STATUSES, validateTodoList } from './agentTodo';
+import { setAgentTodo } from './agentTodoStore';
 
 type FieldShape = {
   type: string;
@@ -66,13 +68,56 @@ export type CattyToolsBundle = {
 function buildZodObject(shape: Record<string, FieldShape>): z.ZodObject<Record<string, z.ZodTypeAny>> {
   const entries: Record<string, z.ZodTypeAny> = {};
   for (const [key, field] of Object.entries(shape)) {
-    let schema: z.ZodTypeAny = field.type === 'number' ? z.number() : z.string();
+    let schema: z.ZodTypeAny;
+    if (field.type === 'number') {
+      schema = z.number();
+    } else if (field.type === 'array') {
+      // The generated shape only carries scalar types; tools with structured
+      // arrays supply their own schema through buildCatalogInputSchema.
+      schema = z.array(z.unknown());
+    } else {
+      schema = z.string();
+    }
     if (field.description) {
       schema = schema.describe(field.description);
     }
     entries[key] = field.optional ? schema.optional() : schema;
   }
   return z.object(entries);
+}
+
+/**
+ * `manage_todo_list` takes an array of objects, which the generated input shape
+ * cannot express (it keeps only scalar types). Declare the full model-facing
+ * schema here; the semantic rules live in `validateTodoList`.
+ */
+const manageTodoListInputSchema: z.ZodObject<Record<string, z.ZodTypeAny>> = z.object({
+  todoList: z
+    .array(
+      z.object({
+        id: z
+          .number()
+          .int()
+          .nonnegative()
+          .describe('Unique identifier for the todo. Use sequential numbers starting from 1.'),
+        title: z
+          .string()
+          .describe('Concise action-oriented todo label (3-7 words). Displayed in the UI.'),
+        status: z
+          .enum(AGENT_TODO_STATUSES)
+          .describe(
+            'not-started: not begun | in-progress: currently working (max 1) | completed: fully finished with no blockers',
+          ),
+      }),
+    )
+    .describe('Complete array of all todo items. Must include ALL items - both existing and new.'),
+});
+
+function buildCatalogInputSchema(spec: CattyToolSpec): z.ZodObject<Record<string, z.ZodTypeAny>> {
+  if (spec.capabilityId === 'harness.todo.manage') {
+    return manageTodoListInputSchema;
+  }
+  return buildZodObject(spec.inputShape);
 }
 
 function unwrap<T>(r: ToolExecResult<T>): T | { error: string } {
@@ -140,7 +185,7 @@ function fitCapabilityResultForModel(
   args?: Record<string, unknown>,
   toolResultDedup?: ToolResultDedup,
 ): unknown {
-  if (spec.capabilityId === 'harness.tool_output.read') {
+  if (spec.capabilityId === 'harness.tool_output.read' || spec.capabilityId === 'harness.todo.manage') {
     return result;
   }
 
@@ -392,6 +437,19 @@ async function executeLocalCattyCapability(ctx: LocalExecutionContext): Promise<
         ? applyToolDedup(spec.toolName, fingerprint, normalizedResult, toolResultDedup)
         : normalizedResult;
     }
+    case 'harness.todo.manage': {
+      // The todo list is per chat session UI state; without a session there is
+      // nowhere to publish it, so report a normal tool error instead of throwing.
+      if (!chatSessionId) {
+        return { ok: false, error: 'manage_todo_list requires an active chat session.' };
+      }
+      const validation = validateTodoList(args);
+      if ('error' in validation) {
+        return { ok: false, error: validation.error };
+      }
+      setAgentTodo(chatSessionId, validation.todoList);
+      return { ok: true, todoList: validation.todoList };
+    }
     case 'harness.web.search': {
       const { query, maxResults } = args as { query: string; maxResults?: number };
       return unwrap(await executeWebSearch(deps, { query, maxResults }));
@@ -435,7 +493,7 @@ export function resolveSessionQueueKeyForTests(
 }
 
 function createCatalogTool(spec: CattyToolSpec) {
-  const inputSchema = buildZodObject(spec.inputShape);
+  const inputSchema = buildCatalogInputSchema(spec);
 
   return tool({
     description: spec.description,

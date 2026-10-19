@@ -8,6 +8,8 @@ import {
 import { ToolOutputStore } from './toolOutputStore';
 import { buildTerminalWriteFingerprint, ToolResultDedup } from './toolResultDedup';
 import { collectPreservedTerminalWriteFingerprints } from './turnDrivers/cattyMessageBuilder';
+import { clearAgentTodo, getAgentTodo, setAgentTodo } from './agentTodoStore';
+import type { NetcattyBridge } from '../cattyAgent/executor';
 
 describe('capabilityTools session queue keys', () => {
   it('does not queue read-only harness tools behind terminal session writes', () => {
@@ -639,5 +641,105 @@ describe('capabilityTools terminal polling', () => {
     const result = await poll.execute({ jobId: 'quiet-monitor-job', offset: 0 }) as { output: string };
 
     assert.equal(result.output, 'first new line');
+  });
+});
+
+describe('capabilityTools manage_todo_list', () => {
+  const CHAT_SESSION = 'chat-todo-list-test';
+
+  function createTodoTools(chatSessionId: string | undefined = CHAT_SESSION) {
+    return createCattyToolsFromCatalog(
+      {} as NetcattyBridge,
+      { sessions: [] },
+      [],
+      'auto',
+      undefined,
+      chatSessionId,
+    );
+  }
+
+  it('publishes a validated todo list for the chat session', async () => {
+    clearAgentTodo(CHAT_SESSION);
+    const { tools, toolsContext } = createTodoTools();
+
+    const result = await withCattyToolContext(
+      tools.manage_todo_list,
+      toolsContext.manage_todo_list,
+      'call-todo',
+    ).execute({
+      todoList: [
+        { id: 1, title: 'Inspect the workspace', status: 'completed' },
+        { id: 2, title: 'Patch the handler', status: 'in-progress' },
+        { id: 3, title: 'Run scoped tests', status: 'not-started' },
+      ],
+    });
+
+    assert.deepEqual(result, {
+      ok: true,
+      todoList: [
+        { id: 1, title: 'Inspect the workspace', status: 'completed' },
+        { id: 2, title: 'Patch the handler', status: 'in-progress' },
+        { id: 3, title: 'Run scoped tests', status: 'not-started' },
+      ],
+    });
+    assert.deepEqual(getAgentTodo(CHAT_SESSION), [
+      { id: 1, title: 'Inspect the workspace', status: 'completed' },
+      { id: 2, title: 'Patch the handler', status: 'in-progress' },
+      { id: 3, title: 'Run scoped tests', status: 'not-started' },
+    ]);
+
+    clearAgentTodo(CHAT_SESSION);
+  });
+
+  it('returns a validation error instead of throwing and keeps the previous list', async () => {
+    clearAgentTodo(CHAT_SESSION);
+    setAgentTodo(CHAT_SESSION, [{ id: 9, title: 'Existing task', status: 'not-started' }]);
+    const { tools, toolsContext } = createTodoTools();
+    const todoTool = withCattyToolContext(
+      tools.manage_todo_list,
+      toolsContext.manage_todo_list,
+    );
+
+    const twoInProgress = await todoTool.execute({
+      todoList: [
+        { id: 1, title: 'First task', status: 'in-progress' },
+        { id: 2, title: 'Second task', status: 'in-progress' },
+      ],
+    });
+    assert.deepEqual(twoInProgress, {
+      ok: false,
+      error: 'Only one item may be "in-progress" at a time.',
+    });
+
+    const notAnArray = await todoTool.execute({ todoList: 'nope' });
+    assert.equal((notAnArray as { ok: boolean }).ok, false);
+    assert.match((notAnArray as { error: string }).error, /must be an array/);
+
+    assert.deepEqual(getAgentTodo(CHAT_SESSION), [
+      { id: 9, title: 'Existing task', status: 'not-started' },
+    ]);
+    clearAgentTodo(CHAT_SESSION);
+  });
+
+  it('returns an error when there is no chat session to publish to', async () => {
+    const { tools, toolsContext } = createCattyToolsFromCatalog(
+      {} as NetcattyBridge,
+      { sessions: [] },
+      [],
+      'auto',
+      undefined,
+      undefined,
+    );
+    const result = await withCattyToolContext(
+      tools.manage_todo_list,
+      toolsContext.manage_todo_list,
+    ).execute({
+      todoList: [{ id: 1, title: 'First task', status: 'not-started' }],
+    });
+
+    assert.deepEqual(result, {
+      ok: false,
+      error: 'manage_todo_list requires an active chat session.',
+    });
   });
 });

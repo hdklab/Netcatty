@@ -29,6 +29,9 @@ import { ToolCall } from '../ai-elements/tool-call';
 import ThinkingBlock from './ThinkingBlock';
 import AgentActivityGroup from './AgentActivityGroup';
 import ToolCallGroup from './ToolCallGroup';
+import SubagentCallCard from './SubagentCallCard';
+import { isSubagentToolName, parseTodoToolPayload } from '../../infrastructure/ai/harness/externalAgentSignals';
+import { setAgentTodo } from '../../infrastructure/ai/harness/agentTodoStore';
 import { CodexUserInputCard } from './CodexUserInputCard';
 import { CodebuddyElicitationCard } from './CodebuddyElicitationCard';
 import {
@@ -205,6 +208,24 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
 
   useEffect(() => {
     setResolvedApprovals((previous) => pruneResolvedApprovals(previous, messages));
+  }, [activeSessionId, messages]);
+
+  // External agents (Hermes / dsh / Claude Code / Codex) cannot be handed
+  // Netcatty tools, but they publish their own task list through `todo_write` /
+  // `update_plan`. Mirror the latest payload into the same per-session store
+  // Catty's `manage_todo_list` writes, so the panel above the composer works for
+  // every agent. Re-publishing Catty's own list is a no-op.
+  useEffect(() => {
+    if (!activeSessionId) return;
+    let latest: ReturnType<typeof parseTodoToolPayload> = null;
+    for (const message of messages) {
+      if (message.role !== 'assistant' || !message.toolCalls) continue;
+      for (const call of message.toolCalls) {
+        const parsed = parseTodoToolPayload(call.name, call.arguments);
+        if (parsed) latest = parsed;
+      }
+    }
+    if (latest) setAgentTodo(activeSessionId, latest);
   }, [activeSessionId, messages]);
 
   // Subscribe to approval gate events (SDK + MCP tool calls)
@@ -511,6 +532,19 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
     toolCall: AgentToolCall,
     options: { historical: boolean; isToolRunning?: boolean },
   ): React.ReactElement[] => {
+    if (isSubagentToolName(toolCall.name, toolCall.arguments)) {
+      // Subagents never ask for approval. While the nested turn runs, show the
+      // delegation card; once it settles the tool *result* entry renders the
+      // same card (with the report), so this call-side card must not also
+      // appear — it would arrive without a result and read as "failed".
+      if (options.historical || !options.isToolRunning) return [];
+      return [(
+        <div key={toolCall.id} className="px-2 py-1.5">
+          <SubagentCallCard args={toolCall.arguments} status="running" />
+        </div>
+      )];
+    }
+
     const codexApprovals = codexApprovalsByItemId.get(toolCall.id) ?? [];
     if (codexApprovals.length > 0) {
       return codexApprovals.map(({ approvalId, request }) => (
@@ -617,6 +651,16 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
               && displayedMessages[end].role === "assistant";
 
             const renderToolResultItem = (item: typeof toolResults[number]) => {
+              if (isSubagentToolName(item.name, item.args)) {
+                return (
+                  <SubagentCallCard
+                    key={item.toolCallId}
+                    args={item.args}
+                    result={item.content}
+                    isError={item.isError}
+                  />
+                );
+              }
               const artifactToolName = item.artifactToolName ?? item.name;
               const terminalArtifact = parseTerminalToolArtifact(artifactToolName, item.content);
               if (terminalArtifact) {

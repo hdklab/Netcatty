@@ -407,6 +407,12 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     startLine: { type: "number", optional: true, description: "Zero-based terminal buffer line to start from when range is lines." },
     maxLines: { type: "number", optional: true, description: "Maximum terminal rows to return. Defaults to 80, capped at 300." },
   },
+  "harness.todo.manage": {
+    todoList: {
+      type: "array",
+      description: "Complete array of all todo items, existing and new. Each item: { id: number, title: string, status: 'not-started' | 'in-progress' | 'completed' }. Ids must be unique; at most one item may be in-progress.",
+    },
+  },
   "harness.web.search": {
     query: { type: "string", description: "The search query to look up on the web." },
     maxResults: { type: "number", optional: true, description: "Maximum number of search results to return." },

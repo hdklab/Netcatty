@@ -80,6 +80,25 @@ const HARNESS_CAPABILITIES = [
     },
   },
   {
+    id: "harness.todo.manage",
+    domain: "harness",
+    status: CAPABILITY_STATUS.IMPLEMENTED,
+    description:
+      "Replace the chat's task list with the complete todo array. Use it to plan and track multi-step work so the user can see progress live. Use it when the request needs three or more distinct steps, when the user gives a numbered or comma-separated list of tasks, or when new instructions turn a small request into a multi-step job. Do not use it for a single trivial action, a purely conversational question, or a simple one-step lookup. Workflow: (1) write the full list first with short action-oriented titles (3-7 words); (2) mark exactly ONE item in-progress before starting that item; (3) do the work; (4) mark that item completed IMMEDIATELY after it succeeds; (5) move to the next item and repeat. Always send the complete array (all items), never a delta. Never batch completions: mark each item completed as soon as it is done, and do not mark an item completed if it failed or is blocked - keep it in-progress or not-started and say why. Status values: not-started (not begun), in-progress (currently working; at most one), completed (fully finished).",
+    policy: {
+      write: false,
+      sensitiveRead: false,
+      longRunning: false,
+      requiresChatSession: true,
+      bypassesObserverBlock: false,
+      bypassesApproval: true,
+      bypassesChatCancel: true,
+    },
+    surfaces: {
+      catty: { toolName: "manage_todo_list" },
+    },
+  },
+  {
     id: "harness.web.search",
     domain: "harness",
     status: CAPABILITY_STATUS.IMPLEMENTED,

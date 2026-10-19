@@ -1,4 +1,5 @@
-import { streamText, isStepCount, type ModelMessage } from 'ai';
+import { streamText, isStepCount, tool, type ModelMessage } from 'ai';
+import { z } from 'zod';
 import { classifyError } from '../../errorClassifier';
 import { isRequestTooLargeError } from '../../errorClassifier';
 import { isSdkStreamStateError } from '../../shared/streamStateErrors';
@@ -13,7 +14,15 @@ import type { CattyReasoningProviderOptions } from '../../cattyReasoning';
 import { createModelFromConfig, resolveProviderEndpoint } from '../../sdk/providers';
 import type { CattyToolsBundle } from '../capabilityTools';
 import { buildCattyToolApproval } from '../cattyToolApproval';
-import type { CattyRuntimeContext } from '../cattyRuntimeContext';
+import { cattyToolContextSchema, type CattyRuntimeContext, type CattyToolContext } from '../cattyRuntimeContext';
+import {
+  canDelegateToSubagent,
+  resolveSubagentDepth,
+  runSubagent,
+  SUBAGENT_SYSTEM_PROMPT,
+  SUBAGENT_TOOL_NAME,
+  type SubagentRuntimeContext,
+} from '../subagentRunner';
 import { buildCattyStreamTimeouts } from '../streamTimeouts';
 import { createCattyPromptCache } from '../cattyPromptCache';
 import {
@@ -108,6 +117,69 @@ function hasReasoningEncryptedContent(options: Record<string, Record<string, unk
   );
 }
 
+/**
+ * `run_subagent` is a Catty-sidebar-only harness tool: it starts a nested
+ * `streamText` turn with an isolated history and a read-only tool subset.
+ * Registration is gated on depth 0 so a subagent can never delegate again.
+ */
+const runSubagentInputSchema = z.object({
+  prompt: z.string().min(1).describe('Self-contained research brief for the subagent. It sees nothing else from this conversation.'),
+  description: z.string().min(1).describe('Short label for the UI, e.g. "Inspect nginx configs".'),
+  allowWrites: z.boolean().optional().describe('Reserved for future milestones. Subagents are read-only in M1; pass false or omit.'),
+});
+
+type RunSubagentToolInput = {
+  prompt: string;
+  description: string;
+  allowWrites?: boolean;
+};
+
+type RunSubagentToolOutput =
+  | { report: string; steps: number; elapsedMs: number }
+  | { error: string; elapsedMs?: number };
+
+function createRunSubagentTool(input: {
+  model: CattyModel;
+  tools: CattyToolsBundle['tools'];
+  toolsContext: Record<string, CattyToolContext>;
+  permissionMode: CattyRuntimeContext['permissionMode'];
+}) {
+  return tool<RunSubagentToolInput, RunSubagentToolOutput, CattyToolContext>({
+    description: [
+      'Delegate a self-contained, read-only research task to a subagent.',
+      'The subagent starts with an isolated context (it cannot see this conversation), may only use read-only inspection tools, and returns one markdown report.',
+      'Use it to gather facts across sessions, files, hosts or the web without cluttering this conversation.',
+      'It cannot execute commands, write files or change the vault; `allowWrites` is not supported in this version.',
+      'Write `prompt` as a complete brief: the goal, which sessions/hosts/paths to inspect, and exactly what to report back.',
+      '`description` is a short label shown in the UI (3-6 words).',
+      'Do not delegate work that requires changes; do that yourself.',
+    ].join(' '),
+    inputSchema: runSubagentInputSchema,
+    contextSchema: cattyToolContextSchema,
+    execute: async (args: RunSubagentToolInput, { abortSignal }) => {
+      if (args.allowWrites === true) {
+        return {
+          error: 'run_subagent is read-only in this version; allowWrites is not supported.',
+        };
+      }
+      const result = await runSubagent({
+        model: input.model,
+        systemPrompt: SUBAGENT_SYSTEM_PROMPT,
+        tools: input.tools,
+        toolsContext: input.toolsContext,
+        permissionMode: input.permissionMode,
+        parentSignal: abortSignal,
+        prompt: args.prompt,
+        description: args.description,
+      });
+      if (result.ok === false) {
+        return { error: result.error, elapsedMs: result.elapsedMs };
+      }
+      return { report: result.report, steps: result.steps, elapsedMs: result.elapsedMs };
+    },
+  });
+}
+
 export async function processCattyStream(input: ProcessCattyStreamInput): Promise<ProcessCattyStreamResult> {
   const {
     streamSessionId,
@@ -131,7 +203,30 @@ export async function processCattyStream(input: ProcessCattyStreamInput): Promis
   } = input;
 
   let runtimeContext = initialRuntimeContext;
-  const { tools, toolsContext } = toolsBundle;
+  const parentTools = toolsBundle.tools;
+  const parentToolsContext = toolsBundle.toolsContext;
+  const sharedToolContext = Object.values(parentToolsContext)[0];
+  const subagentDepth = resolveSubagentDepth(
+    (runtimeContext as CattyRuntimeContext & SubagentRuntimeContext).subagentDepth,
+  );
+  // `run_subagent` is sidebar-only and depth-0 only: a nested Catty turn never
+  // registers it, so a child can never delegate again.
+  const canDelegate = Boolean(sharedToolContext)
+    && canDelegateToSubagent({ agentKind: runtimeContext.agentKind, subagentDepth });
+  const tools = canDelegate && sharedToolContext
+    ? {
+        ...parentTools,
+        [SUBAGENT_TOOL_NAME]: createRunSubagentTool({
+          model,
+          tools: parentTools,
+          toolsContext: parentToolsContext,
+          permissionMode: runtimeContext.permissionMode,
+        }),
+      }
+    : parentTools;
+  const toolsContext = canDelegate && sharedToolContext
+    ? { ...parentToolsContext, [SUBAGENT_TOOL_NAME]: sharedToolContext }
+    : parentToolsContext;
   const endpoint = input.providerConfig
     ? resolveProviderEndpoint(input.providerConfig, resolveProviderStyle(input.providerConfig), undefined)
     : undefined;
