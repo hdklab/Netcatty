@@ -10,17 +10,14 @@ export { isPathLikeCommand, getCommandBasename };
  */
 export const DEFAULT_EXTERNAL_AGENT_ID = 'dsh';
 
-/** The retired built-in agent id. Stored selections are migrated off it. */
-export const LEGACY_BUILTIN_AGENT_ID = 'catty';
-
 /**
- * Map a persisted agent selection onto a selectable agent id: the retired
- * built-in id (and an empty value) become the default external agent.
+ * Map a persisted agent selection onto a selectable agent id. An empty value
+ * falls back to the default external agent; any explicit id — including the
+ * built-in `catty` — is kept as-is (Catty is selectable again).
  */
 export function migrateLegacyAgentSelection(agentId: string | null | undefined): string {
   const value = String(agentId ?? '').trim();
-  if (!value || value === LEGACY_BUILTIN_AGENT_ID) return DEFAULT_EXTERNAL_AGENT_ID;
-  return value;
+  return value || DEFAULT_EXTERNAL_AGENT_ID;
 }
 
 export type ManagedAgentKey = 'codex' | 'claude' | 'copilot' | 'cursor' | 'codebuddy' | 'opencode' | 'grok' | 'mimo' | 'dsh' | 'hermes';
