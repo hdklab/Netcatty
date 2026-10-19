@@ -18,6 +18,7 @@ createWorkspaceFromSessionIds,
 FocusDirection,
 getNextFocusSessionId,
 insertPaneIntoWorkspace,
+movePaneInWorkspace,
 pruneWorkspaceNode,
 reorderWorkspaceFocusSessionOrder,
 SplitDirection,
@@ -871,6 +872,30 @@ export const useSessionState = ({
 	    });
 	  }, [setActiveTabId]);
 
+  // Rearrange panes that already live in a workspace. `hint.position ===
+  // 'center'` swaps the two panes in place; an edge position moves the
+  // dragged pane into a new split at that edge of the target pane. The
+  // session→workspace binding is unchanged, so only the workspace root is
+  // rewritten (sizes/shape preserved by the domain helpers).
+  const moveSessionInWorkspace = useCallback((
+    workspaceId: string,
+    sessionId: string,
+    hint: SplitHint,
+  ) => {
+    if (!hint) return;
+    setWorkspaces(prevWorkspaces => {
+      const index = prevWorkspaces.findIndex(w => w.id === workspaceId);
+      if (index < 0) return prevWorkspaces;
+      const target = prevWorkspaces[index];
+      const nextRoot = movePaneInWorkspace(target.root, sessionId, hint);
+      if (nextRoot === target.root) return prevWorkspaces;
+      setActiveTabId(workspaceId);
+      const next = [...prevWorkspaces];
+      next[index] = { ...target, root: nextRoot };
+      return next;
+    });
+  }, [setActiveTabId]);
+
   // Add a host into an existing workspace by creating a new session for
   // that host and appending it as the last pane at the workspace root.
   // Sibling sizes are rebalanced equally by appendPaneToWorkspaceRoot.
@@ -1411,6 +1436,7 @@ export const useSessionState = ({
     createWorkspaceFromTargets,
     createWorkspaceFromSessions,
     addSessionToWorkspace,
+    moveSessionInWorkspace,
     removeSessionFromWorkspace,
     appendHostToWorkspace,
     appendLocalTerminalToWorkspace,

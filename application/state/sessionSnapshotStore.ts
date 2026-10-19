@@ -56,6 +56,7 @@ export type SessionSnapshotActions = Pick<
   | 'createWorkspaceWithHosts'
   | 'createWorkspaceFromSessions'
   | 'addSessionToWorkspace'
+  | 'moveSessionInWorkspace'
   | 'appendHostToWorkspace'
   | 'appendLocalTerminalToWorkspace'
   | 'createWorkspaceFromTargets'

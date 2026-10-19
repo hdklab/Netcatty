@@ -58,6 +58,7 @@ export function SessionPublisher({ persistSessionRestore, children }: SessionPub
     createWorkspaceWithHosts,
     createWorkspaceFromSessions,
     addSessionToWorkspace,
+    moveSessionInWorkspace,
     appendHostToWorkspace,
     appendLocalTerminalToWorkspace,
     createWorkspaceFromTargets,
@@ -138,6 +139,7 @@ export function SessionPublisher({ persistSessionRestore, children }: SessionPub
     createWorkspaceWithHosts,
     createWorkspaceFromSessions,
     addSessionToWorkspace,
+    moveSessionInWorkspace,
     appendHostToWorkspace,
     appendLocalTerminalToWorkspace,
     createWorkspaceFromTargets,
@@ -162,6 +164,7 @@ export function SessionPublisher({ persistSessionRestore, children }: SessionPub
     updateSessionCodingCliProvider,
   }), [
     addSessionToWorkspace,
+    moveSessionInWorkspace,
     appendHostToWorkspace,
     appendLocalTerminalToWorkspace,
     clearSessionFontSizeOverride,

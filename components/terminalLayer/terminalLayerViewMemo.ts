@@ -110,7 +110,7 @@ function terminalThemeEqual(prev: Ctx, next: Ctx, key: string): boolean {
 }
 
 function workspaceCtxKeyEqual(prev: Ctx, next: Ctx, key: string): boolean {
-  if (key === 'computeSplitHint' || key === 'handleWorkspaceDrop') {
+  if (key === 'computeSplitHint' || key === 'handleWorkspaceDrop' || key === 'resolveWorkspaceDropHint') {
     if (!prev.draggingSessionId && !next.draggingSessionId) return true;
   }
   if (key === 'activeWorkspace') {
@@ -353,6 +353,7 @@ const WORKSPACE_CTX_KEYS = [
   'setDropHint',
   'computeSplitHint',
   'handleWorkspaceDrop',
+  'resolveWorkspaceDropHint',
   'sessions',
   'sessionHostsMap',
   'sftpAuthHostBySessionId',
@@ -439,6 +440,7 @@ const WORKSPACE_CTX_KEYS = [
   'onReorderTabs',
   'onStartSessionDrag',
   'onEndSessionDrag',
+  'onMoveSessionInWorkspace',
   'isGlobalBroadcastEnabled',
   'canUseGlobalBroadcast',
   'onToggleGlobalBroadcast',

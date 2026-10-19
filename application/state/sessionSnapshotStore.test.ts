@@ -90,6 +90,7 @@ test('session actions register and unregister', () => {
     createWorkspaceWithHosts: noop,
     createWorkspaceFromSessions: noop,
     addSessionToWorkspace: noop,
+    moveSessionInWorkspace: noop,
     appendHostToWorkspace: noop,
     appendLocalTerminalToWorkspace: noop,
     createWorkspaceFromTargets: noop,

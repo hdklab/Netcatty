@@ -94,6 +94,26 @@ test('publishers and the app-lock gate own the mega hooks and store fan-out', ()
   assert.match(sessionPublisherSource, /registerSessionSnapshotActions\(null\)/);
 });
 
+test('session mutators AppView consumes are re-published by SessionPublisher', () => {
+  // A session callback that AppView destructures from the app ctx is dead
+  // unless SessionPublisher also puts it in `sessionActions` — the ctx keeps
+  // only what the publisher hands over, so a new callback that only reaches
+  // useSessionState silently no-ops in the UI (pane rearrange, 2026-10).
+  for (const key of ['addSessionToWorkspace', 'moveSessionInWorkspace', 'updateSplitSizes']) {
+    const occurrences = sessionPublisherSource.split(key).length - 1;
+    assert.ok(
+      occurrences >= 2,
+      `${key} must be destructured from useSessionState and re-published in sessionActions`,
+    );
+  }
+  // The terminal domain bag (TerminalHost island) is what AppView merges into
+  // its ctx, so a published action still has to be forwarded there.
+  assert.match(
+    hostSources['TerminalHost.tsx'] ?? '',
+    /moveSessionInWorkspace: sessionActions\?\.moveSessionInWorkspace/,
+  );
+});
+
 test('publishers hand their runtime to App through the app runtime bridge', () => {
   assert.match(vaultPublisherSource, /registerAppVaultRuntime\(vault\)/);
   assert.match(vaultPublisherSource, /registerAppVaultRuntime\(null\)/);

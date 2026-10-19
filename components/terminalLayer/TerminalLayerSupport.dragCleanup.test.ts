@@ -29,7 +29,7 @@ const { useWorkspaceDetachPointerDrag } = await import("./TerminalLayerSupport")
 
 type Listener = EventListenerOrEventListenerObject;
 
-function createDragDom() {
+function createDragDom(options?: { topTabsRoot?: unknown }) {
   const documentListeners = new Map<string, Set<Listener>>();
   const windowListeners = new Map<string, Set<Listener>>();
   const appendedElements = new Set<{ remove: () => void }>();
@@ -65,7 +65,9 @@ function createDragDom() {
       };
       return element;
     },
-    querySelector: () => null,
+    querySelector: (selector: string) => (
+      selector === '[data-top-tabs-root]' ? (options?.topTabsRoot ?? null) : null
+    ),
     addEventListener: (type: string, listener: Listener) => addListener(documentListeners, type, listener),
     removeEventListener: (type: string, listener: Listener) => removeListener(documentListeners, type, listener),
     defaultView: fakeWindow,
@@ -258,4 +260,165 @@ test("all pointer drag exit paths share one idempotent cleanup", async () => {
     renderer!.unmount();
   });
   assert.equal(dragEndCount, 4, "unmount after cleanup must not end the drag twice");
+});
+
+test("pointer drag over another pane previews and applies the rearrange", async () => {
+  const dom = createDragDom();
+  let pointerDown: ((event: React.PointerEvent<HTMLElement>) => void) | null = null;
+  const published: unknown[] = [];
+  const moves: unknown[] = [];
+
+  const hint = {
+    direction: "vertical" as const,
+    position: "center" as const,
+    targetSessionId: "session-2",
+    rect: { x: 10, y: 10, w: 120, h: 80 },
+  };
+
+  function Harness() {
+    pointerDown = useWorkspaceDetachPointerDrag({
+      inActiveWorkspace: true,
+      session: { id: "session-1", workspaceId: "workspace-1" } as never,
+      workspaceById: new Map(),
+      resolveWorkspaceDropHint: () => hint,
+      onWorkspaceDropHint: (next) => published.push(next),
+      onMoveSessionInWorkspace: (...args) => moves.push(args),
+    });
+    return null;
+  }
+
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(React.createElement(Harness));
+  });
+
+  await act(async () => {
+    pointerDown!({
+      button: 0,
+      clientX: 0,
+      clientY: 0,
+      currentTarget: { ownerDocument: dom.document },
+      preventDefault: () => undefined,
+      stopPropagation: () => undefined,
+    } as unknown as React.PointerEvent<HTMLElement>);
+    dom.dispatchDocument("pointermove", { clientX: 10, clientY: 10 } as PointerEvent);
+  });
+
+  assert.deepEqual(published.at(-1), hint, "the shared drop preview must follow the pointer");
+
+  await act(async () => {
+    dom.dispatchDocument("pointerup", { clientX: 12, clientY: 12 } as PointerEvent);
+  });
+
+  assert.deepEqual(moves, [["workspace-1", "session-1", hint]]);
+  assert.equal(published.at(-1), null, "the preview clears when the drag ends");
+  assert.equal(dom.appendedElements.size, 0);
+  assert.equal(dom.documentListenerCount("pointermove"), 0);
+
+  await act(async () => {
+    renderer!.unmount();
+  });
+});
+
+test("pointer drag that never leaves its own pane does not rearrange", async () => {
+  const dom = createDragDom();
+  let pointerDown: ((event: React.PointerEvent<HTMLElement>) => void) | null = null;
+  const published: unknown[] = [];
+  const moves: unknown[] = [];
+
+  function Harness() {
+    pointerDown = useWorkspaceDetachPointerDrag({
+      inActiveWorkspace: true,
+      session: { id: "session-1", workspaceId: "workspace-1" } as never,
+      workspaceById: new Map(),
+      resolveWorkspaceDropHint: () => ({
+        direction: "vertical" as const,
+        position: "right" as const,
+        targetSessionId: "session-1",
+      }),
+      onWorkspaceDropHint: (next) => published.push(next),
+      onMoveSessionInWorkspace: (...args) => moves.push(args),
+    });
+    return null;
+  }
+
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(React.createElement(Harness));
+  });
+
+  await act(async () => {
+    pointerDown!({
+      button: 0,
+      clientX: 0,
+      clientY: 0,
+      currentTarget: { ownerDocument: dom.document },
+      preventDefault: () => undefined,
+      stopPropagation: () => undefined,
+    } as unknown as React.PointerEvent<HTMLElement>);
+    dom.dispatchDocument("pointermove", { clientX: 10, clientY: 10 } as PointerEvent);
+  });
+  assert.deepEqual(published, [null], "a self-target gets no swap/split preview");
+
+  await act(async () => {
+    dom.dispatchDocument("pointerup", { clientX: 10, clientY: 10 } as PointerEvent);
+  });
+  assert.deepEqual(moves, []);
+
+  await act(async () => {
+    renderer!.unmount();
+  });
+});
+
+test("tab-bar drop keeps priority over the workspace rearrange", async () => {
+  const topTabsRoot = {
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 200, bottom: 24 }),
+    querySelectorAll: () => [],
+  };
+  const dom = createDragDom({ topTabsRoot });
+  let pointerDown: ((event: React.PointerEvent<HTMLElement>) => void) | null = null;
+  const moves: unknown[] = [];
+  let detachCount = 0;
+
+  function Harness() {
+    pointerDown = useWorkspaceDetachPointerDrag({
+      inActiveWorkspace: true,
+      session: { id: "session-1", workspaceId: "workspace-1" } as never,
+      workspaceById: new Map(),
+      resolveWorkspaceDropHint: () => ({
+        direction: "vertical" as const,
+        position: "center" as const,
+        targetSessionId: "session-2",
+      }),
+      onWorkspaceDropHint: () => undefined,
+      onMoveSessionInWorkspace: (...args) => moves.push(args),
+      onRemoveSessionFromWorkspace: () => { detachCount += 1; },
+    });
+    return null;
+  }
+
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(React.createElement(Harness));
+  });
+
+  await act(async () => {
+    pointerDown!({
+      button: 0,
+      clientX: 0,
+      clientY: 0,
+      currentTarget: { ownerDocument: dom.document },
+      preventDefault: () => undefined,
+      stopPropagation: () => undefined,
+    } as unknown as React.PointerEvent<HTMLElement>);
+    dom.dispatchDocument("pointermove", { clientX: 10, clientY: 10 } as PointerEvent);
+    dom.dispatchDocument("pointerup", { clientX: 10, clientY: 10 } as PointerEvent);
+  });
+
+  assert.equal(detachCount, 1, "dropping on the tab bar detaches instead of rearranging");
+  assert.deepEqual(moves, []);
+
+  await act(async () => {
+    renderer!.unmount();
+  });
 });

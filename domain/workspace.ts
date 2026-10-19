@@ -2,10 +2,15 @@ import { Workspace,WorkspaceNode,WorkspaceViewMode } from './models';
 import { DEFAULT_WORKSPACE_TITLE } from './sessionTabTitle';
 
 export type SplitDirection = 'horizontal' | 'vertical';
-type SplitPosition = 'left' | 'right' | 'top' | 'bottom';
+type SplitPosition = 'left' | 'right' | 'top' | 'bottom' | 'center';
 
 export type SplitHint = {
   direction: SplitDirection;
+  /**
+   * 'center' means "swap the dragged pane with `targetSessionId`" instead of
+   * splitting at an edge. It is consumed by `movePaneInWorkspace`; the
+   * insert/create helpers below only ever receive edge positions.
+   */
   position: SplitPosition;
   targetSessionId?: string;
 };
@@ -134,6 +139,68 @@ export const insertPaneIntoWorkspace = (
   };
 
   return insertPane(root);
+};
+
+/**
+ * Exchange the `sessionId` of the two panes that hold `sessionIdA` and
+ * `sessionIdB` in place. Tree shape, split directions and sizes are
+ * untouched, so a swap keeps the exact layout geometry. Returns `root`
+ * unchanged when the ids are equal or either id is not in the tree.
+ */
+export const swapWorkspacePanes = (
+  root: WorkspaceNode,
+  sessionIdA: string,
+  sessionIdB: string,
+): WorkspaceNode => {
+  if (sessionIdA === sessionIdB) return root;
+  const sessionIds = collectSessionIds(root);
+  if (!sessionIds.includes(sessionIdA) || !sessionIds.includes(sessionIdB)) return root;
+
+  const swap = (node: WorkspaceNode): WorkspaceNode => {
+    if (node.type === 'pane') {
+      if (node.sessionId === sessionIdA) return { ...node, sessionId: sessionIdB };
+      if (node.sessionId === sessionIdB) return { ...node, sessionId: sessionIdA };
+      return node;
+    }
+    return { ...node, children: node.children.map(swap) };
+  };
+  return swap(root);
+};
+
+/**
+ * Move a pane that is already in the workspace to a new slot.
+ *
+ * - `hint.position === 'center'` swaps it with `hint.targetSessionId`.
+ * - Any edge position removes the pane from its current slot (via
+ *   `pruneWorkspaceNode`, which keeps sibling ratios unless that level lost a
+ *   direct child) and re-inserts it on that edge of the target pane.
+ *
+ * Returns `root` unchanged when the target is the dragged pane itself, when
+ * either id is missing, when there is no target, or when the tree holds a
+ * single pane (nothing left to rearrange). Never drops a pane.
+ */
+export const movePaneInWorkspace = (
+  root: WorkspaceNode,
+  sessionId: string,
+  hint: SplitHint,
+): WorkspaceNode => {
+  if (!hint) return root;
+
+  if (hint.position === 'center') {
+    return hint.targetSessionId ? swapWorkspacePanes(root, sessionId, hint.targetSessionId) : root;
+  }
+
+  if (!hint.targetSessionId || hint.targetSessionId === sessionId) return root;
+
+  const sessionIds = collectSessionIds(root);
+  if (!sessionIds.includes(sessionId) || !sessionIds.includes(hint.targetSessionId)) return root;
+
+  const pruned = pruneWorkspaceNode(root, sessionId);
+  // Single-pane workspace: pruning removes the whole tree, so there is no
+  // layout left to move anything into.
+  if (!pruned) return root;
+
+  return insertPaneIntoWorkspace(pruned, sessionId, hint);
 };
 
 export const createWorkspaceFromSessions = (

@@ -170,6 +170,7 @@ export function TerminalHost() {
     if (!handlers) return null;
     return {
       addSessionToWorkspace: sessionActions?.addSessionToWorkspace,
+      moveSessionInWorkspace: sessionActions?.moveSessionInWorkspace,
       appendHostToWorkspace: sessionActions?.appendHostToWorkspace,
       appendLocalTerminalToWorkspace: sessionActions?.appendLocalTerminalToWorkspace,
       clearSessionFontSizeOverride: sessionActions?.clearSessionFontSizeOverride,

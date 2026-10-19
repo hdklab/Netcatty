@@ -100,7 +100,12 @@ export type WorkspaceRect = { x: number; y: number; w: number; h: number };
 
 export type SplitHint = {
   direction: 'horizontal' | 'vertical';
-  position: 'left' | 'right' | 'top' | 'bottom';
+  /**
+   * 'center' = swap the dragged pane with the target pane; the other values
+   * split at that edge of the target. Only panes that already live in the
+   * workspace produce a center hint (orphan tabs keep the edge behaviour).
+   */
+  position: 'left' | 'right' | 'top' | 'bottom' | 'center';
   targetSessionId?: string;
   rect?: { x: number; y: number; w: number; h: number };
 } | null;
@@ -1034,6 +1039,8 @@ export interface TerminalLayerProps {
   onTerminalDataCapture?: (sessionId: string, data: string) => void;
   onCreateWorkspaceFromSessions: (baseSessionId: string, joiningSessionId: string, hint: Exclude<SplitHint, null>) => void;
   onAddSessionToWorkspace: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
+  /** Rearrange a pane that is already in `workspaceId` (center = swap). */
+  onMoveSessionInWorkspace?: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
   onRequestAddToWorkspace?: (workspaceId: string) => void;
   onAppendHostToWorkspace?: (workspaceId: string, hostId: string) => void;
   onUpdateSplitSizes: (workspaceId: string, splitId: string, sizes: number[]) => void;
@@ -1190,6 +1197,12 @@ interface TerminalPaneProps {
   onReorderTabs?: (draggedId: string, targetId: string, position: 'before' | 'after', additionalTabIds?: readonly string[]) => void;
   onStartSessionDrag?: (sessionId: string) => void;
   onEndSessionDrag?: () => void;
+  /** Maps a pointer position to the workspace split/swap drop hint. */
+  resolveWorkspaceDropHint?: (point: { clientX: number; clientY: number }) => SplitHint;
+  /** Drives the shared workspace drop preview while a pointer drag is live. */
+  onWorkspaceDropHint?: (hint: SplitHint) => void;
+  /** Applies the rearrange for a pane that already lives in its workspace. */
+  onMoveSessionInWorkspace?: TerminalLayerProps['onMoveSessionInWorkspace'];
 }
 
 const getPaneAppearanceThemeId = (props: TerminalPaneProps): string => {
@@ -1300,7 +1313,10 @@ const terminalPanePropsAreEqual = (
   prev.onRemoveSessionFromWorkspace === next.onRemoveSessionFromWorkspace &&
   prev.onReorderTabs === next.onReorderTabs &&
   prev.onStartSessionDrag === next.onStartSessionDrag &&
-  prev.onEndSessionDrag === next.onEndSessionDrag
+  prev.onEndSessionDrag === next.onEndSessionDrag &&
+  prev.resolveWorkspaceDropHint === next.resolveWorkspaceDropHint &&
+  prev.onWorkspaceDropHint === next.onWorkspaceDropHint &&
+  prev.onMoveSessionInWorkspace === next.onMoveSessionInWorkspace
 );
 
 type WorkspaceDetachPointerDragOptions = {
@@ -1312,6 +1328,19 @@ type WorkspaceDetachPointerDragOptions = {
   onEndSessionDrag?: () => void;
   onRemoveSessionFromWorkspace?: TerminalPaneProps['onRemoveSessionFromWorkspace'];
   onReorderTabs?: TerminalPaneProps['onReorderTabs'];
+  /** Maps a pointer position to the workspace split/swap hint (pointer drags). */
+  resolveWorkspaceDropHint?: (point: { clientX: number; clientY: number }) => SplitHint;
+  /** Mirrors the resolved hint into the shared workspace drop preview. */
+  onWorkspaceDropHint?: (hint: SplitHint) => void;
+  /** Applies a drop that rearranges panes inside the active workspace. */
+  onMoveSessionInWorkspace?: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
+};
+
+/** Cheap identity for the drop preview so pointermove does not spam state. */
+const workspaceHintKey = (hint: SplitHint): string => {
+  if (!hint) return '';
+  const rect = hint.rect ? `${hint.rect.x}:${hint.rect.y}:${hint.rect.w}:${hint.rect.h}` : '';
+  return `${hint.position}|${hint.direction}|${hint.targetSessionId ?? ''}|${rect}`;
 };
 
 export function useWorkspaceDetachPointerDrag({
@@ -1323,6 +1352,9 @@ export function useWorkspaceDetachPointerDrag({
   onEndSessionDrag,
   onRemoveSessionFromWorkspace,
   onReorderTabs,
+  resolveWorkspaceDropHint,
+  onWorkspaceDropHint,
+  onMoveSessionInWorkspace,
 }: WorkspaceDetachPointerDragOptions): (event: React.PointerEvent<HTMLElement>) => void {
   const activeDragCleanupRef = useRef<(() => void) | null>(null);
   const cleanupActiveDrag = useCallback(() => {
@@ -1350,6 +1382,26 @@ export function useWorkspaceDetachPointerDrag({
     let cleanupFinished = false;
     let ghostEl: HTMLDivElement | null = null;
     let insertEl: HTMLDivElement | null = null;
+    let lastWorkspaceHintKey: string | null = null;
+
+    const publishWorkspaceHint = (hint: SplitHint) => {
+      const key = workspaceHintKey(hint);
+      if (key === lastWorkspaceHintKey) return;
+      lastWorkspaceHintKey = key;
+      onWorkspaceDropHint?.(hint);
+    };
+
+    /**
+     * A pointer drop can only rearrange when it lands on a *different* pane of
+     * this workspace; dropping on the dragged pane itself is a no-op.
+     */
+    const resolvePointerWorkspaceHint = (
+      pointerEvent: { clientX: number; clientY: number },
+    ): Exclude<SplitHint, null> | null => {
+      const hint = resolveWorkspaceDropHint?.(pointerEvent) ?? null;
+      if (!hint || !hint.targetSessionId || hint.targetSessionId === session.id) return null;
+      return hint;
+    };
 
     const ensureDragElements = () => {
       if (!ghostEl) {
@@ -1404,6 +1456,8 @@ export function useWorkspaceDetachPointerDrag({
 
       const topTabsRoot = ownerDocument.querySelector<HTMLElement>('[data-top-tabs-root]');
       const insertionTarget = getTopTabInsertionTarget(pointerEvent, topTabsRoot);
+      const overTopTabs = !!topTabsRoot && isPointInsideRect(pointerEvent, topTabsRoot.getBoundingClientRect());
+      publishWorkspaceHint(overTopTabs ? null : resolvePointerWorkspaceHint(pointerEvent));
       if (!topTabsRoot || !insertionTarget || !insertEl) {
         if (insertEl) insertEl.style.display = 'none';
         return insertionTarget;
@@ -1456,6 +1510,7 @@ export function useWorkspaceDetachPointerDrag({
       ownerDocument.removeEventListener('pointerup', handlePointerUp, true);
       ownerDocument.removeEventListener('pointercancel', handlePointerCancel, true);
       ownerWindow?.removeEventListener('blur', handleWindowBlur);
+      publishWorkspaceHint(null);
       removeDragElements();
       const shouldEndDrag = dragStarted;
       dragStarted = false;
@@ -1485,6 +1540,11 @@ export function useWorkspaceDetachPointerDrag({
       const shouldDetach = dragStarted
         && !!topTabsRoot
         && isPointInsideRect(pointerEvent, topTabsRoot.getBoundingClientRect());
+      // Tab bar keeps priority (detach / reorder); anywhere else inside the
+      // workspace rearranges the split layout instead of doing nothing.
+      const workspaceDropHint = dragStarted && !shouldDetach
+        ? resolvePointerWorkspaceHint(pointerEvent)
+        : null;
       cleanup();
       if (shouldDetach) {
         const stableInsertionTarget = resolveStableInsertionTarget(insertionTarget);
@@ -1505,6 +1565,10 @@ export function useWorkspaceDetachPointerDrag({
             stableInsertionTarget.tabId,
           ]);
         }
+        return;
+      }
+      if (workspaceDropHint && session.workspaceId && onMoveSessionInWorkspace) {
+        onMoveSessionInWorkspace(session.workspaceId, session.id, workspaceDropHint);
       }
     };
 
@@ -1517,9 +1581,12 @@ export function useWorkspaceDetachPointerDrag({
     cleanupActiveDrag,
     inActiveWorkspace,
     onEndSessionDrag,
+    onMoveSessionInWorkspace,
     onRemoveSessionFromWorkspace,
     onReorderTabs,
     onStartSessionDrag,
+    onWorkspaceDropHint,
+    resolveWorkspaceDropHint,
     session,
     terminalSettings?.dynamicTabTitleMode,
     workspaceById,
@@ -1603,6 +1670,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onReorderTabs,
   onStartSessionDrag,
   onEndSessionDrag,
+  resolveWorkspaceDropHint,
+  onWorkspaceDropHint,
+  onMoveSessionInWorkspace,
 }) => {
   const layoutSuppressActive = useTerminalLayoutSuppressActive();
   const deferPaneLayoutUpdate = isResizing || layoutSuppressActive;
@@ -1875,6 +1945,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
     onEndSessionDrag,
     onRemoveSessionFromWorkspace,
     onReorderTabs,
+    resolveWorkspaceDropHint,
+    onWorkspaceDropHint,
+    onMoveSessionInWorkspace,
   });
   const handleTerminalFontSizeChange = useCallback((nextFontSize: number) => {
     onTerminalFontSizeChange?.(session.id, nextFontSize);
@@ -2085,6 +2158,9 @@ interface TerminalPanesHostProps {
   onReorderTabs?: (draggedId: string, targetId: string, position: 'before' | 'after', additionalTabIds?: readonly string[]) => void;
   onStartSessionDrag?: (sessionId: string) => void;
   onEndSessionDrag?: () => void;
+  resolveWorkspaceDropHint?: TerminalPaneProps['resolveWorkspaceDropHint'];
+  onWorkspaceDropHint?: TerminalPaneProps['onWorkspaceDropHint'];
+  onMoveSessionInWorkspace?: TerminalPaneProps['onMoveSessionInWorkspace'];
 }
 
 const terminalPanesHostPropsAreEqual = (
@@ -2165,6 +2241,9 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.onReorderTabs !== next.onReorderTabs) return false;
   if (prev.onStartSessionDrag !== next.onStartSessionDrag) return false;
   if (prev.onEndSessionDrag !== next.onEndSessionDrag) return false;
+  if (prev.resolveWorkspaceDropHint !== next.resolveWorkspaceDropHint) return false;
+  if (prev.onWorkspaceDropHint !== next.onWorkspaceDropHint) return false;
+  if (prev.onMoveSessionInWorkspace !== next.onMoveSessionInWorkspace) return false;
 
   if (prev.workspaceRectsById === next.workspaceRectsById) return true;
 

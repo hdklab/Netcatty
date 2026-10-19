@@ -123,6 +123,8 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     onReorderTabs,
     onStartSessionDrag,
     onEndSessionDrag,
+    resolveWorkspaceDropHint,
+    onMoveSessionInWorkspace,
     isGlobalBroadcastEnabled,
     canUseGlobalBroadcast,
     onToggleGlobalBroadcast,
@@ -157,8 +159,11 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
               if (!e.dataTransfer.types.includes('session-id')) return;
               e.preventDefault();
               e.stopPropagation();
-              const hint = computeSplitHint(e);
-              setDropHint(hint);
+              const dragged = draggingSessionId
+                ? sessions.find((session: any) => session.id === draggingSessionId)
+                : undefined;
+              const allowCenter = !!activeWorkspace && dragged?.workspaceId === activeWorkspace.id;
+              setDropHint(computeSplitHint(e, { allowCenter }));
             }}
             onDragLeave={(e) => {
               if (!e.dataTransfer.types.includes('session-id')) return;
@@ -173,6 +178,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
             {dropHint && (
               <div className="absolute inset-0 pointer-events-none">
                 <div
+                  data-drop-mode={dropHint.position === 'center' ? 'swap' : 'split'}
                   className="absolute bg-emerald-600/35 border border-emerald-400/70 backdrop-blur-sm transition-all duration-150"
                   style={{
                     width: dropHint.rect ? `${dropHint.rect.w}px` : dropHint.direction === 'vertical' ? '50%' : '100%',
@@ -258,6 +264,9 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
           onReorderTabs={onReorderTabs}
           onStartSessionDrag={onStartSessionDrag}
           onEndSessionDrag={onEndSessionDrag}
+          resolveWorkspaceDropHint={resolveWorkspaceDropHint}
+          onWorkspaceDropHint={setDropHint}
+          onMoveSessionInWorkspace={onMoveSessionInWorkspace}
           isGlobalBroadcastEnabled={isGlobalBroadcastEnabled}
           canUseGlobalBroadcast={canUseGlobalBroadcast}
           onToggleGlobalBroadcast={onToggleGlobalBroadcast}

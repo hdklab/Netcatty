@@ -70,6 +70,7 @@ export const terminalLayerAreEqual = (
   prev.onToggleWorkspaceViewMode === next.onToggleWorkspaceViewMode &&
   prev.onSetWorkspaceFocusedSession === next.onSetWorkspaceFocusedSession &&
   prev.onReorderWorkspaceSessions === next.onReorderWorkspaceSessions &&
+  prev.onMoveSessionInWorkspace === next.onMoveSessionInWorkspace &&
   prev.onReorderTabs === next.onReorderTabs &&
   prev.onSplitSession === next.onSplitSession &&
   prev.onConnectToHost === next.onConnectToHost &&

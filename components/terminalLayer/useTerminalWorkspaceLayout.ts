@@ -29,11 +29,15 @@ interface UseTerminalWorkspaceLayoutOptions {
   shouldKeepHiddenWorkspaceLaidOut: (workspace: Workspace) => boolean;
   onAddSessionToWorkspace: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
   onCreateWorkspaceFromSessions: (baseSessionId: string, joiningSessionId: string, hint: Exclude<SplitHint, null>) => void;
+  onMoveSessionInWorkspace: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
   onSetDraggingSessionId: (id: string | null) => void;
   onUpdateSplitSizes: (workspaceId: string, splitId: string, sizes: number[]) => void;
   sessions: TerminalSession[];
   workspaces: Workspace[];
 }
+
+/** Central 40% x 40% of a pane = "swap with this pane" instead of splitting. */
+const CENTER_SWAP_ZONE_RATIO = 0.4;
 
 export function useTerminalWorkspaceLayout({
   activeSession,
@@ -42,6 +46,7 @@ export function useTerminalWorkspaceLayout({
   shouldKeepHiddenWorkspaceLaidOut,
   onAddSessionToWorkspace,
   onCreateWorkspaceFromSessions,
+  onMoveSessionInWorkspace,
   onSetDraggingSessionId,
   onUpdateSplitSizes,
   sessions,
@@ -270,7 +275,10 @@ export function useTerminalWorkspaceLayout({
     [activeWorkspace, workspaceArea, collectResizers, workspaceForLayout],
   );
   
-  const computeSplitHint = useCallback((e: DragEvent): SplitHint => {
+  const computeSplitHint = useCallback((
+    e: { clientX: number; clientY: number },
+    options?: { allowCenter?: boolean },
+  ): SplitHint => {
       if (isFocusMode) return null;
       const surface = workspaceOverlayRef.current || workspaceInnerRef.current || workspaceOuterRef.current;
       if (!surface || !workspaceArea.width || !workspaceArea.height) return null;
@@ -298,6 +306,21 @@ export function useTerminalWorkspaceLayout({
       const baseRect: WorkspaceRect = targetRect || { x: 0, y: 0, w: rect.width, h: rect.height };
       const relX = (localX - baseRect.x) / baseRect.w;
       const relY = (localY - baseRect.y) / baseRect.h;
+
+      // Center of another pane = swap the two panes in place. Only offered for
+      // panes that already belong to this workspace (caller decides) and only
+      // when the pointer is over a real pane.
+      if (options?.allowCenter && targetSessionId && targetRect) {
+        const half = CENTER_SWAP_ZONE_RATIO / 2;
+        if (Math.abs(relX - 0.5) <= half && Math.abs(relY - 0.5) <= half) {
+          return {
+            direction: 'vertical',
+            position: 'center',
+            targetSessionId,
+            rect: { ...targetRect },
+          };
+        }
+      }
   
       const prefersVertical = Math.abs(relX - 0.5) > Math.abs(relY - 0.5);
       const direction = prefersVertical ? 'vertical' : 'horizontal';
@@ -327,13 +350,23 @@ export function useTerminalWorkspaceLayout({
       const draggedSessionId = e.dataTransfer.getData('session-id');
       if (!draggedSessionId) return;
       e.preventDefault();
-      const hint = computeSplitHint(e);
+      const draggedSession = sessions.find(s => s.id === draggedSessionId);
+      // A pane that already lives in the active workspace is *moved* (center =
+      // swap, edge = re-split); orphan sessions are still added/created.
+      const movesWithinWorkspace = !!activeWorkspace
+        && !!draggedSession
+        && draggedSession.workspaceId === activeWorkspace.id;
+      const hint = computeSplitHint(e, { allowCenter: movesWithinWorkspace });
       setDropHint(null);
       onSetDraggingSessionId(null);
       if (!hint) return;
   
       if (activeWorkspace) {
-        const draggedSession = sessions.find(s => s.id === draggedSessionId);
+        if (movesWithinWorkspace) {
+          if (hint.targetSessionId === draggedSessionId) return;
+          onMoveSessionInWorkspace(activeWorkspace.id, draggedSessionId, hint);
+          return;
+        }
         if (!draggedSession || draggedSession.workspaceId) return;
         onAddSessionToWorkspace(activeWorkspace.id, draggedSessionId, hint);
         return;
@@ -342,7 +375,20 @@ export function useTerminalWorkspaceLayout({
       if (activeSession) {
         onCreateWorkspaceFromSessions(activeSession.id, draggedSessionId, hint);
       }
-    }, [isFocusMode, computeSplitHint, setDropHint, onSetDraggingSessionId, activeWorkspace, sessions, onAddSessionToWorkspace, activeSession, onCreateWorkspaceFromSessions]);
+    }, [isFocusMode, computeSplitHint, setDropHint, onSetDraggingSessionId, activeWorkspace, sessions, onAddSessionToWorkspace, onMoveSessionInWorkspace, activeSession, onCreateWorkspaceFromSessions]);
+
+  /**
+   * Pointer-drag drop resolution for panes already in the workspace. Returns
+   * null when the pointer is outside the workspace, over the dragged pane
+   * itself, or over no pane at all — those drops cannot rearrange anything.
+   */
+  const resolveWorkspaceDropHint = useCallback((
+    point: { clientX: number; clientY: number },
+  ): SplitHint => {
+    const hint = computeSplitHint(point, { allowCenter: true });
+    if (!hint || !hint.targetSessionId) return null;
+    return hint;
+  }, [computeSplitHint]);
 
   return {
     activeResizers,
@@ -350,6 +396,7 @@ export function useTerminalWorkspaceLayout({
     dropHint,
     findSplitNode,
     handleWorkspaceDrop,
+    resolveWorkspaceDropHint,
     resizing,
     setDropHint,
     setResizing,
