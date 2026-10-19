@@ -1,3 +1,10 @@
+import {
+  loadAgentRole,
+  resolveEffectivePermissionMode,
+  resultingSystemPromptRoleSection,
+  type AgentRole,
+} from '../../../application/state/agentRole';
+
 export interface SystemPromptContext {
   scopeType: 'terminal' | 'workspace' | 'global';
   scopeLabel?: string;
@@ -22,16 +29,37 @@ export interface SystemPromptContext {
     }>;
   }>;
   permissionMode: 'observer' | 'confirm' | 'auto';
+  /**
+   * Catty role (ask/agent/plan). Callers should pass it explicitly; when the
+   * caller is not owned by this module the builder falls back to the persisted
+   * role so the prompt can never disagree with the turn's runtime gating.
+   */
+  agentRole?: AgentRole;
   webSearchEnabled?: boolean;
   userSkillsContext?: string;
 }
 
 export function buildSystemPrompt(context: SystemPromptContext): string {
-  const { scopeType, scopeLabel, hosts, permissionMode, webSearchEnabled, userSkillsContext } = context;
+  const {
+    scopeType,
+    scopeLabel,
+    hosts,
+    permissionMode,
+    webSearchEnabled,
+    userSkillsContext,
+    agentRole: explicitAgentRole,
+  } = context;
+
+  const agentRole = explicitAgentRole ?? loadAgentRole();
+  // ask/plan run as `observer`. Read the effective mode here too, so the
+  // Permission Mode section cannot tell the model it may execute while the
+  // runtime approval gate denies every write tool.
+  const effectivePermissionMode = resolveEffectivePermissionMode(agentRole, permissionMode);
+  const roleForcedReadOnly = effectivePermissionMode !== permissionMode;
 
   const scopeDescription = buildScopeDescription(scopeType, scopeLabel);
   const hostList = buildHostList(hosts);
-  const permissionRules = buildPermissionRules(permissionMode);
+  const permissionRules = buildPermissionRules(effectivePermissionMode, roleForcedReadOnly);
 
   // Keep the long static Guidelines block right after the static opening so the
   // cacheable system-prompt prefix stays stable across turns; dynamic sections
@@ -78,6 +106,8 @@ export function buildSystemPrompt(context: SystemPromptContext): string {
 
 10. **Network device sessions.** Sessions with \`protocol: serial\` (shell: raw) or \`deviceType: network\` (SSH-connected network equipment) are connected to network devices or embedded systems. They do NOT run a standard shell (bash/zsh/etc). Commands are sent as-is without shell wrapping. Do not use shell syntax (pipes, redirects, environment variables, subshells). Use the device's native CLI commands (e.g. Cisco IOS, Huawei VRP, Juniper JunOS). Exit codes are unavailable. Consider disabling pagination first (\`screen-length 0 temporary\` for Huawei, \`terminal length 0\` for Cisco). SFTP is not available for serial sessions.
 
+${resultingSystemPromptRoleSection(agentRole)}
+
 ## Current Scope
 
 ${scopeDescription}
@@ -86,7 +116,7 @@ ${scopeDescription}
 
 ${hostList}
 
-## Permission Mode: ${permissionMode}
+## Permission Mode: ${effectivePermissionMode}
 
 ${permissionRules}${webSearchEnabled ? `
 
@@ -171,6 +201,7 @@ function buildHostList(
 
 function buildPermissionRules(
   permissionMode: 'observer' | 'confirm' | 'auto',
+  roleForcedReadOnly = false,
 ): string {
   switch (permissionMode) {
     case 'observer':
@@ -180,7 +211,9 @@ function buildPermissionRules(
         '- Fetching URLs (`url_fetch`)',
         '- Searching the web (`web_search`)',
         '',
-        'All write and execute operations are denied. If the user asks you to run a command or modify a file, explain that observer mode does not allow it and suggest switching to confirm or auto mode.',
+        roleForcedReadOnly
+          ? 'All write and execute operations are denied because the current Agent Role is read-only. If the user asks you to run a command or modify a file, explain that and tell them to switch the role to **Agent** (and pick a permission mode) when they want you to act.'
+          : 'All write and execute operations are denied. If the user asks you to run a command or modify a file, explain that observer mode does not allow it and suggest switching to confirm or auto mode.',
       ].join('\n');
 
     case 'confirm':

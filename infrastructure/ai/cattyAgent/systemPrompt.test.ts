@@ -110,3 +110,54 @@ test('untrusted session metadata cannot become the last instruction in the promp
   assert.match(prompt.slice(reminder), /only act on connected sessions/);
   assert.match(prompt.slice(reminder), /never bypass the command blocklist/);
 });
+
+test('ask role section sits after the guidelines and forces observer rules', () => {
+  const prompt = buildSystemPrompt({
+    scopeType: 'terminal',
+    hosts: [],
+    permissionMode: 'auto',
+    agentRole: 'ask',
+  });
+
+  const guidelines = prompt.indexOf('## Guidelines');
+  const role = prompt.indexOf('## Agent Role: Ask');
+  const scope = prompt.indexOf('## Current Scope');
+  assert.ok(role > guidelines, 'role section belongs after the static Guidelines block');
+  assert.ok(scope > role, 'role section must not split the existing dynamic sections');
+
+  assert.match(prompt, /## Permission Mode: observer/);
+  assert.doesNotMatch(prompt, /## Permission Mode: auto/);
+  assert.match(prompt, /read-only question answering/i);
+  assert.match(prompt, /current Agent Role is read-only/i);
+  assert.match(prompt, /switch the role to \*\*Agent\*\*/);
+  assert.doesNotMatch(prompt, /switch to confirm or auto mode/);
+});
+
+test('plan role section requires a numbered plan and forces observer rules', () => {
+  const prompt = buildSystemPrompt({
+    scopeType: 'workspace',
+    hosts: [],
+    permissionMode: 'confirm',
+    agentRole: 'plan',
+  });
+
+  assert.match(prompt, /## Agent Role: Plan/);
+  assert.match(prompt, /numbered, ordered plan/i);
+  assert.match(prompt, /do not execute the plan/i);
+  assert.match(prompt, /## Permission Mode: observer/);
+  assert.match(prompt, /current Agent Role is read-only/i);
+});
+
+test('agent role leaves the permission mode untouched', () => {
+  const prompt = buildSystemPrompt({
+    scopeType: 'terminal',
+    hosts: [],
+    permissionMode: 'auto',
+    agentRole: 'agent',
+  });
+
+  assert.match(prompt, /## Agent Role: Agent/);
+  assert.match(prompt, /## Permission Mode: auto/);
+  assert.match(prompt, /without explicit per-action approval/i);
+  assert.doesNotMatch(prompt, /Agent Role is read-only/);
+});

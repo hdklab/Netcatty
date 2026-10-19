@@ -350,3 +350,60 @@ test('renders vault note attachment chips with the note title', () => {
   assert.match(source, /file\.vaultNoteId \? \(/);
   assert.match(source, /\{file\.vaultNoteTitle \|\| file\.filename\}/);
 });
+
+test('the role picker sits beside the model chip for Catty only', () => {
+  const catty = renderToStaticMarkup(
+    <TooltipProvider>
+      <ChatInput
+        value=""
+        onChange={() => {}}
+        onSend={() => {}}
+        agentName="Catty Agent"
+        permissionMode="auto"
+        onPermissionModeChange={() => {}}
+        providerSwitcher={{
+          providers: [{
+            id: 'p1',
+            providerId: 'openai' as const,
+            name: 'OpenAI',
+            enabled: true,
+          }],
+          selectedProviderId: 'p1',
+          selectedModelId: 'gpt-5.5',
+          onSelect: () => {},
+        }}
+      />
+    </TooltipProvider>,
+  );
+  assert.match(catty, /aria-label="ai\.role\.label"/);
+
+  const external = renderToStaticMarkup(
+    <TooltipProvider>
+      <ChatInput
+        value=""
+        onChange={() => {}}
+        onSend={() => {}}
+        agentName="Codex"
+        permissionMode="auto"
+        onPermissionModeChange={() => {}}
+        modelPresets={[{ id: 'gpt-test', name: 'GPT Test' }]}
+        selectedModelId="gpt-test"
+        onModelSelect={() => {}}
+      />
+    </TooltipProvider>,
+  );
+  assert.doesNotMatch(external, /aria-label="ai\.role\.label"/);
+});
+
+test('the plan handoff switches the role and reuses the composer send path', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+
+  assert.match(source, /saveAgentRole\('agent'\)/);
+  assert.match(source, /commitComposerText\(PLAN_EXECUTION_CONTINUATION_MESSAGE\)/);
+  assert.match(source, /handleStartPlanExecution/);
+  assert.match(source, /t\('ai\.plan\.execute'\)/);
+  assert.match(source, /t\('ai\.plan\.executing'\)/);
+  // The bar is gated on a finished plan-role turn, never on every plan-role render.
+  assert.match(source, /agentRole === 'plan' && planTurnReady/);
+  assert.match(source, /ranRole === 'plan'/);
+});

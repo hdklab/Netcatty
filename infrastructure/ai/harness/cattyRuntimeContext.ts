@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { NetcattyBridge } from '../cattyAgent/executor';
 import type { ExecutorContext } from '../cattyAgent/executor';
 import type { AIPermissionMode, WebSearchConfig } from '../types';
+import { loadAgentRole, resolveEffectivePermissionMode } from '../../../application/state/agentRole';
 import type { ToolOutputStore } from './toolOutputStore';
 import type { ToolResultDedup } from './toolResultDedup';
 import type { CompactionTrace } from './types';
@@ -57,7 +58,13 @@ export function createInitialCattyRuntimeContext(input: {
     providerId: input.providerId,
     modelId: input.modelId,
     userGoal: input.userGoal,
-    permissionMode: input.permissionMode,
+    // The Catty turn's approval gate (cattyToolApproval) and the stream
+    // timeouts read this field, so the role is applied here — at the single
+    // place the per-turn context is created — rather than at every consumer.
+    // The user's stored permission mode is never rewritten: ask/plan only
+    // resolve to `observer` for this turn, which reuses the existing
+    // observer gating for writes and command execution.
+    permissionMode: resolveEffectivePermissionMode(loadAgentRole(), input.permissionMode),
     scopeType: input.scopeType,
     scopeLabel: input.scopeLabel,
     promptContext: input.promptContext,

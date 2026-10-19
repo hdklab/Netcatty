@@ -6,7 +6,7 @@
  * and a bottom toolbar with muted controls + subtle send button.
  */
 
-import { ArrowUp, AtSign, BookOpen, Check, ChevronDown, ChevronRight, Cpu, Eye, FileText, ImageIcon, Loader2, MessageSquare, Package, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
+import { ArrowUp, AtSign, BookOpen, Check, ChevronDown, ChevronRight, Cpu, Eye, FileText, ImageIcon, Loader2, MessageSquare, Package, Play, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
 import {
   resolveModelSelectionWithThinking,
   resolveThinkingSelection,
@@ -28,6 +28,13 @@ import {
   COMPOSER_PROVIDER_PICKER_WIDTH,
 } from './ComposerModelPicker';
 import { ComposerThinkingChip } from './ComposerThinkingChip';
+import { AgentRolePicker } from './AgentRolePicker';
+import {
+  PLAN_EXECUTION_CONTINUATION_MESSAGE,
+  saveAgentRole,
+  useAgentRole,
+  type AgentRole,
+} from '../../application/state/agentRole';
 import {
   buildSlashCommandItems,
   filterQuickMessages,
@@ -322,8 +329,14 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const [composerMaxHeight, setComposerMaxHeight] = useState(CHAT_INPUT_MAX_HEIGHT);
   const composerDesiredHeightRef = useRef<number | null>(null);
   // Consolidate menu state into a single discriminated union to prevent multiple menus open simultaneously
-  type ActiveMenu = 'model' | 'thinking' | 'attach' | 'atMention' | 'noteMention' | 'slashCommand' | 'perm' | null;
+  type ActiveMenu = 'model' | 'thinking' | 'attach' | 'atMention' | 'noteMention' | 'slashCommand' | 'perm' | 'role' | null;
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
+  const agentRole = useAgentRole();
+  // Set on the rising edge of a stream so a role switch mid-turn cannot claim
+  // the finished turn; read on the falling edge to offer the plan handoff.
+  const streamRoleRef = useRef<AgentRole | null>(null);
+  const [planTurnReady, setPlanTurnReady] = useState(false);
+  const [planExecuting, setPlanExecuting] = useState(false);
   const [menuPos, setMenuPos] = useState<{ left: number; bottom: number } | null>(null);
   const [inputPanelPos, setInputPanelPos] = useState<{ left: number; bottom: number; width: number } | null>(null);
   const [modelPrefs, setModelPrefs] = useState<ComposerModelPrefs>(() => readComposerModelPrefs(pickerScope));
@@ -342,6 +355,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const showNoteMention = activeMenu === 'noteMention';
   const showSlashCommandPicker = activeMenu === 'slashCommand';
   const showPermPicker = activeMenu === 'perm';
+  const showRolePicker = activeMenu === 'role';
 
   const closeAllMenus = useCallback(() => {
     setActiveMenu(null);
@@ -646,8 +660,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
   );
 
   useEffect(() => {
-    if (lockTurnConfiguration && (showModelPicker || showThinkingPicker || showPermPicker)) closeAllMenus();
-  }, [closeAllMenus, lockTurnConfiguration, showModelPicker, showThinkingPicker, showPermPicker]);
+    if (lockTurnConfiguration && (showModelPicker || showThinkingPicker || showPermPicker || showRolePicker)) closeAllMenus();
+  }, [closeAllMenus, lockTurnConfiguration, showModelPicker, showThinkingPicker, showPermPicker, showRolePicker]);
 
   const quickMessageSlugSet = useMemo(
     () => new Set(quickMessages.map((message) => message.slug)),
@@ -971,6 +985,54 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   const status: PromptInputStatus = isStreaming ? 'streaming' : 'idle';
 
+  // Arm the plan handoff only after a turn that actually ran with the plan
+  // role. Capturing the role on the rising edge keeps a mid-turn role switch
+  // from claiming somebody else's finished turn.
+  useEffect(() => {
+    if (isStreaming) {
+      if (streamRoleRef.current == null) streamRoleRef.current = agentRole;
+      return;
+    }
+    const ranRole = streamRoleRef.current;
+    streamRoleRef.current = null;
+    if (ranRole === 'plan') setPlanTurnReady(true);
+  }, [agentRole, isStreaming]);
+
+  useEffect(() => {
+    if (agentRole !== 'plan' && planTurnReady) setPlanTurnReady(false);
+  }, [agentRole, planTurnReady]);
+
+  // The composer instance survives chat-session switches, so a handoff armed in
+  // one conversation must not leak into another.
+  const planSessionIdRef = useRef(contextUsage?.sessionId);
+  useEffect(() => {
+    const nextSessionId = contextUsage?.sessionId;
+    if (planSessionIdRef.current === nextSessionId) return;
+    planSessionIdRef.current = nextSessionId;
+    setPlanTurnReady(false);
+  }, [contextUsage?.sessionId]);
+
+  // `ai.plan.executing` is a transient acknowledgement: the plan bar collapses
+  // once the continuation turn is under way.
+  useEffect(() => {
+    if (!planExecuting) return;
+    const timer = setTimeout(() => setPlanExecuting(false), 2500);
+    return () => clearTimeout(timer);
+  }, [planExecuting]);
+
+  const handleStartPlanExecution = useCallback(() => {
+    if (agentRole !== 'plan' || isStreaming || disabled) return;
+    // The stored permission mode is never rewritten; only the role changes, so
+    // this same send starts the execution turn in agent mode.
+    saveAgentRole('agent');
+    setPlanExecuting(true);
+    // Reuse the normal submit path: commitComposerText writes the draft the
+    // parent's send handler reads synchronously, then onSend() is exactly what
+    // pressing Send does.
+    commitComposerText(PLAN_EXECUTION_CONTINUATION_MESSAGE);
+    onSend();
+  }, [agentRole, commitComposerText, disabled, isStreaming, onSend]);
+
   // Permission mode chip removed — agents run in auto mode
 
   // selectedModelId may be "<modelId>/<thinkingLevel>" for codex ChatGPT models
@@ -1073,6 +1135,13 @@ const ChatInput: React.FC<ChatInputProps> = ({
     : '';
   const chipClassName =
     'inline-flex h-6 items-center gap-1 rounded-full px-1.5 text-[10.5px] text-foreground/72';
+  // Roles belong to Catty only. `providerSwitcher` is the composer's Catty-only
+  // marker (the panel builds it for `currentAgentId === 'catty'` only), so the
+  // chip appears exactly where the Catty runtime — and its role enforcement —
+  // applies. External SDK agents keep their own permission story.
+  const showAgentRolePicker = Boolean(providerSwitcher);
+  const showPlanExecutionAction = showAgentRolePicker
+    && (planExecuting || (agentRole === 'plan' && planTurnReady));
   const selectedSkillChipClassName =
     'inline-flex h-7 items-center gap-1.5 rounded-full border border-primary/18 bg-primary/8 pl-2.5 pr-1.5 text-[11px] font-medium text-foreground/86 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]';
   const iconButtonClassName =
@@ -1080,6 +1149,21 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   return (
     <div className="shrink-0 px-4 pb-4">
+      {showPlanExecutionAction && (
+        <div className="mb-1.5 flex items-center justify-end">
+          <button
+            type="button"
+            onClick={handleStartPlanExecution}
+            disabled={disabled || isStreaming || planExecuting}
+            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-2.5 text-[11px] font-medium text-foreground/88 transition-colors hover:bg-primary/20 disabled:opacity-60"
+          >
+            {planExecuting
+              ? <Loader2 size={11} className="animate-spin" />
+              : <Play size={11} />}
+            {planExecuting ? t('ai.plan.executing') : t('ai.plan.execute')}
+          </button>
+        </div>
+      )}
       <div
         ref={inputShellRef}
         className="relative"
@@ -1549,6 +1633,25 @@ const ChatInput: React.FC<ChatInputProps> = ({
               <span className={`truncate min-w-0 ${modelChipMaxWidth}`} title={modelLabel}>{modelLabel}</span>
               {hasModelPicker && <ChevronDown size={9} className="text-muted-foreground/50" />}
             </button>
+            {showAgentRolePicker && (
+              <AgentRolePicker
+                role={agentRole}
+                disabled={lockTurnConfiguration}
+                open={showRolePicker}
+                onOpenChange={(open) => {
+                  if (open) {
+                    closeAllMenus();
+                    setActiveMenu('role');
+                  } else if (showRolePicker) {
+                    closeAllMenus();
+                  }
+                }}
+                onSelect={(nextRole) => {
+                  saveAgentRole(nextRole);
+                  closeAllMenus();
+                }}
+              />
+            )}
             {contextUsage && (
               <Tooltip>
                 <TooltipTrigger asChild>
