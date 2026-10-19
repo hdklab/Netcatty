@@ -39,6 +39,9 @@ export const createEditorTabSaveService = ({
           content,
           undefined,
           tab.sftpTabId,
+          // Keep the file's own line endings: rewriting a CRLF `.bat`/`.ps1`
+          // would silently convert the whole file.
+          { preserveLineEndings: true },
         );
         if (liveConnectionId !== tab.sessionId) {
           store.remapSessionId(tab.sessionId, liveConnectionId);

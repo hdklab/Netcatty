@@ -9,7 +9,7 @@ declare global {
     realpathSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<string>;
     readSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<string>;
     readSftpBinary?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<ArrayBuffer>;
-    writeSftp(sftpId: string, path: string, content: string, encoding?: SftpFilenameEncoding): Promise<void>;
+    writeSftp(sftpId: string, path: string, content: string, encoding?: SftpFilenameEncoding, options?: { preserveLineEndings?: boolean }): Promise<void>;
     writeSftpBinary?(sftpId: string, path: string, content: ArrayBuffer, encoding?: SftpFilenameEncoding): Promise<void>;
     closeSftp(sftpId: string): Promise<void | { success?: boolean; deferred?: boolean; leaseCount?: number }>;
     retainSftpTransferSession?(sftpId: string, leaseId: string): Promise<{ success: boolean; reason?: string }>;

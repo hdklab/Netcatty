@@ -231,6 +231,7 @@ export const useSftpViewFileOps = ({
         target.side,
         target.fullPath,
         content,
+        { preserveLineEndings: true },
       );
     },
     [sftpRef],

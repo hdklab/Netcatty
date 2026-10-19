@@ -340,7 +340,12 @@ export const useSftpExternalOperations = (
   );
 
   const writeTextFile = useCallback(
-    async (side: "left" | "right", filePath: string, content: string): Promise<void> => {
+    async (
+      side: "left" | "right",
+      filePath: string,
+      content: string,
+      options?: { preserveLineEndings?: boolean },
+    ): Promise<void> => {
       const pane = getActivePane(side);
       if (!pane?.connection) {
         throw new Error("No connection available");
@@ -366,7 +371,7 @@ export const useSftpExternalOperations = (
         throw new Error("Bridge not available");
       }
 
-      await bridge.writeSftp(sftpId, filePath, content, pane.filenameEncoding);
+      await bridge.writeSftp(sftpId, filePath, content, pane.filenameEncoding, options);
     },
     [getActivePane, sftpSessionsRef],
   );
@@ -379,6 +384,7 @@ export const useSftpExternalOperations = (
       content: string,
       filenameEncoding?: SftpFilenameEncoding,
       sftpTabId?: string,
+      options?: { preserveLineEndings?: boolean },
     ): Promise<string> => {
       let tabRef = getTabByConnectionId?.(connectionId) ?? null;
       let pane = tabRef?.pane ?? getPaneByConnectionId(connectionId);
@@ -455,6 +461,7 @@ export const useSftpExternalOperations = (
         filePath,
         content,
         filenameEncoding ?? refreshedPane.filenameEncoding,
+        options,
       );
       return liveConnectionId;
     },

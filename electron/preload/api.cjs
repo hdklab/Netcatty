@@ -921,8 +921,14 @@ function createPreloadApi(ctx) {
   readSftpBinary: async (sftpId, path, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:readBinary", { sftpId, path, encoding });
   },
-  writeSftp: async (sftpId, path, content, encoding) => {
-    return ipcRenderer.invoke("netcatty:sftp:write", { sftpId, path, content, encoding });
+  writeSftp: async (sftpId, path, content, encoding, options) => {
+    return ipcRenderer.invoke("netcatty:sftp:write", {
+      sftpId,
+      path,
+      content,
+      encoding,
+      preserveLineEndings: options?.preserveLineEndings === true,
+    });
   },
   writeSftpBinary: async (sftpId, path, content, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:writeBinary", { sftpId, path, content, encoding });

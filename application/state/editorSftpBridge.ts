@@ -8,6 +8,7 @@ export interface EditorSftpWrite {
     content: string,
     filenameEncoding?: SftpFilenameEncoding,
     sftpTabId?: string,
+    options?: { preserveLineEndings?: boolean },
   ): Promise<string>;
 }
 

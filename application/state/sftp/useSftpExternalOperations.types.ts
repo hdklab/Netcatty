@@ -50,7 +50,12 @@ export interface UseSftpExternalOperationsParams {
 export interface SftpExternalOperationsResult {
   readTextFile: (side: "left" | "right", filePath: string) => Promise<string>;
   readBinaryFile: (side: "left" | "right", filePath: string) => Promise<ArrayBuffer>;
-  writeTextFile: (side: "left" | "right", filePath: string, content: string) => Promise<void>;
+  writeTextFile: (
+    side: "left" | "right",
+    filePath: string,
+    content: string,
+    options?: { preserveLineEndings?: boolean },
+  ) => Promise<void>;
   writeTextFileByConnection: (
     connectionId: string,
     expectedHostId: string,
@@ -58,6 +63,7 @@ export interface SftpExternalOperationsResult {
     content: string,
     filenameEncoding?: SftpFilenameEncoding,
     sftpTabId?: string,
+    options?: { preserveLineEndings?: boolean },
   ) => Promise<string>;
   downloadToTempAndOpen: (
     side: "left" | "right",

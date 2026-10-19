@@ -483,8 +483,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   // tab switches, listings) doesn't make this unregister+reregister on every
   // re-render.
   useEffect(() => {
-    return registerEditorSftpWriterScoped((connectionId, expectedHostId, filePath, content, encoding, sftpTabId) =>
-      sftpRef.current.writeTextFileByConnection(connectionId, expectedHostId, filePath, content, encoding, sftpTabId),
+    return registerEditorSftpWriterScoped((connectionId, expectedHostId, filePath, content, encoding, sftpTabId, options) =>
+      sftpRef.current.writeTextFileByConnection(connectionId, expectedHostId, filePath, content, encoding, sftpTabId, options),
     );
   }, []);
 

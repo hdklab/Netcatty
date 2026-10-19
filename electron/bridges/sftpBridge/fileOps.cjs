@@ -127,6 +127,19 @@ function readSftpStreamIntoBuffer(stream, signal = null) {
   });
 }
 
+/**
+ * Line endings for a text write.
+ *
+ * CRLF is normalized to LF so scripts edited on Windows do not break when
+ * saved to a Linux/macOS host. Callers that round-trip a file the user sees in
+ * the built-in editor opt out (`preserveLineEndings: true`): converting a
+ * remote `.bat`/`.ps1`/`.env` would silently rewrite every line ending of the
+ * whole file, which is invisible in the editor.
+ */
+function prepareWriteContent(content, preserveLineEndings) {
+  return preserveLineEndings === true ? content : content.replace(/\r\n/g, "\n");
+}
+
 function createFileOpsApi(ctx) {
   with (ctx) {
     const {
@@ -484,11 +497,7 @@ function createFileOpsApi(ctx) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
 
-      // Normalize CRLF → LF so scripts edited on Windows don't break when
-      // saved to a Linux/macOS host. LF is universally supported (Windows
-      // 10+ notepad handles it), while CRLF in shell scripts causes
-      // "command not found" and syntax errors on Linux.
-      const normalized = payload.content.replace(/\r\n/g, '\n');
+      const normalized = prepareWriteContent(payload.content, payload.preserveLineEndings);
 
       if (resolveRemoteFileBackend(client)) {
         const backend = resolveRemoteFileBackend(client);
@@ -1271,4 +1280,4 @@ function createFileOpsApi(ctx) {
   }
 }
 
-module.exports = { createFileOpsApi };
+module.exports = { createFileOpsApi, prepareWriteContent };
