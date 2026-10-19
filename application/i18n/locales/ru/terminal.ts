@@ -939,6 +939,7 @@ export const ruTerminalMessages: Messages = {
 
   // Text Editor
   'sftp.editor.wordWrap': 'Перенос строк',
+  'sftp.editor.vimMode': 'Режим Vim',
   'sftp.editor.maximize': 'Развернуть',
   'sftp.editor.popOut': 'Открыть в окне редактора',
   'sftp.editor.dock': 'Вернуть в главное окно',

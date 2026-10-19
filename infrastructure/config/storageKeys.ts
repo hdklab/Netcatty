@@ -162,6 +162,8 @@ export const STORAGE_KEY_SFTP_TRANSFER_CHILD_NAME_WIDTH = 'netcatty_sftp_transfe
 
 // Editor Settings
 export const STORAGE_KEY_EDITOR_WORD_WRAP = 'netcatty_editor_word_wrap_v1';
+/** Vim keybindings in the built-in text editor (global, OFF by default). */
+export const STORAGE_KEY_EDITOR_VIM_MODE = 'netcatty_editor_vim_mode_v1';
 
 // Session Logs Settings
 export const STORAGE_KEY_SESSION_LOGS_ENABLED = 'netcatty_session_logs_enabled_v1';

@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import Editor, { type OnMount, loader, useMonaco } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 // Configure Monaco to use local files instead of CDN
 const viteEnv = import.meta.env ?? { BASE_URL: "/" };
@@ -27,7 +27,9 @@ const isMacPlatform = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test
 
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { useClipboardBackend } from '../../application/state/useClipboardBackend';
+import { useStoredBoolean } from '../../application/state/useStoredBoolean';
 import { isPrimaryModifierWBinding } from '../../application/state/windowCommandClose';
+import { STORAGE_KEY_EDITOR_VIM_MODE } from '../../infrastructure/config/storageKeys';
 import { HotkeyScheme, KeyBinding, matchesKeyBinding } from '../../domain/models';
 import { pasteForMonacoEditorCommand } from '../../infrastructure/monaco/monacoClipboardPaste';
 import { useNetcattyMonacoTheme } from '../../infrastructure/monaco/useNetcattyMonacoTheme';
@@ -123,6 +125,20 @@ export const isTextEditorReadOnly = ({ saving }: { saving: boolean }): boolean =
 
 export const canPromoteTextEditor = ({ saving }: { saving: boolean }): boolean => !saving;
 
+/**
+ * Vim bindings attach only after Monaco mounted the editor: monaco-vim grabs a
+ * keydown handler and the block cursor on the live instance. The adapter is
+ * disposed on unmount and whenever the toggle goes off, so re-enabling starts
+ * from a clean NORMAL mode.
+ */
+export const canAttachVimMode = ({
+  enabled,
+  editorMounted,
+}: {
+  enabled: boolean;
+  editorMounted: boolean;
+}): boolean => enabled && editorMounted;
+
 export function getTextEditorContentStats(content: string): { lineCount: number; charCount: number } {
   let lineCount = 1;
   for (let i = 0; i < content.length; i += 1) {
@@ -196,6 +212,12 @@ const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
   const monaco = useMonaco();
   const customThemeName = useNetcattyMonacoTheme(monaco);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+
+  // Vim keybindings are a global editor preference (toolbar toggle), shared by
+  // the modal, docked tab and editor window through localStorage.
+  const [vimMode, setVimMode] = useStoredBoolean(STORAGE_KEY_EDITOR_VIM_MODE, false);
+  const [editorMounted, setEditorMounted] = useState(false);
+  const vimStatusRef = useRef<HTMLDivElement | null>(null);
 
   // Ref to store the latest save function to avoid stale closure in keyboard shortcut
   const handleSaveRef = useRef<() => void>(() => {});
@@ -329,7 +351,45 @@ const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
     });
 
     editor.focus();
+    setEditorMounted(true);
   }, [initialViewState]);
+
+  // Vim keybindings (monaco-vim): attach to the live editor and dispose on
+  // unmount or toggle-off. The module is only fetched when Vim mode is on.
+  useEffect(() => {
+    if (!canAttachVimMode({ enabled: vimMode, editorMounted })) return;
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    let cancelled = false;
+    let adapter: { dispose: () => void } | null = null;
+    let focusSub: { dispose: () => void } | null = null;
+    let setSaveHandler: ((handler: (() => void) | null) => void) | null = null;
+
+    void import('../../infrastructure/monaco/monacoVim')
+      .then(async (mod) => {
+        setSaveHandler = mod.setActiveVimSaveHandler;
+        const api = await mod.loadMonacoVim();
+        if (cancelled) return;
+        adapter = api.initVimMode(editor, vimStatusRef.current);
+        // `:w` saves the focused pane (monaco-vim's Ex registry is global).
+        const saveCurrentFile = () => handleSaveRef.current();
+        focusSub = editor.onDidFocusEditorText(() => setSaveHandler?.(saveCurrentFile));
+        setSaveHandler(saveCurrentFile);
+        editor.focus();
+      })
+      .catch((error: unknown) => {
+        // Vim is a preference, not a hard dependency: keep the plain editor.
+        console.error('[editor] Failed to enable Vim mode', error);
+      });
+
+    return () => {
+      cancelled = true;
+      focusSub?.dispose();
+      setSaveHandler?.(null);
+      adapter?.dispose();
+    };
+  }, [editorMounted, vimMode]);
 
   // Capture-phase close-tab hotkey handler. Runs in both modal and tab chrome
   // so Cmd/Ctrl+W works even when focus is inside Monaco (which otherwise
@@ -418,6 +478,24 @@ const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
                 </Button>
               </TooltipTrigger>
               <TooltipContent>{t('sftp.editor.wordWrap')}</TooltipContent>
+            </Tooltip>
+
+            {/* Vim keybindings toggle — a global editor preference */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={vimMode ? 'secondary' : 'ghost'}
+                  size="icon"
+                  className="h-6 w-6 font-mono text-[10px] font-semibold tracking-tight"
+                  onClick={() => setVimMode(!vimMode)}
+                  aria-pressed={vimMode}
+                  aria-label={t('sftp.editor.vimMode')}
+                  data-editor-vim-toggle={vimMode ? 'on' : 'off'}
+                >
+                  VIM
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('sftp.editor.vimMode')}</TooltipContent>
             </Tooltip>
 
             {/* Language selector */}
@@ -547,9 +625,20 @@ const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
 
       {/* Footer */}
       <div className="px-4 py-2 border-t border-border/60 flex items-center justify-between text-xs text-muted-foreground bg-muted/30 flex-shrink-0">
-        <span>
-          {languageName}
-        </span>
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="truncate">
+            {languageName}
+          </span>
+          {/* monaco-vim writes the current mode (--NORMAL--/--INSERT--/--VISUAL--) here. */}
+          {vimMode && (
+            <div
+              ref={vimStatusRef}
+              data-editor-vim-status="true"
+              aria-live="polite"
+              className="min-w-[80px] shrink-0 font-mono text-[11px] leading-4 text-foreground/80"
+            />
+          )}
+        </div>
         <span>
           {contentStats.lineCount} lines • {contentStats.charCount} characters
         </span>

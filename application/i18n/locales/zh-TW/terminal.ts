@@ -1015,6 +1015,7 @@ export const zhTWTerminalMessages: Messages = {
 
   // Text Editor
   'sftp.editor.wordWrap': '自動換行',
+  'sftp.editor.vimMode': 'Vim 模式',
   'sftp.editor.maximize': '最大化',
   'sftp.editor.popOut': '在編輯器視窗開啟',
   'sftp.editor.dock': '停靠回主視窗',

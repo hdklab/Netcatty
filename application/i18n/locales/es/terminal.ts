@@ -894,6 +894,7 @@ export const esTerminalMessages: Messages = {
 
   // Text Editor
   'sftp.editor.wordWrap': 'Ajuste de línea',
+  'sftp.editor.vimMode': 'Modo Vim',
   'sftp.editor.maximize': 'Maximizar',
   'sftp.editor.popOut': 'Abrir en ventana de editor',
   'sftp.editor.dock': 'Anclar a la ventana principal',

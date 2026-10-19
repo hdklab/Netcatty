@@ -4,6 +4,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  canAttachVimMode,
   canPromoteTextEditor,
   getTextEditorContentStats,
   isTextEditorCommandWEnabled,
@@ -50,6 +51,12 @@ test("renders the promote button disabled while a save is running", () => {
 test("counts editor content without allocating line arrays", () => {
   assert.deepEqual(getTextEditorContentStats(""), { lineCount: 1, charCount: 0 });
   assert.deepEqual(getTextEditorContentStats("one\ntwo\n"), { lineCount: 3, charCount: 8 });
+});
+
+test("Vim bindings wait for the mounted Monaco editor", () => {
+  assert.equal(canAttachVimMode({ enabled: true, editorMounted: true }), true);
+  assert.equal(canAttachVimMode({ enabled: true, editorMounted: false }), false);
+  assert.equal(canAttachVimMode({ enabled: false, editorMounted: true }), false);
 });
 
 test("Monaco Cmd+W follows the current close-tab binding", () => {

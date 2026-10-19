@@ -1,7 +1,10 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { readFileSync } from 'fs';
 import path from 'path';
 import { defineConfig, type Plugin } from 'vite';
+
+import { MONACO_VIM_UMD_MODULE_ID, wrapMonacoVimUmd } from './infrastructure/monaco/monacoVimUmd';
 
 // Custom plugin to suppress monaco-editor source map warnings
 const suppressMonacoSourcemapWarning = () => ({
@@ -17,6 +20,21 @@ const suppressMonacoSourcemapWarning = () => ({
     };
   },
 });
+
+const monacoVimUmdPlugin = (): Plugin => {
+  const resolvedId = `\0${MONACO_VIM_UMD_MODULE_ID}`;
+  return {
+    name: 'monaco-vim-umd',
+    resolveId(id: string) {
+      return id === MONACO_VIM_UMD_MODULE_ID ? resolvedId : null;
+    },
+    load(id: string) {
+      if (id !== resolvedId) return null;
+      const umdPath = path.resolve(__dirname, 'node_modules/monaco-vim/dist/monaco-vim.umd.js');
+      return wrapMonacoVimUmd(readFileSync(umdPath, 'utf8'));
+    },
+  };
+};
 
 const devContentSecurityPolicy = [
   "default-src 'self'",
@@ -121,7 +139,7 @@ export default defineConfig(() => {
           },
         },
       },
-      plugins: [suppressMonacoSourcemapWarning(), devContentSecurityPolicyPlugin(), warnOnOutdatedOptimizeDep(), tailwindcss(), react()],
+      plugins: [suppressMonacoSourcemapWarning(), devContentSecurityPolicyPlugin(), warnOnOutdatedOptimizeDep(), monacoVimUmdPlugin(), tailwindcss(), react()],
       optimizeDeps: {
         include: [
           'ai',
@@ -135,13 +153,13 @@ export default defineConfig(() => {
         ],
       },
       resolve: {
-        alias: {
-          '@': path.resolve(__dirname, '.'),
+        alias: [
+          { find: '@', replacement: path.resolve(__dirname, '.') },
           // The ligatures addon pulls lru-cache's node:diagnostics_channel import
           // into the renderer bundle. Stub it; the cache never publishes metrics.
-          'node:diagnostics_channel': path.resolve(__dirname, 'infrastructure/shims/nodeDiagnosticsChannel.ts'),
-          'diagnostics_channel': path.resolve(__dirname, 'infrastructure/shims/nodeDiagnosticsChannel.ts'),
-        }
+          { find: 'node:diagnostics_channel', replacement: path.resolve(__dirname, 'infrastructure/shims/nodeDiagnosticsChannel.ts') },
+          { find: 'diagnostics_channel', replacement: path.resolve(__dirname, 'infrastructure/shims/nodeDiagnosticsChannel.ts') },
+        ]
       }
     };
 });

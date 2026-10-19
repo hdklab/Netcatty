@@ -932,6 +932,7 @@ export const enTerminalMessages: Messages = {
 
   // Text Editor
   'sftp.editor.wordWrap': 'Word Wrap',
+  'sftp.editor.vimMode': 'Vim mode',
   'sftp.editor.maximize': 'Maximize',
   'sftp.editor.popOut': 'Open in editor window',
   'sftp.editor.dock': 'Dock to main window',
