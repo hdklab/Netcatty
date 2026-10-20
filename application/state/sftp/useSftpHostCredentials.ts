@@ -3,6 +3,7 @@ import type { Host, Identity, KnownHost, SSHKey, TerminalSettings } from "../../
 import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from "../../../domain/credentials";
 import { resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth } from "../../../domain/sshAuth";
 import { resolveHostKeepalive } from "../../../domain/host";
+import { connectionTotpFields } from "../../../domain/totpConfig";
 import { resolveHostSshConnectionTimeouts } from "../../../domain/sshConnectionTimeouts";
 import {
   resolveFtpSftpEndpoint,
@@ -156,6 +157,7 @@ export const buildSftpHostCredentials = ({
         authMethod: jumpAuth.authMethod,
         requiresMfa: !!jumpHost.requiresMfa,
         password: jumpPassword,
+        ...connectionTotpFields(jumpHost),
         privateKey: jumpKeyAuth.privateKey,
         certificate: jumpKey?.certificate,
         passphrase: jumpKeyAuth.passphrase,
@@ -217,6 +219,7 @@ export const buildSftpHostCredentials = ({
     requiresMfa: !!host.requiresMfa,
     port: host.port || 22,
     password,
+    ...connectionTotpFields(host),
     privateKey: keyAuth.privateKey,
     certificate: key?.certificate,
     passphrase: keyAuth.passphrase,

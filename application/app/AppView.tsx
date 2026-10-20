@@ -23,6 +23,7 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { LazyLoadBoundary } from '../../components/ui/lazy-load-boundary';
 import { toast } from '../../components/ui/toast';
+import { openQuickConnectFromInput } from '../quickConnectBridge';
 import { AppHostTreeLayer } from './AppHostTreeLayer';
 import { AppHostEditorLayer } from './AppHostEditorLayer';
 import { AppPluginKeybindingHost } from './AppPluginKeybindingHost';
@@ -385,6 +386,14 @@ function AppViewInner({ domains }: AppViewProps) {
     const rootDir = ws.root.type === 'split' ? ws.root.direction : 'vertical';
     appendHostToWorkspace(workspaceId, resolveWorkspaceAppendHost(host), rootDir);
   }, [appendHostToWorkspace, hosts, resolveWorkspaceAppendHost, workspaces]);
+
+  const pendingKeyboardRequest = keyboardInteractiveQueue[0] || null;
+  const pendingTotpUri = pendingKeyboardRequest?.totpUri;
+  const handleFillTotp = useCallback(async () => {
+    if (!pendingTotpUri) return null;
+    const result = await netcattyBridge.get()?.previewTotp?.({ uri: pendingTotpUri });
+    return result?.ok && result.code ? result.code : null;
+  }, [pendingTotpUri]);
 
   const isPeerSessionWindow = typeof window !== 'undefined'
     && window.location.hash.startsWith('#/session-window');
@@ -960,6 +969,7 @@ function AppViewInner({ domains }: AppViewProps) {
               showSftpTab={showSftpTab}
               onQueryChange={setQuickSearch}
               onSelect={handleHostConnectWithProtocolCheck}
+              onQuickConnect={openQuickConnectFromInput}
               onEditHost={(host) => {
                 setIsQuickSwitcherOpen(false);
                 setQuickSearch('');
@@ -1052,6 +1062,8 @@ function AppViewInner({ domains }: AppViewProps) {
         request={keyboardInteractiveQueue[0] || null}
         onSubmit={handleKeyboardInteractiveSubmit}
         onCancel={handleKeyboardInteractiveCancel}
+        canFillTotp={Boolean(pendingTotpUri)}
+        onFillTotp={handleFillTotp}
       />
       {/* Indicator when more 2FA requests are pending */}
       {keyboardInteractiveQueue.length > 1 && (

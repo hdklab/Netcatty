@@ -29,6 +29,10 @@ import {
   removeProxyProfileReferences,
   updateProxyConfigField,
 } from "../domain/proxyProfiles";
+import {
+  clearActiveGlobalDefaultProxyProfile,
+  getActiveGlobalDefaultProxyProfileId,
+} from "../domain/globalDefaultProxy";
 import { reorderVaultItems, sortByVaultOrder } from "../domain/vaultOrder";
 import {
   STORAGE_KEY_VAULT_PROXY_PROFILES_VIEW_MODE,
@@ -400,6 +404,9 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
 
   const confirmDelete = () => {
     if (!deleteTarget) return;
+    if (getActiveGlobalDefaultProxyProfileId() === deleteTarget.id) {
+      clearActiveGlobalDefaultProxyProfile();
+    }
     const cleaned = removeProxyProfileReferences(deleteTarget.id, {
       hosts,
       groupConfigs,

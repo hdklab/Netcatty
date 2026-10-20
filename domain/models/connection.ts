@@ -157,6 +157,15 @@ export interface SftpBookmark {
 
 export type HostAuthMethod = 'auto' | 'password' | 'key' | 'certificate';
 
+/** Per-host TOTP authenticator. `uri` is an otpauth://totp URI and holds the secret. */
+export interface HostTotpConfig {
+  uri: string;
+  /** Defaults to true. False keeps the dialog fill button and skips auto-submit. */
+  autoSubmit?: boolean;
+  /** Extra RE2 regular expression matched against the KI prompt. */
+  promptPattern?: string;
+}
+
 export type HostOperatingSystem = 'linux' | 'windows' | 'macos' | 'freebsd' | 'unknown';
 export type HostOsSelection = 'auto' | HostOperatingSystem;
 
@@ -183,6 +192,10 @@ export interface Host {
   // Runtime marker for in-memory-only hosts (e.g. password deep links).
   // Ephemeral hosts are never persisted to the vault or session restore.
   ephemeral?: boolean;
+  // Runtime marker for an ephemeral host cloned from a saved vault host.
+  // Those connections keep the saved host's own SSH settings. Pure temporary
+  // launches (external command lines, quick connect) leave this unset.
+  backedBySavedHost?: boolean;
   // Runtime hint for deep-link launches that target file transfer (e.g.
   // JumpServer sftp payloads): auto-open the SFTP side panel on connect.
   autoOpenSftpPanel?: boolean;
@@ -194,6 +207,9 @@ export interface Host {
   authPolicyVersion?: 1;
   // Prefer keyboard-interactive before the password method for MFA/PAM hosts.
   requiresMfa?: boolean;
+  // Optional per-host TOTP authenticator. The secret lives in `uri` and is
+  // encrypted and synced with the same path as `password`.
+  totp?: HostTotpConfig;
   // Use the local SSH agent for login. This is separate from agentForwarding,
   // which exposes the local agent to the remote host after login.
   useSshAgent?: boolean;
@@ -217,6 +233,12 @@ export interface Host {
   proxy?: string; // Deprecated: use proxyConfig instead
   proxyProfileId?: string; // Reference to reusable proxy profile
   proxyConfig?: ProxyConfig; // New structured proxy configuration
+  /**
+   * Explicit direct connection for this host. Overrides group and global
+   * proxy defaults. Absent means inherit. This is not the jump-host
+   * "Direct" choice (`hostChain`).
+   */
+  directProxy?: boolean;
   hostChain?: HostChainConfig; // New structured host chain configuration
   envVars?: string; // Deprecated: use environmentVariables instead
   environmentVariables?: EnvVar[]; // Structured environment variables
@@ -439,6 +461,7 @@ export interface GroupConfig {
   protocol?: 'ssh' | 'telnet';
   deviceType?: 'general' | 'network';
   agentForwarding?: boolean;
+  x11Forwarding?: boolean;
   proxyProfileId?: string;
   proxyConfig?: ProxyConfig;
   hostChain?: HostChainConfig;

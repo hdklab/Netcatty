@@ -56,6 +56,13 @@ test("build.files includes the prompt classifier required by Mosh", () => {
   assert.equal(promptSecurity.isUntrustedTerminalInputPrompt("验证码："), true);
 });
 
+test("build.files includes the container runtime adapter", () => {
+  assert.ok(
+    config.files.includes("domain/systemManager/containerRuntime.shared.cjs"),
+    "packaged system manager requires the shared container runtime adapter",
+  );
+});
+
 test("build.files includes the single-channel SSH banner matcher", () => {
   assert.ok(
     config.files.includes("domain/singleChannelSshBanner.shared.cjs"),
@@ -68,6 +75,22 @@ test("build.files includes the single-channel SSH banner matcher", () => {
   const banner = require("../domain/singleChannelSshBanner.shared.cjs");
   assert.equal(banner.remoteSoftwareRequiresSingleChannel("BHostSSH_7.0"), true);
   assert.equal(banner.remoteSoftwareRequiresSingleChannel("JumpServer"), false);
+});
+
+test("build.files includes the shared TOTP runtime required by SSH bridges", () => {
+  assert.ok(
+    config.files.includes("domain/totp.shared.cjs"),
+    "packaged SSH bridges require domain/totp.shared.cjs at load",
+  );
+  assert.ok(
+    config.files.includes("domain/totpPrompt.shared.cjs"),
+    "the shared TOTP runtime requires the prompt exclusion list",
+  );
+  const totp = require("../domain/totp.shared.cjs");
+  const prompts = require("../domain/totpPrompt.shared.cjs");
+  assert.equal(typeof totp.generateTotp, "function");
+  assert.equal(typeof totp.planTotpAutoSubmit, "function");
+  assert.equal(totp.NON_TOTP_PROMPT, prompts.NON_TOTP_PROMPT);
 });
 
 test("unpacked Tool CLI includes capability runtime dependencies", () => {
@@ -209,7 +232,6 @@ test("build.files excludes Vite-bundled renderer-only packages", () => {
     "!node_modules/@streamdown/**/*",
     "!node_modules/@tanstack/react-virtual/**/*",
     "!node_modules/pinyin-pro/**/*",
-    "!node_modules/re2js/**/*",
     "!node_modules/@eslint-community/regexpp/**/*",
     "!node_modules/clsx/**/*",
     "!node_modules/tailwind-merge/**/*",

@@ -352,7 +352,7 @@ export const zhCNTerminalMessages: Messages = {
     '在终端中按 Shift+Enter 时发送配置的文本，而不是普通回车。',
   'settings.terminal.behavior.shiftEnterNewlineText': '发送内容',
   'settings.terminal.behavior.shiftEnterNewlineText.desc':
-    '使用 \\n 表示换行，\\t 表示 Tab，\\e 表示 ESC，\\\\ 表示反斜杠。',
+    '使用 \\n 表示换行，\\t 表示 Tab，\\e 表示 ESC，\\\\ 表示反斜杠。默认 \\e\\r（ESC+回车，传统 Alt+Enter 编码），大多数 TUI CLI 会将其识别为换行。',
   'settings.terminal.behavior.shiftEnterForceText': '在 Win32 输入模式下也发送文本',
   'settings.terminal.behavior.shiftEnterForceText.desc':
     '本机 Windows ConPTY 会话协商 Win32 输入模式时，仍然发送上面的文本。Node/Bun 写的 CLI（Claude Code、CodeBuddy）读不到控制台输入记录里的修饰键，需要这个开关才能区分 Shift+Enter。',
@@ -454,6 +454,13 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.localShell.startDir.notFound': '目录不存在',
   'settings.terminal.localShell.startDir.isFile': '路径是文件，不是目录',
   'settings.terminal.section.connection': '连接',
+  'settings.terminal.connection.temporaryLegacyAlgorithms': '临时连接允许旧版算法',
+  'settings.terminal.connection.temporaryLegacyAlgorithms.desc': '没有对应已保存主机的 SSH 连接（包括外部程序以 PuTTY 参数启动，以及快速连接）会使用与主机「允许旧版算法」相同的已弃用算法。已保存主机仍使用自己的设置。默认关闭，这些算法有已知安全问题。',
+  'settings.terminal.connection.temporaryNetworkDeviceMode': '临时连接使用网络设备模式',
+  'settings.terminal.connection.temporaryNetworkDeviceMode.desc': '没有对应已保存主机的 SSH 连接（包括外部程序启动以及快速连接）会以网络设备模式连接。已保存主机和分组仍使用自己的设备类型。默认关闭。',
+  'settings.terminal.connection.defaultProxy': '默认代理',
+  'settings.terminal.connection.defaultProxy.desc': '主机没有单独设置、也没有从分组继承代理时使用的已保存代理。选择“无”则直接连接。',
+  'settings.terminal.connection.defaultProxy.none': '无',
   'settings.terminal.connection.sshAutoReconnectEnabled': 'SSH 断线后自动重连',
   'settings.terminal.connection.sshAutoReconnectEnabled.desc': '打开后，已连上的 SSH 会话意外断开时会每 5 秒尝试重新连接，直到关闭标签页或连接恢复。',
   'settings.terminal.connection.keepaliveInterval': '会话保持间隔',
@@ -480,8 +487,8 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.systemManager.processRefreshInterval.desc': '系统管理侧栏中进程列表的刷新频率。',
   'settings.terminal.systemManager.tmuxRefreshInterval': 'tmux 会话刷新间隔',
   'settings.terminal.systemManager.tmuxRefreshInterval.desc': 'tmux 会话列表的刷新频率。',
-  'settings.terminal.systemManager.dockerListRefreshInterval': 'Docker 容器列表刷新间隔',
-  'settings.terminal.systemManager.dockerListRefreshInterval.desc': 'Docker 容器列表的刷新频率。',
+  'settings.terminal.systemManager.dockerListRefreshInterval': '容器列表刷新间隔',
+  'settings.terminal.systemManager.dockerListRefreshInterval.desc': '容器与 Pod 列表的刷新频率。',
   'settings.terminal.systemManager.dockerStatsRefreshInterval': 'Docker 性能数据刷新间隔',
   'settings.terminal.systemManager.dockerStatsRefreshInterval.desc': 'Docker 容器 CPU/内存/网络指标的刷新频率。',
 
@@ -996,11 +1003,13 @@ export const zhCNTerminalMessages: Messages = {
   'keyboard.interactive.desc': '服务器需要额外的身份验证。',
   'keyboard.interactive.descWithHost': '服务器 {hostname} 需要额外的身份验证。',
   'keyboard.interactive.response': '响应',
+  'keyboard.interactive.verificationCode': '验证码',
   'keyboard.interactive.enterCode': '输入验证码',
   'keyboard.interactive.enterResponse': '输入响应',
   'keyboard.interactive.submit': '提交',
   'keyboard.interactive.verifying': '验证中...',
   'keyboard.interactive.savePassword': '保存密码',
+  'keyboard.interactive.fillTotp': '填入验证码',
 
   // Passphrase Modal for encrypted SSH keys
   'passphrase.title': 'SSH 密钥密码',

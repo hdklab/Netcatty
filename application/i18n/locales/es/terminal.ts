@@ -109,6 +109,8 @@ export const esTerminalMessages: Messages = {
   'terminal.serverStats.cpu': 'Uso de CPU',
   'terminal.serverStats.cpuCores': 'Uso de núcleos de CPU',
   'terminal.serverStats.gpu': 'Uso de GPU',
+  'terminal.serverStats.gpuDevices': 'Uso de cada GPU',
+  'terminal.serverStats.gpuIndex': 'GPU {{index}}',
   'terminal.serverStats.memory': 'Uso de memoria',
   'terminal.serverStats.memoryDetails': 'Detalles de memoria',
   'terminal.serverStats.memUsed': 'Usada',
@@ -877,11 +879,13 @@ export const esTerminalMessages: Messages = {
   'keyboard.interactive.desc': 'El servidor requiere autenticación adicional.',
   'keyboard.interactive.descWithHost': 'El servidor {hostname} requiere autenticación adicional.',
   'keyboard.interactive.response': 'Respuesta',
+  'keyboard.interactive.verificationCode': 'Código de verificación',
   'keyboard.interactive.enterCode': 'Ingresa el código de verificación',
   'keyboard.interactive.enterResponse': 'Ingresa la respuesta',
   'keyboard.interactive.submit': 'Enviar',
   'keyboard.interactive.verifying': 'Verificando...',
   'keyboard.interactive.savePassword': 'Guardar contraseña',
+  'keyboard.interactive.fillTotp': 'Rellenar código de verificación',
 
   // Passphrase Modal for encrypted SSH keys
   'passphrase.title': 'Frase de contraseña de la clave SSH',

@@ -26,6 +26,8 @@ export const STORAGE_KEY_TERM_FONT_SIZE = 'netcatty_term_font_size_v1';
 export const STORAGE_KEY_TERM_SETTINGS = 'netcatty_term_settings_v1';
 /** One-time marker: pre-#3619 builds materialized autoCloseOnExit: true into saved settings. */
 export const STORAGE_KEY_TERM_AUTO_CLOSE_EXIT_MIGRATED = 'netcatty_term_auto_close_exit_migrated_v1';
+/** One-time marker: pre-#3770 builds materialized shiftEnterNewlineText "\\n" into saved settings. */
+export const STORAGE_KEY_TERM_SHIFT_ENTER_NEWLINE_MIGRATED = 'netcatty_term_shift_enter_newline_migrated_v1';
 export const STORAGE_KEY_HOTKEY_SCHEME = 'netcatty_hotkey_scheme_v1';
 export const STORAGE_KEY_CUSTOM_KEY_BINDINGS = 'netcatty_custom_key_bindings_v1';
 export const STORAGE_KEY_HOTKEY_RECORDING = 'netcatty_hotkey_recording_v1';
@@ -155,6 +157,8 @@ export const STORAGE_KEY_TERMINAL_HOST_TREE_TOOLBAR_LAYOUT =
 export const STORAGE_KEY_TERMINAL_SIDE_PANEL_TAB_LAYOUT = 'netcatty_terminal_side_panel_tab_layout_v1';
 /** System Manager sub-tabs (Overview / Processes / …): show / collapse / hide + order. */
 export const STORAGE_KEY_SYSTEM_MANAGER_TAB_LAYOUT = 'netcatty_system_manager_tab_layout_v1';
+/** Last container runtime, context, and namespace chosen per host. */
+export const STORAGE_KEY_CONTAINER_RUNTIME = 'netcatty_container_runtime_v1';
 export const STORAGE_KEY_SFTP_TRANSFER_PANEL_HEIGHT = 'netcatty_sftp_transfer_panel_height_v1';
 export const STORAGE_KEY_SFTP_TRANSFER_CHILD_NAME_WIDTH = 'netcatty_sftp_transfer_child_name_width_v1';
 
@@ -189,6 +193,8 @@ export const STORAGE_KEY_SHOW_TRAY_ICON = 'netcatty_show_tray_icon_v1';
 export const STORAGE_KEY_AUTO_LAUNCH_ENABLED = 'netcatty_auto_launch_enabled_v1';
 /** App-level HTTP(S) proxy for cloud sync / AI (not SSH ProxyJump). */
 export const STORAGE_KEY_HTTP_NETWORK_PROXY = 'netcatty_http_network_proxy_v1';
+/** Saved proxy profile used when a host and its groups do not set one. Empty string means explicit none. */
+export const STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE = 'netcatty_global_default_proxy_profile_v1';
 export const STORAGE_KEY_GLOBAL_HOTKEY_ENABLED = 'netcatty_global_hotkey_enabled_v1';
 export const STORAGE_KEY_WINDOW_OPACITY = 'netcatty_window_opacity_v1';
 export const STORAGE_KEY_APP_ICON_VARIANT = 'netcatty_app_icon_variant_v1';
@@ -241,6 +247,18 @@ export const STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN = 'netcatty_ai_exter
 export const STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES = 'netcatty_ai_session_idle_timeout_minutes_v1';
 /** External MCP: whether host_open sessions stay hidden from the tab bar (default false). */
 export const STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS = 'netcatty_ai_external_mcp_silent_sessions_v1';
+/** External MCP confirm-mode approval alert: off, unfocused, or always. Default unfocused. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_APPROVAL_ALERT = 'netcatty_ai_external_mcp_approval_alert_v1';
+/** External MCP Streamable HTTP listener. Off unless the user enables it. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ENABLED = 'netcatty_ai_external_mcp_http_enabled_v1';
+/** Fixed Streamable HTTP port so client configs stay stable across restarts. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_PORT = 'netcatty_ai_external_mcp_http_port_v1';
+/** When true, HTTP may bind an address other than 127.0.0.1. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ALLOW_CUSTOM_BIND = 'netcatty_ai_external_mcp_http_allow_custom_bind_v1';
+/** IP address used only when custom bind is enabled. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_LISTEN_ADDRESS = 'netcatty_ai_external_mcp_http_listen_address_v1';
+/** Address copied into client configs when the listener is a wildcard bind. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_CLIENT_HOST = 'netcatty_ai_external_mcp_http_client_host_v1';
 /** AI panel diagnostic hide list (comma-separated part names). */
 export const STORAGE_KEY_AI_PANEL_DIAGNOSTIC_HIDE = 'netcatty.aiDebug.hide';
 /** AI panel React profiler toggle. */

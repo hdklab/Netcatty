@@ -4,6 +4,17 @@ import { createSessionIdleManager } from '../../electron/bridges/mcpServerBridge
 import { STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES } from '../../infrastructure/config/storageKeys';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import {
+  readExternalMcpHttpAllowCustomBind,
+  readExternalMcpHttpEnabled,
+  readExternalMcpHttpListenAddress,
+  readExternalMcpHttpPort,
+  readExternalMcpHttpSettings,
+  writeExternalMcpHttpAllowCustomBind,
+  writeExternalMcpHttpEnabled,
+  writeExternalMcpHttpListenAddress,
+  writeExternalMcpHttpPort,
+} from "./useExternalMcpToggleState.ts";
+import {
   EXTERNAL_MCP_RUNTIME_STATUS_POLL_MS,
   bumpExternalMcpEnableGenerationForTests,
   createExternalMcpStartupSyncPlan,
@@ -11,9 +22,11 @@ import {
   getExternalMcpStartupReadyWaiterCountForTests,
   isExternalMcpStartupReady,
   markExternalMcpStartupReady,
+  normalizeExternalMcpApprovalAlertMode,
   normalizeExternalMcpIdleTimeoutMinutes,
   normalizeExternalMcpMode,
   normalizeSessionIdleTimeoutMinutes,
+  readExternalMcpApprovalAlertMode,
   readExternalMcpFocusOnHostOpen,
   readExternalMcpSilentSessions,
   readExternalMcpStoredEnabled,
@@ -25,6 +38,7 @@ import {
   syncExternalMcpStartupState,
   syncExternalMcpStartupStateOnce,
   waitForExternalMcpStartupReady,
+  writeExternalMcpApprovalAlertMode,
   writeExternalMcpFocusOnHostOpen,
   writeExternalMcpSilentSessions,
 } from './useExternalMcpToggleState.ts';
@@ -69,6 +83,22 @@ describe('useExternalMcpToggleState helpers', () => {
     assert.equal(normalizeExternalMcpIdleTimeoutMinutes(99999), 24 * 60);
     assert.equal(normalizeSessionIdleTimeoutMinutes(null), 8 * 60);
     assert.equal(normalizeSessionIdleTimeoutMinutes(0), 1);
+    assert.equal(normalizeExternalMcpApprovalAlertMode(null), 'unfocused');
+    assert.equal(normalizeExternalMcpApprovalAlertMode('always'), 'always');
+    assert.equal(normalizeExternalMcpApprovalAlertMode('nope'), 'unfocused');
+  });
+
+  it('stores the approval alert preference and defaults to unfocused', () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      assert.equal(readExternalMcpApprovalAlertMode(), 'unfocused');
+      assert.equal(writeExternalMcpApprovalAlertMode('off'), 'off');
+      assert.equal(readExternalMcpApprovalAlertMode(), 'off');
+      assert.equal(writeExternalMcpApprovalAlertMode('always'), 'always');
+      assert.equal(readExternalMcpApprovalAlertMode(), 'always');
+    } finally {
+      restore();
+    }
   });
 
   for (const savedMinutes of [null, 30]) {
@@ -390,6 +420,33 @@ describe('syncExternalMcpStartupState generation guard', () => {
       assert.deepEqual(enabledCalls, []);
       assert.equal(readExternalMcpStoredEnabled(), false);
       assert.ok(getExternalMcpEnableGenerationForTests() > 0);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe("external MCP HTTP settings", () => {
+  it("defaults HTTP off on loopback and round-trips the explicit listen option", () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      assert.deepEqual(readExternalMcpHttpSettings(), {
+        enabled: false,
+        port: 47391,
+        allowCustomBind: false,
+        listenAddress: "0.0.0.0",
+        clientHost: "",
+      });
+      assert.equal(readExternalMcpHttpEnabled(), false);
+      writeExternalMcpHttpEnabled(true);
+      assert.equal(writeExternalMcpHttpPort(80), 47391);
+      assert.equal(writeExternalMcpHttpPort(48080), 48080);
+      writeExternalMcpHttpAllowCustomBind(true);
+      writeExternalMcpHttpListenAddress("172.22.0.1");
+      assert.equal(readExternalMcpHttpEnabled(), true);
+      assert.equal(readExternalMcpHttpPort(), 48080);
+      assert.equal(readExternalMcpHttpAllowCustomBind(), true);
+      assert.equal(readExternalMcpHttpListenAddress(), "172.22.0.1");
     } finally {
       restore();
     }

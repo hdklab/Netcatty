@@ -80,6 +80,7 @@ const SENSITIVE_HOST_KEYS = new Set([
   'ftpPassword',
   'privateKey',
   'passphrase',
+  'totp',
 ]);
 
 /**

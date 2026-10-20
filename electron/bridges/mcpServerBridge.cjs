@@ -25,6 +25,7 @@ const { safeSend } = require("./ipcUtils.cjs");
 const { emitTerminalSessionData } = require("./emitTerminalSessionData.cjs");
 const { getCliDiscoveryFilePath } = require("../cli/discoveryPath.cjs");
 const { EXTERNAL_MCP_CHAT_SESSION_ID } = require("../cli/externalMcpDiscoveryPath.cjs");
+const { syncExternalMcpApprovalAttention } = require("./windowAttention.cjs");
 const sftpBridge = require("./sftpBridge.cjs");
 const portForwardingBridge = require("./portForwardingBridge.cjs");
 
@@ -80,6 +81,19 @@ function markExternalMcpSocket(socket) {
     socket.once("end", cleanup);
     socket.once("error", cleanup);
   }
+}
+
+function attachExternalMcpClient(client) {
+  markExternalMcpSocket(client);
+  return () => {
+    if (!client || client.destroyed) return;
+    client.destroyed = true;
+    try {
+      client.emit?.("close");
+    } catch {
+      // Synthetic HTTP clients may not be emitters.
+    }
+  };
 }
 
 function issueExternalMcpAuthToken() {
@@ -236,6 +250,7 @@ function requestApprovalFromRenderer(toolName, args, chatSessionId, approvalCont
       resolve(false);
       // Notify renderer(s) to remove the stale approval card
       broadcastApprovalEvent('netcatty:ai:mcp:approval-cleared', { approvalIds: [approvalId] });
+      syncExternalApprovalAttention();
     };
 
     const clearTimer = () => {
@@ -280,6 +295,7 @@ function requestApprovalFromRenderer(toolName, args, chatSessionId, approvalCont
       allowSession: chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID
         && externalMcpSockets.has(approvalContext.externalSocket),
     });
+    syncExternalApprovalAttention();
   });
 }
 
@@ -338,9 +354,24 @@ function cancelApprovalTimeoutFromRenderer(approvalId) {
   return true;
 }
 
+function countExternalMcpApprovals() {
+  let pending = 0;
+  for (const entry of pendingApprovals.values()) {
+    if (entry.chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID) pending += 1;
+  }
+  return pending;
+}
+
+function syncExternalApprovalAttention() {
+  try {
+    syncExternalMcpApprovalAttention(countExternalMcpApprovals());
+  } catch { /* attention must not change approval results */ }
+}
+
 function notifyRendererApprovalCleared(approvalIds) {
   if (!Array.isArray(approvalIds) || approvalIds.length === 0) return;
   broadcastApprovalEvent("netcatty:ai:mcp:approval-cleared", { approvalIds });
+  syncExternalApprovalAttention();
 }
 
 /**
@@ -2535,6 +2566,7 @@ module.exports = {
   setExternalMcpHooks,
   disconnectExternalMcpClients,
   issueExternalMcpAuthToken,
+  attachExternalMcpClient,
   revokeExternalMcpAuthToken,
   getExternalMcpAuthToken,
   syncLiveSessionsToExternalScope,

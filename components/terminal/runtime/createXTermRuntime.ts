@@ -8,6 +8,10 @@ import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { supportsTerminalArchiveCommands } from "../../../domain/terminalArchives";
+import { registerTerminalArchiveLinks } from "./terminalArchiveLinks";
+import { createTerminalCwdMarkers } from "./terminalCwdMarkers";
+import { isTerminalReadyForCommandInjection } from "./terminalCommandInjectionReadyRegistry";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal as XTerm } from "@xterm/xterm";
 import type { RefObject } from "react";
@@ -114,6 +118,8 @@ import { handleSerialLineModeInput } from "./serialLineInput";
 import { isTerminalReportSequence } from "./terminalReportSequence";
 import {
   getShiftEnterSubmittedInput,
+  nativeKittyKeyboardPreservesShiftEnter,
+  readNativeKittyKeyboardFlags,
   resolveShiftEnterText,
   shouldClaimShiftEnterForText,
   shouldSendShiftEnterText,
@@ -128,7 +134,11 @@ import {
   shouldFlushDeferredImeTextInputOnKeyUp,
   shouldFlushStaleDeferredImeTextInput,
 } from "./terminalImeTextInput";
-import { keepImeCommittedTextThroughModifierKeyDowns } from "./imeModifierKeyDownSeenGuard";
+import {
+  keepImeCommittedTextThroughModifierKeyDowns,
+  keepLateImeTextInsert,
+  markImeDeferralConsumedInput,
+} from "./imeModifierKeyDownSeenGuard";
 import { keepLiveImeTranscriptionSingle } from "./imeCompositionRewrite";
 import { formatSerialLocalEcho } from "./serialLocalEcho";
 import { getLastChar, removeLastChar, isPrintableInput } from "../../../domain/serialCharMetrics";
@@ -315,6 +325,8 @@ export const resetKittyKeyboardModeStateForSession = (
 export type CreateXTermRuntimeContext = {
   container: HTMLDivElement;
   host: Host;
+  /** Host OS facts can arrive after the runtime is created. */
+  getHost?: () => Host;
   fontFamilyId: string;
   resolvedFontFamily: string;
   fontSize: number;
@@ -596,8 +608,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     // ConPTY asks the frontend for Win32 INPUT_RECORD encoding with DECSET
     // 9001. Preserve browser key modifiers for native Windows applications
     // instead of collapsing them into legacy VT bytes.
+    // kittyKeyboard lets an app opt into xterm's CSI u. Netcatty's own
+    // handlers, when that setting is on, register later and consume those
+    // sequences first, so the two parsers do not both apply the protocol.
     vtExtensions: {
       win32InputMode: windowsPty?.backend === "conpty",
+      kittyKeyboard: true,
     },
     // Override ignoreBracketedPasteMode if user explicitly disables bracketed paste
     ignoreBracketedPasteMode: settings?.disableBracketedPaste ?? performanceConfig.options.ignoreBracketedPasteMode,
@@ -660,6 +676,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   // Chinese/English mode; a pure modifier keydown must not arm xterm's
   // insertText dedupe guard or the committed text is dropped (#3441).
   keepImeCommittedTextThroughModifierKeyDowns(term);
+  // Sogou Chinese mode also commits latin text on Enter via a late
+  // insertText after keyCode 229, with no composition events. The listener
+  // has to be armed before open() so it runs before xterm's input handler
+  // (#3185).
+  keepLateImeTextInsert(term);
 
   type MaybeRenderer = {
     constructor?: { name?: string };
@@ -959,6 +980,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     terminalLinkHandler.activate(event, uri);
   });
   term.loadAddon(webLinksAddon);
+  const cwdMarkers = createTerminalCwdMarkers(term);
+  const archiveLinks = registerTerminalArchiveLinks({
+    term,
+    cwdMarkers,
+    isConnected: () => ctx.statusRef.current === "connected",
+    isBroadcasting: () => ctx.isBroadcastEnabledRef.current === true,
+    isHostEligible: () => supportsTerminalArchiveCommands(ctx.getHost?.() ?? ctx.host, platform),
+    isInputReady: () => isTerminalReadyForCommandInjection(ctx.sessionId, { allowDraft: true }),
+    linkModifier: () => ctx.terminalSettingsRef.current?.linkModifier ?? "none",
+  });
   const pluginLinkProviderHost = ctx.requestPluginTerminalProviders
     ? registerPluginTerminalLinkProvider({
         term,
@@ -2528,6 +2559,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       shouldClaimShiftEnterForText(e, ctx.terminalSettingsRef.current, {
         win32InputMode: term.modes.win32InputMode,
         kittySequenceForKeyDown,
+        nativeKittyPreservesShiftEnter: !kittyKeyboardProtocolEnabled
+          && nativeKittyKeyboardPreservesShiftEnter(readNativeKittyKeyboardFlags(term)),
       })
     ) {
       const id = ctx.sessionRef.current;
@@ -2887,6 +2920,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const markKittyTextInput = (event: InputEvent) => {
     if (shouldCommitDeferredImeTextInput(imeTextInputDeferredKey, event)) {
       commitImeTextInput(event.data);
+      // This insert was already sent. Leave xterm's dedupe flag armed.
+      markImeDeferralConsumedInput(event);
       // Keep the helper textarea empty so the next composition does not treat
       // the deferred punctuation as pre-existing suffix text.
       try {
@@ -3123,6 +3158,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       legacySuppressedKeys: broadcastLegacySuppressedKeys,
       win32InputMode: term.modes.win32InputMode,
       shiftEnterSettings: ctx.terminalSettingsRef.current,
+      nativeKittyPreservesShiftEnter: !kittyKeyboardProtocolEnabled
+        && nativeKittyKeyboardPreservesShiftEnter(readNativeKittyKeyboardFlags(term)),
       win32ShiftEnterTextKeys: broadcastWin32ShiftEnterTextKeys,
     }),
     getSessionId: () => ctx.sessionRef.current,
@@ -3229,12 +3266,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         if (path && path.length > 0) {
           currentCwd = path;
           ctx.onCwdChange?.(path);
+          cwdMarkers.note({ cwd: path, host: url.hostname });
           logger.debug('[XTerm] OSC 7 CWD update:', path);
         }
       } else if (data.startsWith('/')) {
         // Some shells send just the path without file:// prefix
         currentCwd = data;
         ctx.onCwdChange?.(data);
+        cwdMarkers.note({ cwd: data, host: '' });
         logger.debug('[XTerm] OSC 7 CWD update (raw path):', data);
       }
     } catch (err) {
@@ -3483,6 +3522,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       keywordHighlighter.dispose();
       cursorLineHighlighter.dispose();
       pluginLinkProviderHost?.dispose();
+      archiveLinks.dispose();
+      cwdMarkers.dispose();
       pluginProviderHost?.dispose();
       eraseScrollbackDisposable.dispose();
       for (const disposable of cursorPositionReportRequestDisposables) {

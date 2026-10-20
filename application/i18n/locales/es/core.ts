@@ -344,7 +344,7 @@ export const esCoreMessages: Messages = {
   'settings.appearance.themeColor.dark': 'Paleta oscura',
   'settings.appearance.customCss': 'CSS personalizado',
   'settings.appearance.customCss.desc':
-    'Agrega CSS personalizado para personalizar la apariencia de la aplicación. Los cambios se aplican de inmediato.',
+    'Agrega CSS personalizado para personalizar la apariencia de la aplicación. Los cambios se aplican de inmediato. Las pestañas superiores seleccionadas (`.top-tab[data-active="true"]`) leen `--top-tab-active-bg`, `--top-tab-active-fg` y `--top-tab-active-border`. Si no las defines, se conserva el aspecto actual.',
   'settings.appearance.customCss.help.ariaLabel': 'Ayuda de CSS personalizado',
   'settings.appearance.customCss.help.title': 'Guía de CSS personalizado',
   'settings.appearance.customCss.help.body': `Las principales regiones de la interfaz exponen un atributo \`data-section\` que puedes usar como destino. Los cambios se aplican en cuanto editas el CSS.
@@ -370,6 +370,22 @@ Como muchos estilos provienen de utilidades de Tailwind, a menudo necesitas \`!i
 - \`top-tabs-toolbar-actions\` — Menú lateral derecho y barra de herramientas de utilidades
 - \`top-tabs-host-tree-toggle\`
 - \`top-tabs-quick-switcher-toggle\`
+
+Las pestañas superiores seleccionadas usan la clase \`top-tab\` y \`data-active="true"\`. Define estas variables para cambiar el color de la pestaña seleccionada. Si no las defines, se conserva el aspecto actual. Se aplican sin \`!important\`.
+
+- \`--top-tab-active-bg\` — relleno seleccionado (por defecto, el fondo actual de la pestaña)
+- \`--top-tab-active-fg\` — color del texto seleccionado (por defecto, el texto actual)
+- \`--top-tab-active-border\` — contorno interior de 1px (transparente por defecto, así que no hay borde)
+
+La pestaña Vaults permanece plana y no usa el relleno.
+
+\`\`\`css
+.top-tab[data-active="true"] {
+  --top-tab-active-bg: #2563eb;
+  --top-tab-active-fg: #ffffff;
+  --top-tab-active-border: #1d4ed8;
+}
+\`\`\`
 
 ### Vault
 
@@ -464,7 +480,7 @@ Resalta el panel dividido enfocado:
 \`\`\`
 `,
   'settings.appearance.customCss.placeholder':
-    '/* Ejemplos: usa !important para superar la especificidad de las utilidades de Tailwind */\n\n/* Oculta el botón de lista de hosts en la barra de pestañas superior */\n[data-section="top-tabs-host-tree-toggle"] {\n  width: 0 !important;\n  opacity: 0 !important;\n  pointer-events: none !important;\n}\n\n/* Oculta el botón + que abre el selector rápido */\n[data-section="top-tabs-quick-switcher-toggle"] {\n  display: none !important;\n}\n\n/* Borde alrededor del panel SFTP / lateral (no persiste tras cerrarlo) */\n[data-section="terminal-side-panel"] {\n  border: 2px solid #00c851 !important;\n  border-radius: 6px !important;\n}\n\n/* Cambia el fondo de todo el panel lateral, no solo las pestañas superiores */\n[data-section="terminal-side-panel"],\n[data-section="terminal-side-panel-tabs"],\n[data-section="terminal-side-panel-content"],\n[data-section="terminal-sftp-panel"],\n[data-section="terminal-sftp-pane"],\n[data-section="terminal-sftp-list"],\n[data-section="terminal-sftp-tree"],\n[data-section="terminal-sftp-transfer-queue"] {\n  background-color: #1c384a !important;\n}\n\n/* Estiliza las filas de archivos SFTP seleccionadas */\n[data-section="terminal-sftp-list-row"][data-selected="true"] {\n  background-color: #00c851 !important;\n  color: #001b10 !important;\n}\n\n/* Divisores de división más gruesos */\n[data-section="terminal-split-resizer-bar"] {\n  background-color: hsl(var(--primary)) !important;\n  transform: scale(2) !important;\n}\n\n/* Resalta el panel dividido enfocado */\n[data-section="terminal-split-pane"][data-focused="true"] {\n  outline: 2px solid hsl(var(--primary)) !important;\n  outline-offset: -2px;\n}\n\n/* O usa Configuración → Terminal → Indicador de foco del espacio de trabajo → Borde en el panel enfocado */',
+    '/* Ejemplos: usa !important para superar la especificidad de las utilidades de Tailwind */\n\n/* Pestaña superior seleccionada. Si no defines estas variables, se conserva el aspecto actual. */\n.top-tab[data-active="true"] {\n  --top-tab-active-bg: #2563eb;\n  --top-tab-active-fg: #ffffff;\n  --top-tab-active-border: #1d4ed8;\n}\n\n/* Oculta el botón de lista de hosts en la barra de pestañas superior */\n[data-section="top-tabs-host-tree-toggle"] {\n  width: 0 !important;\n  opacity: 0 !important;\n  pointer-events: none !important;\n}\n\n/* Oculta el botón + que abre el selector rápido */\n[data-section="top-tabs-quick-switcher-toggle"] {\n  display: none !important;\n}\n\n/* Borde alrededor del panel SFTP / lateral (no persiste tras cerrarlo) */\n[data-section="terminal-side-panel"] {\n  border: 2px solid #00c851 !important;\n  border-radius: 6px !important;\n}\n\n/* Cambia el fondo de todo el panel lateral, no solo las pestañas superiores */\n[data-section="terminal-side-panel"],\n[data-section="terminal-side-panel-tabs"],\n[data-section="terminal-side-panel-content"],\n[data-section="terminal-sftp-panel"],\n[data-section="terminal-sftp-pane"],\n[data-section="terminal-sftp-list"],\n[data-section="terminal-sftp-tree"],\n[data-section="terminal-sftp-transfer-queue"] {\n  background-color: #1c384a !important;\n}\n\n/* Estiliza las filas de archivos SFTP seleccionadas */\n[data-section="terminal-sftp-list-row"][data-selected="true"] {\n  background-color: #00c851 !important;\n  color: #001b10 !important;\n}\n\n/* Divisores de división más gruesos */\n[data-section="terminal-split-resizer-bar"] {\n  background-color: hsl(var(--primary)) !important;\n  transform: scale(2) !important;\n}\n\n/* Resalta el panel dividido enfocado */\n[data-section="terminal-split-pane"][data-focused="true"] {\n  outline: 2px solid hsl(var(--primary)) !important;\n  outline-offset: -2px;\n}\n\n/* O usa Configuración → Terminal → Indicador de foco del espacio de trabajo → Borde en el panel enfocado */',
   'settings.appearance.language': 'Idioma',
   'settings.appearance.language.desc': 'Elige el idioma de la interfaz',
   'settings.appearance.uiFont': 'Fuente de la interfaz',
@@ -643,7 +659,7 @@ Resalta el panel dividido enfocado:
     'Envía el texto configurado en lugar del Enter normal al presionar Shift+Enter en la terminal.',
   'settings.terminal.behavior.shiftEnterNewlineText': 'Texto a enviar',
   'settings.terminal.behavior.shiftEnterNewlineText.desc':
-    'Usa \\n para nueva línea, \\t para tabulación, \\e para Escape y \\\\ para barra invertida.',
+    'Usa \\n para nueva línea, \\t para tabulación, \\e para Escape y \\\\ para barra invertida. Por defecto \\e\\r (Escape + Enter, la codificación clásica de Alt+Enter), que la mayoría de las CLI TUI interpretan como nueva línea.',
   'settings.terminal.behavior.shiftEnterForceText': 'Enviar texto también en modo de entrada Win32',
   'settings.terminal.behavior.shiftEnterForceText.desc':
     'Envía también el texto anterior cuando una sesión ConPTY local de Windows negocia el modo de entrada Win32. Necesario para CLI escritas en Node/Bun (Claude Code, CodeBuddy) que no pueden leer modificadores desde los registros de entrada de la consola.',
@@ -751,6 +767,10 @@ Resalta el panel dividido enfocado:
   'settings.terminal.section.connection': 'Conexión',
   'settings.terminal.connection.verifyHostKeys': 'Verificar las claves de host SSH',
   'settings.terminal.connection.verifyHostKeys.desc': 'Pregunta antes de conectarse a una clave de host SSH nueva o modificada. Desactívalo solo en redes privadas de confianza.',
+  'settings.terminal.connection.temporaryLegacyAlgorithms': 'Permitir algoritmos heredados en conexiones temporales',
+  'settings.terminal.connection.temporaryLegacyAlgorithms.desc': 'Las conexiones SSH sin un host guardado, incluidos los inicios al estilo PuTTY y la conexión rápida, ofrecen los mismos algoritmos obsoletos que la opción por host. Los hosts guardados conservan su propio ajuste. Desactivado de forma predeterminada; estos algoritmos tienen debilidades conocidas.',
+  'settings.terminal.connection.temporaryNetworkDeviceMode': 'Modo de dispositivo de red para conexiones temporales',
+  'settings.terminal.connection.temporaryNetworkDeviceMode.desc': 'Las conexiones SSH sin un host guardado, incluidos los inicios externos y la conexión rápida, se inician en modo de dispositivo de red. Los hosts y grupos guardados conservan su propio tipo de dispositivo. Desactivado de forma predeterminada.',
   'settings.terminal.connection.sshAutoReconnectEnabled': 'Reconectar sesiones SSH automáticamente',
   'settings.terminal.connection.sshAutoReconnectEnabled.desc': 'Cuando está activado, las sesiones SSH establecidas que se caen inesperadamente intentan reconectarse cada 5 segundos hasta que la pestaña se cierra o la conexión se establece.',
   'settings.terminal.connection.keepaliveInterval': 'Intervalo de keepalive',
@@ -760,6 +780,9 @@ Resalta el panel dividido enfocado:
   'settings.terminal.connection.x11Display': 'Pantalla X11',
   'settings.terminal.connection.x11Display.desc': 'Dirección de pantalla local opcional para el reenvío X11. Déjala vacía para usar el valor predeterminado del sistema.',
   'settings.terminal.connection.x11Display.placeholder': 'Auto (:0 o DISPLAY)',
+  'settings.terminal.connection.defaultProxy': 'Proxy predeterminado',
+  'settings.terminal.connection.defaultProxy.desc': 'Proxy guardado que se usa cuando el host no tiene uno propio y no hereda ninguno de un grupo. Ninguno conecta directamente.',
+  'settings.terminal.connection.defaultProxy.none': 'Ninguno',
   'settings.terminal.section.serverStats': 'Estadísticas del servidor (Linux)',
   'settings.terminal.hostInfoBar.show': 'Mostrar barra de información del host',
   'settings.terminal.hostInfoBar.show.desc': 'Muestra la dirección del host y la información del servidor sobre la terminal. Los botones de acción siguen disponibles cuando está oculta.',
@@ -772,8 +795,8 @@ Resalta el panel dividido enfocado:
   'settings.terminal.systemManager.processRefreshInterval.desc': 'Con qué frecuencia actualizar la lista de procesos en el panel lateral del administrador del sistema.',
   'settings.terminal.systemManager.tmuxRefreshInterval': 'Actualización de sesiones tmux',
   'settings.terminal.systemManager.tmuxRefreshInterval.desc': 'Con qué frecuencia actualizar la lista de sesiones tmux.',
-  'settings.terminal.systemManager.dockerListRefreshInterval': 'Actualización de la lista de contenedores Docker',
-  'settings.terminal.systemManager.dockerListRefreshInterval.desc': 'Con qué frecuencia actualizar la lista de contenedores Docker.',
+  'settings.terminal.systemManager.dockerListRefreshInterval': 'Actualización de la lista de contenedores',
+  'settings.terminal.systemManager.dockerListRefreshInterval.desc': 'Con qué frecuencia actualizar las listas de contenedores y pods.',
   'settings.terminal.systemManager.dockerStatsRefreshInterval': 'Actualización de estadísticas Docker',
   'settings.terminal.systemManager.dockerStatsRefreshInterval.desc': 'Con qué frecuencia actualizar las estadísticas de CPU/memoria/red de los contenedores Docker.',
   'settings.terminal.serverStats.show': 'Mostrar estadísticas del servidor',
