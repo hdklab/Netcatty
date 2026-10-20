@@ -147,6 +147,8 @@ export const ruTerminalMessages: Messages = {
   'terminal.serverStats.latency': 'Сетевая задержка SSH',
   'terminal.serverStats.networkDetails': 'Сетевые интерфейсы',
   'terminal.serverStats.noData': 'Данные недоступны',
+  'terminal.serverStats.stale': 'Обновление системных показателей остановилось',
+  'terminal.serverStats.staleHint': 'Новых измерений нет с {time}. Переподключите эту вкладку, чтобы возобновить обновление.',
   'terminal.dragDrop.localTitle': 'Перетащите для вставки путей',
   'terminal.dragDrop.localMessage': 'Пути к файлам будут вставлены в терминал',
   'terminal.dragDrop.remoteTitle': 'Перетащите для загрузки файлов',

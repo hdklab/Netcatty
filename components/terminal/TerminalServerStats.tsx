@@ -1,5 +1,5 @@
-import React from 'react';
-import { Activity, ArrowDownToLine, ArrowUpFromLine, Cpu, Gpu, HardDrive, MemoryStick } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Activity, AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Cpu, Gpu, HardDrive, MemoryStick } from 'lucide-react';
 
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { cn } from '../../lib/utils';
@@ -7,6 +7,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from '../ui/hover-card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { formatNetSpeed } from './terminalHelpers';
 import { useServerStats } from '../../application/state/useServerStats';
+import { isServerStatsStale } from '../../application/state/serverStatsStaleness';
 import { formatDiskCapacityRange, resolveTerminalDiskSummary } from './serverStatsFormat';
 
 interface TerminalServerStatsProps {
@@ -38,12 +39,27 @@ export const TerminalServerStats: React.FC<TerminalServerStatsProps> = ({
   isConnected,
 }) => {
   const { t } = useI18n();
-  const { stats: serverStats } = useServerStats({
+  const { stats: serverStats, error: statsError } = useServerStats({
     sessionId,
     enabled,
     refreshInterval,
     isSupportedOs,
     isConnected,
+  });
+  // Staleness is a function of wall-clock age, so the strip needs its own tick:
+  // once polling fails no stats update arrives to trigger a re-render.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!statsError) return undefined;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 5000);
+    return () => window.clearInterval(timer);
+  }, [statsError]);
+  const stale = isServerStatsStale({
+    error: statsError,
+    lastUpdated: serverStats.lastUpdated,
+    refreshIntervalSeconds: refreshInterval,
+    now,
   });
   const hasNetworkDetails = serverStats.netInterfaces.length > 0;
   const hasLatency = serverStats.latencyMs !== null;
@@ -52,7 +68,28 @@ export const TerminalServerStats: React.FC<TerminalServerStatsProps> = ({
   if (!enabled || !isConnected || !serverStats.lastUpdated) return null;
 
   return (
-              <div className="terminal-server-stats flex items-center gap-2 ml-1 text-[10px] opacity-80 flex-nowrap overflow-hidden min-w-0 shrink">
+              <div className={cn(
+                "terminal-server-stats flex items-center gap-2 ml-1 text-[10px] flex-nowrap overflow-hidden min-w-0 shrink",
+                stale ? "opacity-45" : "opacity-80",
+              )}>
+                {stale && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        className="flex items-center text-amber-500 flex-shrink-0 cursor-default"
+                        aria-label={t("terminal.serverStats.stale")}
+                        data-server-stats-stale="true"
+                      >
+                        <AlertTriangle size={10} />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      {t("terminal.serverStats.staleHint", {
+                        time: new Date(serverStats.lastUpdated).toLocaleTimeString(),
+                      })}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 {/* CPU with HoverCard for per-core details */}
                 <HoverCard openDelay={200} closeDelay={100}>
                   <HoverCardTrigger asChild>

@@ -557,6 +557,8 @@ export const zhCNVaultMessages: Messages = {
   'terminal.serverStats.latency': 'SSH 网络延迟',
   'terminal.serverStats.networkDetails': '网络接口',
   'terminal.serverStats.noData': '暂无数据',
+  'terminal.serverStats.stale': '系统状态已停止更新',
+  'terminal.serverStats.staleHint': '自 {time} 起没有新的采样。重新连接该标签可恢复系统状态。',
   'terminal.dragDrop.localTitle': '拖放以插入路径',
   'terminal.dragDrop.localMessage': '文件路径将被插入到终端',
   'terminal.dragDrop.remoteTitle': '拖放以上传文件',

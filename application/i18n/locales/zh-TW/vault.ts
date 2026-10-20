@@ -557,6 +557,8 @@ export const zhTWVaultMessages: Messages = {
   'terminal.serverStats.latency': 'SSH 網路延遲',
   'terminal.serverStats.networkDetails': '網路介面',
   'terminal.serverStats.noData': '暫無資料',
+  'terminal.serverStats.stale': '系統狀態已停止更新',
+  'terminal.serverStats.staleHint': '自 {time} 起沒有新的取樣。重新連線此分頁可恢復系統狀態。',
   'terminal.dragDrop.localTitle': '拖放以插入路徑',
   'terminal.dragDrop.localMessage': '檔案路徑將被插入到終端',
   'terminal.dragDrop.remoteTitle': '拖放以上傳檔案',

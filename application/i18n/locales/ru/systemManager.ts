@@ -32,6 +32,7 @@ export const ruSystemManagerMessages: Messages = {
   'systemManager.errors.loadPorts': 'Не удалось загрузить слушающие порты',
   'systemManager.errors.loadServices': 'Не удалось загрузить службы systemd',
   'systemManager.errors.sshChannelUnavailable': 'Сервер отказался открыть новый канал выполнения. Повторите попытку позже или переподключите этот хост.',
+  'systemManager.errors.channelStalled': 'Это соединение больше не может открывать каналы выполнения. Переподключите этот хост, чтобы снова пользоваться системной панелью.',
   'systemManager.unsupportedRemote': 'Этот хост не разрешает дополнительные SSH exec-каналы, поэтому системная панель недоступна. Открытие панели больше не разрывает терминал.',
 
   'systemManager.overview.empty': 'Данных обзора пока нет.',

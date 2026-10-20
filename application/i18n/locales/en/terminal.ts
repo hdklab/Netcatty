@@ -126,6 +126,8 @@ export const enTerminalMessages: Messages = {
   'terminal.serverStats.latency': 'SSH network latency',
   'terminal.serverStats.networkDetails': 'Network Interfaces',
   'terminal.serverStats.noData': 'No data available',
+  'terminal.serverStats.stale': 'System stats stopped updating',
+  'terminal.serverStats.staleHint': 'No new reading since {time}. Reconnect this tab to resume system stats.',
   'terminal.dragDrop.localTitle': 'Drop to Insert Paths',
   'terminal.dragDrop.localMessage': 'File paths will be inserted into the terminal',
   'terminal.dragDrop.remoteTitle': 'Drop to Upload Files',

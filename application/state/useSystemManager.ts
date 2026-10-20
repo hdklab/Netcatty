@@ -5,23 +5,12 @@ import { sessionCapabilitiesStore } from './sessionCapabilitiesStore';
 import type { SessionCapabilities } from '../../domain/systemManager/types';
 import type { useSystemManagerBackend } from './useSystemManagerBackend';
 import { nextPollData } from '../../domain/systemManager/pollListStable';
+import { describeSystemManagerError } from './systemManagerErrorMessages';
 
 type Backend = ReturnType<typeof useSystemManagerBackend>;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function normalizePollingErrorMessage(error: unknown, t: I18nContextValue['t']): string {
-  const message = error instanceof Error ? error.message : String(error || 'Unknown error');
-  const lower = message.toLowerCase();
-  if (lower.includes('extra exec channels')) {
-    return t('systemManager.unsupportedRemote');
-  }
-  if (lower.includes('channel open failure') || lower.includes('unable to exec')) {
-    return t('systemManager.errors.sshChannelUnavailable');
-  }
-  return message;
 }
 
 /** Stable i18n ref so polling fetchers do not reset when locale re-renders. */
@@ -225,7 +214,7 @@ export function usePolling<T>(
       setData(null);
       hasDataRef.current = false;
       setErrorKey(runResetKey);
-      setError(normalizePollingErrorMessage(err, stableT));
+      setError(describeSystemManagerError(err, stableT));
     } finally {
       if (inflightRef.current?.runId === runId) {
         inflightRef.current = null;

@@ -126,6 +126,8 @@ export const esTerminalMessages: Messages = {
   'terminal.serverStats.latency': 'Latencia de red SSH',
   'terminal.serverStats.networkDetails': 'Interfaces de red',
   'terminal.serverStats.noData': 'No hay datos disponibles',
+  'terminal.serverStats.stale': 'Las estadísticas del sistema dejaron de actualizarse',
+  'terminal.serverStats.staleHint': 'Sin nuevas lecturas desde {time}. Vuelve a conectar esta pestaña para reanudar las estadísticas.',
   'terminal.dragDrop.localTitle': 'Soltar para insertar rutas',
   'terminal.dragDrop.localMessage': 'Las rutas de los archivos se insertarán en la terminal',
   'terminal.dragDrop.remoteTitle': 'Soltar para subir archivos',

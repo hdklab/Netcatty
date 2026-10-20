@@ -34,6 +34,7 @@ import {
 import { SystemPanelConfirmDialog } from './SystemPanelConfirmDialog';
 import { SystemPanelPromptDialog } from './SystemPanelPromptDialog';
 import { usePolling, useStableTranslate } from '../../application/state/useSystemManager';
+import { describeSystemManagerError } from '../../application/state/systemManagerErrorMessages';
 import {
   getCachedProcessList,
   setCachedProcessList,
@@ -400,24 +401,24 @@ export const ProcessManagerTab = memo(function ProcessManagerTab({
     try {
       const result = await backend.signalSystemProcess({ sessionId, pid, signal });
       if (!result.success) {
-        setActionError(result.error || t('systemManager.errors.actionFailed'));
+        setActionError(describeSystemManagerError(result.error, stableT) || t('systemManager.errors.actionFailed'));
         return;
       }
       void refresh();
     } finally {
       setSignalBusy(false);
     }
-  }, [backend, refresh, sessionId, t]);
+  }, [backend, refresh, sessionId, stableT, t]);
 
   const reniceProcess = useCallback(async (pid: number, nice: number) => {
     setActionError(null);
     const result = await backend.signalSystemProcess({ sessionId, pid, nice });
     if (!result.success) {
-      setActionError(result.error || t('systemManager.errors.actionFailed'));
+      setActionError(describeSystemManagerError(result.error, stableT) || t('systemManager.errors.actionFailed'));
       return;
     }
     void refresh();
-  }, [backend, refresh, sessionId, t]);
+  }, [backend, refresh, sessionId, stableT, t]);
 
   const openRenicePrompt = useCallback((pid: number) => {
     setReniceTarget(pid);

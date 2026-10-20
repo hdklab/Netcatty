@@ -3,6 +3,7 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import { useI18n } from '../../application/i18n/I18nProvider';
 import type { useSystemManagerBackend } from '../../application/state/useSystemManagerBackend';
 import { usePolling, useStableTranslate } from '../../application/state/useSystemManager';
+import { describeSystemManagerError } from '../../application/state/systemManagerErrorMessages';
 import { listeningPortInfoEqual } from '../../domain/systemManager/pollEquals';
 import type { ListeningPortInfo } from '../../domain/systemManager/types';
 import { SystemPanelConfirmDialog } from './SystemPanelConfirmDialog';
@@ -136,14 +137,14 @@ export const PortsManagerTab = memo(function PortsManagerTab({
         return;
       }
       if (!result.success) {
-        setActionError(result.error || t('systemManager.errors.actionFailed'));
+        setActionError(describeSystemManagerError(result.error, stableT) || t('systemManager.errors.actionFailed'));
         return;
       }
       void refresh();
     } finally {
       if (sessionIdRef.current === requestedSessionId) setKillBusy(false);
     }
-  }, [backend, refresh, sessionId, t]);
+  }, [backend, refresh, sessionId, stableT, t]);
 
   return (
     <SystemPanelShell section="system-manager-ports">

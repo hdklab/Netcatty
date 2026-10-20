@@ -32,6 +32,7 @@ export const zhCnSystemManagerMessages: Messages = {
   'systemManager.errors.loadPorts': '加载监听端口失败',
   'systemManager.errors.loadServices': '加载 systemd 服务失败',
   'systemManager.errors.sshChannelUnavailable': '服务器拒绝打开新的执行通道。请稍后重试，或重新连接当前主机。',
+  'systemManager.errors.channelStalled': '这条连接已无法再打开执行通道。请重新连接该主机后再使用系统面板。',
   'systemManager.unsupportedRemote': '该主机不允许额外的 SSH 执行通道，系统面板不可用。打开此面板不会再断开当前终端。',
 
   'systemManager.overview.empty': '暂无系统概览数据。',
