@@ -164,3 +164,33 @@ test("optional GPU channel-open timeout neither disconnects SSH nor stacks repea
   await tick();
   assert.ok(closed > 0);
 });
+
+test("a slow GPU channel open recovers after the late reply instead of latching off", async (t) => {
+  let now = 100000;
+  let calls = 0;
+  const callbacks = [];
+  t.mock.method(Date, "now", () => now);
+  const conn = {
+    exec(_command, cb) {
+      calls += 1;
+      callbacks.push(cb);
+    },
+    end() {},
+    destroy() {},
+  };
+  startMonitorGpuProbe(conn, "gpu", { openingTimeoutMs: 2 });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(calls, 1);
+  // The link answered late: the fence is released and the probe may run again.
+  callbacks[0](null, stream());
+  await tick();
+  // Back off genuinely: the timeout arm must not retry on the next sample.
+  now += 30000;
+  startMonitorGpuProbe(conn, "gpu", { openingTimeoutMs: 2 });
+  await tick();
+  assert.equal(calls, 1, "a timed-out probe must back off");
+  now += 30001;
+  startMonitorGpuProbe(conn, "gpu", { openingTimeoutMs: 2 });
+  await tick();
+  assert.equal(calls, 2, "one slow open must not disable GPU sampling permanently");
+});

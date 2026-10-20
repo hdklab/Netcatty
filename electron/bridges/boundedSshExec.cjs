@@ -10,7 +10,16 @@ const DEFAULT_SSH_EXEC_MAX_OUTPUT_BYTES = 64 * 1024;
 // A best-effort probe may abandon an open without disconnecting other leases.
 // ssh2 cannot cancel that open. Fence further execs until its callback arrives,
 // bounding retained requests even when a panel keeps polling a stalled server.
-const abandonedExecOpens = new WeakMap();
+//
+// The fence must expire, though: on a peer that stopped answering channel
+// requests the callback never arrives, and a permanent fence disables every
+// auxiliary exec on that transport (server stats, system panel, history) for the
+// rest of the session while the interactive shell keeps working — nothing forces
+// a reconnect, so the user just sees frozen panels (issue: terminal stats stop
+// refreshing after a long connection). Past the grace window the transport is
+// objectively unusable for exec, so retire it and let the session reconnect.
+const DEFAULT_ABANDONED_OPEN_FENCE_MS = 60_000;
+const abandonedExecOpens = new WeakMap(); // sshClient -> { tokens: Map<object, number>, timer }
 
 function terminateSshExecStream(stream) {
   if (!stream) return;
@@ -34,6 +43,44 @@ function createAbortError(signal) {
   const error = reason instanceof Error ? reason : new Error("SSH command was aborted");
   if (!error.code) error.code = "ABORT_ERR";
   return error;
+}
+
+function clearFenceTimer(state) {
+  if (!state?.timer) return;
+  try { clearTimeout(state.timer); } catch { /* ignore */ }
+  state.timer = null;
+}
+
+function dropFence(sshClient, state) {
+  clearFenceTimer(state);
+  abandonedExecOpens.delete(sshClient);
+}
+
+/**
+ * Retire abandoned opens that never settled inside `fenceMs`.
+ *
+ * `retired > 0` means the transport already failed to answer channel requests
+ * for the whole grace window: it is dead for every auxiliary exec, so it is
+ * invalidated here (the pool drops it and the session reconnects) instead of
+ * being fenced forever. Callers report `SSH_EXEC_TRANSPORT_STALLED` so the UI
+ * can ask the user to reconnect rather than showing an internal fence message.
+ */
+function sweepAbandonedOpens(sshClient, fenceMs, now) {
+  const state = abandonedExecOpens.get(sshClient);
+  if (!state?.tokens.size) return { pending: 0, retired: 0 };
+  let retired = 0;
+  for (const [token, abandonedAt] of state.tokens) {
+    if (now - abandonedAt >= fenceMs) {
+      state.tokens.delete(token);
+      retired += 1;
+    }
+  }
+  if (retired === 0) return { pending: state.tokens.size, retired: 0 };
+  // The late ssh2 callback would only reach a transport we already gave up on;
+  // clear the fence so a replacement connection starts clean.
+  dropFence(sshClient, state);
+  invalidateSshTransport(sshClient);
+  return { pending: 0, retired };
 }
 
 function openBoundedSshExecStream(
@@ -117,9 +164,19 @@ function executeBoundedSshCommand(sshClient, command, options = {}) {
   if (!sshClient || typeof sshClient.exec !== "function") {
     return Promise.reject(new Error("SSH exec unavailable"));
   }
-  if (abandonedExecOpens.get(sshClient)?.size) {
+  const fenceMs = Number.isFinite(options.abandonedOpenFenceMs)
+    ? Math.max(0, Number(options.abandonedOpenFenceMs))
+    : DEFAULT_ABANDONED_OPEN_FENCE_MS;
+  const nowFn = typeof options.now === "function" ? options.now : Date.now;
+  const fence = sweepAbandonedOpens(sshClient, fenceMs, nowFn());
+  if (fence.pending) {
     const error = new Error("SSH exec channel open still pending on this connection");
     error.code = "SSH_EXEC_OPEN_PENDING";
+    return Promise.reject(error);
+  }
+  if (fence.retired) {
+    const error = new Error("SSH connection stopped answering exec channel requests");
+    error.code = "SSH_EXEC_TRANSPORT_STALLED";
     return Promise.reject(error);
   }
   const signal = options.signal || null;
@@ -146,14 +203,26 @@ function executeBoundedSshCommand(sshClient, command, options = {}) {
     let invoked = false;
     const abandonOpen = () => {
       if (!invoked || streamRef || settled) return;
-      let pending = abandonedExecOpens.get(sshClient);
-      if (!pending) abandonedExecOpens.set(sshClient, pending = new Set());
-      pending.add(openToken);
+      let state = abandonedExecOpens.get(sshClient);
+      if (!state) {
+        state = { tokens: new Map(), timer: null };
+        abandonedExecOpens.set(sshClient, state);
+      }
+      state.tokens.set(openToken, nowFn());
+      if (state.timer || !(fenceMs > 0)) return;
+      // Sweep on a timer as well: a closed panel means nothing retries this
+      // connection, and a stalled transport must still retire on its own.
+      state.timer = setTimeout(() => {
+        state.timer = null;
+        sweepAbandonedOpens(sshClient, fenceMs, nowFn());
+      }, fenceMs + 1);
+      state.timer?.unref?.();
     };
     const releaseAbandonedOpen = () => {
       const pending = abandonedExecOpens.get(sshClient);
-      pending?.delete(openToken);
-      if (pending?.size === 0) abandonedExecOpens.delete(sshClient);
+      if (!pending) return;
+      pending.tokens.delete(openToken);
+      if (pending.tokens.size === 0) dropFence(sshClient, pending);
     };
 
     const cleanup = () => {
@@ -318,6 +387,7 @@ module.exports = {
   DEFAULT_SSH_EXEC_OPEN_TIMEOUT_MS,
   DEFAULT_SSH_EXEC_RUN_TIMEOUT_MS,
   DEFAULT_SSH_EXEC_MAX_OUTPUT_BYTES,
+  DEFAULT_ABANDONED_OPEN_FENCE_MS,
   executeBoundedSshCommand,
   openBoundedSshExecStream,
   openBoundedSshExecStreamCallback,

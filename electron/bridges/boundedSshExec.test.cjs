@@ -388,3 +388,72 @@ for (const abandon of ['timeout', 'abort']) {
     assert.equal(destroyed, 0);
   });
 }
+
+test("an abandoned exec open retires its transport instead of fencing it forever", async () => {
+  let callback;
+  let destroyed = 0;
+  const client = {
+    exec(_command, next) { callback = next; },
+    end() { destroyed += 1; },
+    destroy() { destroyed += 1; },
+  };
+  let clock = 1_000;
+  const now = () => clock;
+  await assert.rejects(
+    executeBoundedSshCommand(client, "stats", {
+      openingTimeoutMs: 2,
+      invalidateOnOpenTimeout: false,
+      abandonedOpenFenceMs: 100,
+      now,
+    }),
+    { code: "SSH_EXEC_OPEN_TIMEOUT" },
+  );
+  // Inside the grace window the fence still bounds retries: no second open.
+  await assert.rejects(
+    executeBoundedSshCommand(client, "stats", { abandonedOpenFenceMs: 100, now }),
+    { code: "SSH_EXEC_OPEN_PENDING" },
+  );
+  assert.equal(destroyed, 0, "a shared transport must survive the grace window");
+
+  clock += 100;
+  await assert.rejects(
+    executeBoundedSshCommand(client, "stats", { abandonedOpenFenceMs: 100, now }),
+    { code: "SSH_EXEC_TRANSPORT_STALLED" },
+  );
+  assert.ok(destroyed > 0, "a stalled transport must be retired so the session can reconnect");
+
+  // The late channel-open answer still settles without touching other work.
+  const lateStream = createStream();
+  callback(null, lateStream);
+  assert.ok(lateStream.closed > 0 || lateStream.destroyed > 0);
+});
+
+test("a fence released by a late reply leaves the connection usable", async () => {
+  let callback;
+  let opens = 0;
+  const client = {
+    exec(_command, next) { opens += 1; callback = next; },
+    end() {},
+    destroy() {},
+  };
+  await assert.rejects(
+    executeBoundedSshCommand(client, "stats", {
+      openingTimeoutMs: 2,
+      invalidateOnOpenTimeout: false,
+      abandonedOpenFenceMs: 60_000,
+    }),
+    { code: "SSH_EXEC_OPEN_TIMEOUT" },
+  );
+  await assert.rejects(executeBoundedSshCommand(client, "stats"), { code: "SSH_EXEC_OPEN_PENDING" });
+
+  const late = createStream();
+  callback(null, late);
+
+  const retry = executeBoundedSshCommand(client, "stats");
+  const stream = createStream();
+  callback(null, stream);
+  stream.emit("data", Buffer.from("ok"));
+  stream.emit("close", 0);
+  assert.equal((await retry).stdout, "ok");
+  assert.equal(opens, 2);
+});

@@ -9,6 +9,13 @@ const EMPTY_GPU = {
   gpuMemTotal: null,
 };
 const states = new WeakMap();
+// An optional probe must not decide "this host has no GPU" from one slow
+// channel open: a loaded link (VPN/bastion/mobile) can take seconds to accept a
+// channel while the interactive shell keeps working. Keep the deadline generous
+// and back off on failure; the exec executor retires a truly stalled transport.
+const GPU_PROBE_TIMEOUT_MS = 8000;
+const GPU_PROBE_RETRY_MS = 60_000;
+const GPU_PROBE_FENCED_BACKOFF_MS = 30_000;
 function stateFor(conn) {
   let state = states.get(conn);
   if (!state) {
@@ -18,7 +25,6 @@ function stateFor(conn) {
       pending: null,
       controller: null,
       updatedAt: 0,
-      disabled: false,
     };
     states.set(conn, state);
   }
@@ -74,7 +80,7 @@ function cacheFullGpuStats(conn, stats) {
 /** Optional GPU work never joins the CPU/memory sampler or its history clock. */
 function startMonitorGpuProbe(conn, command, options = {}) {
   const state = stateFor(conn);
-  if (state.disabled || state.pending || Date.now() < state.nextAt) return;
+  if (state.pending || Date.now() < state.nextAt) return;
   const controller = new AbortController();
   state.controller = controller;
   state.nextAt = Date.now() + 30000;
@@ -85,8 +91,8 @@ function startMonitorGpuProbe(conn, command, options = {}) {
         signal: controller.signal,
         invalidateTransportOnAbort: false,
         invalidateOnOpenTimeout: false,
-        openingTimeoutMs: 2500,
-        runTimeoutMs: 2500,
+        openingTimeoutMs: options.openingTimeoutMs ?? GPU_PROBE_TIMEOUT_MS,
+        runTimeoutMs: options.runTimeoutMs ?? GPU_PROBE_TIMEOUT_MS,
         maxOutputBytes: 65536,
       }),
     )
@@ -97,9 +103,22 @@ function startMonitorGpuProbe(conn, command, options = {}) {
     })
     .catch((error) => {
       // A timed-out channel open cannot be withdrawn from ssh2's request FIFO.
-      // Keep this optional probe from disconnecting SSH or piling up requests.
-      if (error?.code === "SSH_EXEC_OPEN_TIMEOUT") state.disabled = true;
-      if (!controller.signal.aborted) updateGpuStats(state, EMPTY_GPU);
+      // Keep this optional probe from disconnecting SSH or piling up requests,
+      // and never latch it off: back off and try again once the transport is
+      // usable, so one slow open cannot remove the GPU column for good.
+      if (controller.signal.aborted) return;
+      if (error?.code === "SSH_EXEC_OPEN_PENDING") {
+        state.nextAt = Date.now() + GPU_PROBE_FENCED_BACKOFF_MS;
+        return;
+      }
+      if (
+        error?.code === "SSH_EXEC_OPEN_TIMEOUT"
+        || error?.code === "SSH_EXEC_TRANSPORT_STALLED"
+      ) {
+        state.nextAt = Date.now() + GPU_PROBE_RETRY_MS;
+        return;
+      }
+      updateGpuStats(state, EMPTY_GPU);
     })
     .finally(() => {
       state.pending = null;
