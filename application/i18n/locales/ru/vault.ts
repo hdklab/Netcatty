@@ -1056,7 +1056,7 @@ export const ruVaultMessages: Messages = {
   'hostDetails.ftp.insecure': 'Не проверять сертификат TLS',
   'hostDetails.ftp.username': 'Пользователь FTP (необязательно)',
   'hostDetails.ftp.password': 'Пароль FTP (необязательно)',
-  'hostDetails.ftp.hint': 'Файлы, перетащенные в терминал telnet или последовательного порта, загружаются по FTP в текущий каталог терминала (требуется lftp).',
+  'hostDetails.ftp.hint': 'Файлы, перетащенные в терминал telnet или последовательного порта, загружаются по FTP в текущий каталог терминала.',
   'hostDetails.tags': 'Теги',
   'hostDetails.group': 'Группа',
   'hostDetails.selectGroup': 'Выберите группу',

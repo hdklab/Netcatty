@@ -6,7 +6,7 @@
  * Netcatty has three file-browsing modes behind one IPC surface:
  *   - SFTP   — ssh2 SFTP channel (`client.sftp`), the default;
  *   - SCP    — a shell on the host, for servers with no SFTP subsystem;
- *   - FTP    — an external `lftp` driver, for devices with no SSH at all
+ *   - FTP    — the built-in FTP/FTPS client, for devices with no SSH at all
  *              (telnet/serial boxes whose only file service is FTP).
  *
  * The SCP and FTP backends expose the same method set (list/stat/mkdir/remove/

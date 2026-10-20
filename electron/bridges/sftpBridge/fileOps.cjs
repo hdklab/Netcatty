@@ -156,7 +156,7 @@ function createFileOpsApi(ctx) {
       if (!client) throw new Error("SFTP session not found");
 
       // FTP mode: the server's own LIST is the only listing available, so no
-      // encoding probing and no shell fallback — one lftp `cls -l` per call.
+      // encoding probing and no shell fallback — one listing per call.
       if (isFtpModeClient(client)) {
         const backend = resolveRemoteFileBackend(client);
         const basePath = payload.path || ".";
@@ -664,7 +664,7 @@ function createFileOpsApi(ctx) {
         if (isScpModeClient(client) || isFtpModeClient(client)) {
           // Abort in-flight work first so agent Stop/timeout via closeSftp
           // actually stops transfers without a serialized AbortSignal:
-          // shell exec channels for SCP, the running lftp child for FTP.
+          // shell exec channels for SCP, the open FTP control connection for FTP.
           try { abortScpClientStreams(client); } catch { /* ignore */ }
           try { client.__netcattyFtpBackend?.abortAll?.(); } catch { /* ignore */ }
           // Only tear down SSH sockets we own (fresh dials not registered in the
@@ -1144,7 +1144,7 @@ function createFileOpsApi(ctx) {
       throwIfAborted(signal);
 
       if (isFtpModeClient(client)) {
-        // Learned when the session was probed at connect time (one lftp `pwd`).
+        // Learned when the session was probed at connect time (one PWD).
         return { success: true, homeDir: client.__netcattyFtpHomeDir || "/" };
       }
 

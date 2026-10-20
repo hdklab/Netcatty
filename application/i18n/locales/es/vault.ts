@@ -1009,7 +1009,7 @@ export const esVaultMessages: Messages = {
   'hostDetails.ftp.insecure': 'Omitir la verificación del certificado TLS',
   'hostDetails.ftp.username': 'Usuario FTP (opcional)',
   'hostDetails.ftp.password': 'Contraseña FTP (opcional)',
-  'hostDetails.ftp.hint': 'Los archivos que se sueltan en una terminal telnet o serie se suben por FTP al directorio actual de la terminal (requiere lftp).',
+  'hostDetails.ftp.hint': 'Los archivos que se sueltan en una terminal telnet o serie se suben por FTP al directorio actual de la terminal.',
   'hostDetails.tags': 'Etiquetas',
   'hostDetails.group': 'Grupo',
   'hostDetails.selectGroup': 'Seleccionar grupo',

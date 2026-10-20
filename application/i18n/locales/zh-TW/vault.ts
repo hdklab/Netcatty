@@ -391,7 +391,7 @@ export const zhTWVaultMessages: Messages = {
   'hostDetails.ftp.insecure': '略過 TLS 憑證檢查',
   'hostDetails.ftp.username': 'FTP 使用者名稱（選填）',
   'hostDetails.ftp.password': 'FTP 密碼（選填）',
-  'hostDetails.ftp.hint': '拖進 telnet／序列埠終端的檔案會透過 FTP 上傳到終端目前目錄（需要本機安裝 lftp）。',
+  'hostDetails.ftp.hint': '拖進 telnet／序列埠終端的檔案會透過 FTP 上傳到終端目前目錄。',
   'hostDetails.tags': '標籤',
   'hostDetails.group': '群組',
   'hostDetails.selectGroup': '選擇群組',

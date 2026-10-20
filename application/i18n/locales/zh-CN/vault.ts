@@ -391,7 +391,7 @@ export const zhCNVaultMessages: Messages = {
   'hostDetails.ftp.insecure': '跳过 TLS 证书校验',
   'hostDetails.ftp.username': 'FTP 用户名（可选）',
   'hostDetails.ftp.password': 'FTP 密码（可选）',
-  'hostDetails.ftp.hint': '拖到 telnet / 串口终端里的文件会通过 FTP 上传到终端当前目录（需要本机安装 lftp）。',
+  'hostDetails.ftp.hint': '拖到 telnet / 串口终端里的文件会通过 FTP 上传到终端当前目录。',
   'hostDetails.tags': '标签',
   'hostDetails.group': '分组',
   'hostDetails.selectGroup': '选择分组',

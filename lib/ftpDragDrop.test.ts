@@ -17,7 +17,6 @@ test("a telnet host with FTP enabled and a known cwd yields an upload plan", () 
   const result = resolveFtpDropPlan({
     host: makeHost({ ftpUsername: "fw", ftpPassword: "s3cret", ftpPort: 2121, ftpSecure: true, ftpInsecure: true }),
     remoteDir: "/var/tmp/oem",
-    lftpAvailable: true,
   });
   assert.equal(result.ok, true);
   if (!result.ok) return;
@@ -36,7 +35,6 @@ test("FTP credentials fall back: ftp* -> telnet* -> resolved identity -> host", 
   const telnetOnly = resolveFtpDropPlan({
     host: makeHost({ telnetUsername: "telnet-user", telnetPassword: "telnet-pass" }),
     remoteDir: "/tmp",
-    lftpAvailable: true,
   });
   assert.equal(telnetOnly.ok && telnetOnly.plan.user, "telnet-user");
   assert.equal(telnetOnly.ok && telnetOnly.plan.password, "telnet-pass");
@@ -44,7 +42,6 @@ test("FTP credentials fall back: ftp* -> telnet* -> resolved identity -> host", 
   const identityOnly = resolveFtpDropPlan({
     host: makeHost(),
     remoteDir: "/tmp",
-    lftpAvailable: true,
     credentials: { username: "identity-user", password: "identity-pass" },
   });
   assert.equal(identityOnly.ok && identityOnly.plan.user, "identity-user");
@@ -53,7 +50,6 @@ test("FTP credentials fall back: ftp* -> telnet* -> resolved identity -> host", 
   const hostOnly = resolveFtpDropPlan({
     host: makeHost({ username: "host-user", password: "host-pass" }),
     remoteDir: "/tmp",
-    lftpAvailable: true,
   });
   assert.equal(hostOnly.ok && hostOnly.plan.user, "host-user");
   assert.equal(hostOnly.ok && hostOnly.plan.password, "host-pass");
@@ -63,7 +59,6 @@ test("an FTP username wins over the telnet one, and blank values are ignored", (
   const result = resolveFtpDropPlan({
     host: makeHost({ ftpUsername: "  ftp-user  ", telnetUsername: "telnet-user", telnetPassword: "telnet-pass" }),
     remoteDir: "/tmp",
-    lftpAvailable: true,
   });
   assert.equal(result.ok && result.plan.user, "ftp-user");
   assert.equal(result.ok && result.plan.password, "telnet-pass");
@@ -71,7 +66,7 @@ test("an FTP username wins over the telnet one, and blank values are ignored", (
 
 test("the default port is 21 whenever no usable port is configured", () => {
   for (const ftpPort of [undefined, 0, -1, Number.NaN]) {
-    const result = resolveFtpDropPlan({ host: makeHost({ ftpPort }), remoteDir: "/tmp", lftpAvailable: true });
+    const result = resolveFtpDropPlan({ host: makeHost({ ftpPort }), remoteDir: "/tmp" });
     assert.equal(result.ok && result.plan.port, 21, `port for ${String(ftpPort)}`);
   }
 });
@@ -80,7 +75,7 @@ test("protocols that already have SFTP never use the FTP path", () => {
   assert.equal(supportsFtpDragDrop({ protocol: "ssh" } as never), false);
   assert.equal(supportsFtpDragDrop({ protocol: "telnet", moshEnabled: true } as never), false);
   assert.equal(supportsFtpDragDrop({ protocol: "telnet", etEnabled: true } as never), false);
-  const result = resolveFtpDropPlan({ host: makeHost({ protocol: "ssh" }), remoteDir: "/tmp", lftpAvailable: true });
+  const result = resolveFtpDropPlan({ host: makeHost({ protocol: "ssh" }), remoteDir: "/tmp" });
   assert.deepEqual(result, { ok: false, reason: "unsupported-protocol" });
 });
 
@@ -88,14 +83,12 @@ test("each refusal reports a reason the UI can explain", () => {
   const cases: Array<[Record<string, unknown>, Partial<Parameters<typeof resolveFtpDropPlan>[0]>, string]> = [
     [{ ftpEnabled: false }, {}, "disabled"],
     [{ hostname: "" }, {}, "no-host"],
-    [{}, { lftpAvailable: false }, "no-lftp"],
   ];
   for (const [override, extra, reason] of cases) {
     const result = resolveFtpDropPlan({
       host: makeHost(override),
       remoteDir: "/tmp",
-      lftpAvailable: true,
-      ...extra,
+        ...extra,
     });
     assert.deepEqual(result, { ok: false, reason }, `reason for ${reason}`);
   }
@@ -131,12 +124,11 @@ test("a device that never reports a cwd still uploads, into the FTP login direct
     const result = resolveFtpDropPlan({
       host: makeHost(),
       remoteDir,
-      lftpAvailable: true,
-    });
+      });
     assert.equal(result.ok, true, `remoteDir=${JSON.stringify(remoteDir)} plans`);
     assert.equal(result.ok && result.plan.remoteDir, null, "no directory means the login dir");
   }
 
-  const withCwd = resolveFtpDropPlan({ host: makeHost(), remoteDir: "/mnt/flash", lftpAvailable: true });
+  const withCwd = resolveFtpDropPlan({ host: makeHost(), remoteDir: "/mnt/flash" });
   assert.equal(withCwd.ok && withCwd.plan.remoteDir, "/mnt/flash");
 });

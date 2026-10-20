@@ -52,7 +52,7 @@ function asPort(value) {
 }
 
 function createFtpHandlerApi() {
-  /** Handler: upload local files over FTP/FTPS (external lftp). */
+  /** Handler: upload local files over FTP/FTPS (built-in client). */
   async function handleFtpUpload(params = {}) {
     const host = String(params.host ?? "").trim();
     if (!host) return { ok: false, code: "invalid-request", error: "host is required" };

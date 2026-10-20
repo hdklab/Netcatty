@@ -6,11 +6,11 @@ import type { Host } from "../types";
  * FTP is the third transfer backend for a file dropped on a terminal, after
  * SFTP (ssh/mosh/et) and ZMODEM (`rz`). It exists for the sessions that have no
  * SFTP at all — telnet, serial, local — on hosts whose operator enabled FTP:
- * the drop is uploaded with the external `lftp` client straight into the
+ * the drop is uploaded with the built-in FTP/FTPS client straight into the
  * terminal's tracked current directory, so the file lands where the shell is.
  *
  * Everything here is pure so the decision can be tested without a terminal,
- * a network, or an installed lftp.
+ * a network, or a running FTP server.
  */
 
 export type FtpDropPlan = {
@@ -31,7 +31,7 @@ export type FtpDropPlan = {
 
 export type FtpDropPlanResult =
   | { ok: true; plan: FtpDropPlan }
-  | { ok: false; reason: "unsupported-protocol" | "disabled" | "no-host" | "no-lftp" };
+  | { ok: false; reason: "unsupported-protocol" | "disabled" | "no-host" };
 
 /** Protocols that never have an SFTP subsystem to fall back on. */
 const FTP_ELIGIBLE_PROTOCOLS = new Set(["telnet", "serial", "local"]);
@@ -61,18 +61,15 @@ export function resolveFtpDropPlan(options: {
   >;
   /** The terminal's tracked current directory; the upload target. */
   remoteDir?: string | null;
-  /** Whether an `lftp` executable was found on this machine. */
-  lftpAvailable: boolean;
   /** Credentials already resolved through host auth (host or Keychain identity). */
   credentials?: { username?: string; password?: string };
 }): FtpDropPlanResult {
-  const { host, remoteDir, lftpAvailable, credentials } = options;
+  const { host, remoteDir, credentials } = options;
   if (!supportsFtpDragDrop(host)) return { ok: false, reason: "unsupported-protocol" };
   if (!host.ftpEnabled) return { ok: false, reason: "disabled" };
   const hostname = String(host.hostname ?? "").trim();
   if (!hostname) return { ok: false, reason: "no-host" };
   const target = String(remoteDir ?? "").trim();
-  if (!lftpAvailable) return { ok: false, reason: "no-lftp" };
 
   const user = firstNonEmpty(host.ftpUsername, host.telnetUsername, credentials?.username, host.username);
   const password = firstNonEmpty(host.ftpPassword, host.telnetPassword, credentials?.password, host.password);

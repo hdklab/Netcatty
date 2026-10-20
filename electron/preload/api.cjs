@@ -15,7 +15,13 @@ function createPreloadApi(ctx) {
   const updateSourceChangedListeners = ctx.updateSourceChangedListeners || new Set();
   const uploadStageControllers = new Map();
   const hostBrowserPanelListeners = new Set();
+  const ftpUploadProgressListeners = new Set();
   const pendingHostBrowserPanels = [];
+  // FTP/FTPS drag-drop uploads: the main process pushes throttled byte counts so
+  // the transfer center can draw a determinate row instead of a spinner.
+  ctx.ipcRenderer?.on?.("netcatty:ftp:upload-progress", (_event, progress) => {
+    for (const listener of ftpUploadProgressListeners) listener(progress);
+  });
   // TerminalLayer mounts lazily; retain incoming requests until it subscribes.
   ctx.ipcRenderer?.on?.("netcatty:host-browser:request-panel", (_event, request) => {
     if (!hostBrowserPanelListeners.size) {
@@ -705,21 +711,20 @@ function createPreloadApi(ctx) {
       uploadCommand,
     });
   },
-  // External `lftp` transfers (FTP/FTPS) for sessions that have no SFTP of
-  // their own; used by the terminal drag-and-drop path.
+  // Built-in FTP/FTPS transfers (basic-ftp in the main process) for sessions
+  // that have no SFTP of their own; used by the terminal drag-and-drop path.
   ftpCapabilities: () => {
     return ipcRenderer.invoke("netcatty:ftp:capabilities");
   },
-  // Settings → 文件传输: explicit lftp binary path, so machines without lftp on
-  // PATH (Windows, minimal-PATH macOS bundles) can still use FTP hosts.
-  ftpSetLftpPath: (path) => {
-    return ipcRenderer.invoke("netcatty:ftp:set-lftp-path", path);
-  },
-  ftpGetLftpStatus: () => {
-    return ipcRenderer.invoke("netcatty:ftp:lftp-status");
-  },
   ftpUpload: (payload) => {
     return ipcRenderer.invoke("netcatty:ftp:upload", payload);
+  },
+  ftpCancelUpload: (uploadId) => {
+    return ipcRenderer.invoke("netcatty:ftp:cancel-upload", uploadId);
+  },
+  onFtpUploadProgress: (cb) => {
+    ftpUploadProgressListeners.add(cb);
+    return () => ftpUploadProgressListeners.delete(cb);
   },
   onZmodemOverwriteRequest: (sessionId, cb) => {
     if (!zmodemOverwriteListeners.has(sessionId)) zmodemOverwriteListeners.set(sessionId, new Set());

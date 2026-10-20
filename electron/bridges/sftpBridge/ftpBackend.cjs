@@ -1,48 +1,42 @@
 'use strict';
 
 /**
- * FTP file-protocol backend (external `lftp` driver).
+ * FTP file-protocol backend (in-process `basic-ftp` client).
  *
  * Netcatty browses SSH hosts with ssh2 and shell-only hosts through the SCP
  * backend; a device that speaks neither — a telnet/serial box with an FTP
  * server, which is the normal shape of embedded equipment — had no file browser
  * at all, and asking the SFTP pane for one dialled SSH on the *telnet* port and
  * hung there forever. This backend gives the file panel a third mode: every
- * operation is one `lftp` script against the FTP/FTPS endpoint, shaped like the
- * SCP backend so fileOps and transferBridge keep working unchanged.
+ * operation runs over one FTP/FTPS control connection, shaped like the SCP
+ * backend so fileOps and transferBridge keep working unchanged.
+ *
+ * Why a library instead of the old external `lftp` driver: lftp ships no
+ * official Windows binary (only Cygwin/MSYS builds with a DLL bag), its macOS
+ * builds drag a dylib chain, and it is GPLv3. `basic-ftp` is MIT, has no
+ * dependencies, runs the same on every platform and gives byte-level transfer
+ * progress, so nothing has to be installed by the user.
  *
  * Contract notes:
- *   - The password only ever lives inside the 0600 script (see ftpBridge.cjs);
- *     it is never passed in argv.
+ *   - One Client (one control connection) per backend, and basic-ftp allows no
+ *     parallel commands, so every operation is serialized on one promise chain.
+ *   - Credentials live in `client.access(...)` only; no argv, no temp script.
  *   - FTP exposes no chmod, no symlink metadata, and no per-path stat. stat() is
  *     therefore one listing of the parent directory, which every server speaks.
- *   - Every operation is its own lftp process; handles are tracked so closeSftp
- *     can kill an in-flight operation.
+ *   - An abort closes the socket (the only way to interrupt a transfer), and the
+ *     next operation reconnects transparently.
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { runLftpCommands } = require('../ftpBridge.cjs');
-const { parseLsModeToPermissions, lsModeToNumber } = require('./scpShell.cjs');
+const { Writable, Readable } = require('node:stream');
+const { Client } = require('basic-ftp');
 
-const DEFAULT_OP_TIMEOUT_MS = 30_000;
-/** 0 lets ftpBridge apply its own ceiling (120 s) for whole-file transfers. */
-const DEFAULT_TRANSFER_TIMEOUT_MS = 0;
-const PROGRESS_POLL_MS = 400;
 /**
- * `ls -l`-style listings, which is what lftp's `cls -l` prints.
- * The link-count column is optional: lftp's own rendering omits it, while a raw
- * server LIST (embedded devices) usually carries it — e.g.
- * `-rwxr-xr-x    1 0        0          114924 Jan  1  1970 fw.bin`.
+ * Socket inactivity timeout, not a cap on total transfer time: a large upload
+ * over a slow link may take as long as it takes, it just may not stall.
  */
-const LISTING_LINE_RE = /^(?<type>[-dlbcpsD])(?<mode>[rwxsStT-]{9})\s+(?:(?<links>\d+)\s+)?(?<owner>\S+)\s+(?<group>\S+)\s+(?<size>\d+)\s+(?<month>[A-Za-z]{3,})\s+(?<day>\d{1,2})\s+(?<timeOrYear>\d{2}:\d{2}|\d{4})\s+(?<name>.+)$/;
-/** MS-DOS style listings (rare on these devices, but cheap to accept). */
-const MSDOS_LINE_RE = /^(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(AM|PM)\s+(<DIR>|\d+)\s+(.+)$/i;
-const SKIP_LINE_RE = /^\s*(total\s+\d+|total\s*)$/i;
-const MONTHS = {
-  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
-};
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 class FtpBackendError extends Error {
   constructor(message, code, cause) {
@@ -66,202 +60,95 @@ function getFtpBackendForClient(client) {
   return client.__netcattyFtpBackend;
 }
 
-/** Map an lftp failure onto the codes fileOps already understands. */
-function mapLftpFailure(result) {
-  const message = scrubCredentials(result?.error || result?.stderr || 'FTP operation failed').trim();
-  const text = message.toLowerCase();
-  if (/no such file|not found|not exist|\b550\b/.test(text)) return new FtpBackendError(message, 'ENOENT');
-  if (/login failed|not logged in|\b530\b/.test(text)) return new FtpBackendError(message, 'EAUTH');
-  if (/permission denied|access failed|\b553\b/.test(text)) return new FtpBackendError(message, 'EACCES');
-  if (result?.code === 'timeout') return new FtpBackendError('The FTP server did not answer in time', 'ETIMEDOUT');
-  if (result?.code === 'lftp-not-found') {
-    return new FtpBackendError(
-      'lftp is not installed. Install it (apt install lftp / brew install lftp) and retry.',
-      'LFTP_NOT_FOUND',
-    );
-  }
-  return new FtpBackendError(message, result?.code || 'EFTP');
-}
-
-/** Resolve an `ls -l` date column (year or time-of-day) to epoch ms. */
-function resolveListingDate(monthName, day, timeOrYear, now = new Date()) {
-  const month = MONTHS[String(monthName || '').toLowerCase().slice(0, 3)];
-  const dayNumber = Number(day);
-  if (month === undefined || !Number.isFinite(dayNumber) || dayNumber < 1 || dayNumber > 31) return undefined;
-
-  if (/^\d{4}$/.test(timeOrYear)) {
-    return new Date(Number(timeOrYear), month, dayNumber).getTime();
-  }
-  const match = /^(\d{2}):(\d{2})$/.exec(timeOrYear);
-  if (!match) return undefined;
-  const year = now.getFullYear();
-  const candidate = new Date(year, month, dayNumber, Number(match[1]), Number(match[2]));
-  // A listing without a year means "this year"; a date more than a day ahead of
-  // the local clock is a file from last year (ls does the same rounding).
-  if (candidate.getTime() > now.getTime() + 24 * 60 * 60 * 1000) {
-    candidate.setFullYear(year - 1);
-  }
-  return candidate.getTime();
-}
-
 /**
- * Parse one listing line into a browser record.
- * Handles lftp's normalized `cls -l` output and plain `ls -l` output; returns
- * null for `total`/blank lines and for anything unparseable.
- */
-function parseListingLine(line, { now = new Date() } = {}) {
-  const text = String(line || '').replace(/\r$/, '');
-  if (!text.trim() || SKIP_LINE_RE.test(text)) return null;
-
-  const msdos = MSDOS_LINE_RE.exec(text);
-  if (msdos) {
-    const [, monthText, dayText, yearText, hourText, minuteText, meridiem, sizeText, name] = msdos;
-    let hours = Number(hourText) % 12;
-    if (String(meridiem).toUpperCase() === 'PM') hours += 12;
-    const isDirectory = sizeText === '<DIR>';
-    return {
-      name: stripTrailingSlash(name),
-      type: isDirectory ? 'directory' : 'file',
-      linkTarget: null,
-      size: isDirectory ? 0 : Number(sizeText) || 0,
-      modifyTime: new Date(
-        2000 + Number(yearText),
-        Number(monthText) - 1,
-        Number(dayText),
-        hours,
-        Number(minuteText),
-      ).getTime(),
-      permissions: undefined,
-      owner: undefined,
-    };
-  }
-
-  const match = LISTING_LINE_RE.exec(text);
-  if (!match?.groups) return null;
-  // Named groups: the link-count column is optional, so positional groups
-  // would silently shift when a server omits it.
-  const {
-    type: typeChar,
-    mode: modeText,
-    owner,
-    group,
-    size: sizeText,
-    month: monthText,
-    day: dayText,
-    timeOrYear,
-    name: rawName,
-  } = match.groups;
-
-  let name = rawName;
-  let linkTarget = null;
-  const arrow = name.indexOf(' -> ');
-  if (arrow !== -1) {
-    linkTarget = name.slice(arrow + 4).trim();
-    name = name.slice(0, arrow);
-  }
-  name = stripTrailingSlash(name).replace(/^\.\//, '');
-  if (!name || name === '.' || name === '..') return null;
-
-  const isDirectory = typeChar === 'd';
-  const isSymlink = typeChar === 'l' || linkTarget !== null;
-  // lftp prints dashes when the server's LIST has no usable permission bits.
-  const permissions = /[rwxs-]{9}/.test(modeText) && /[rwx]/.test(modeText)
-    ? parseLsModeToPermissions(`-${modeText}`)
-    : undefined;
-  const mode = permissions ? lsModeToNumber(`-${modeText}`) : undefined;
-
-  return {
-    name,
-    type: isDirectory ? 'directory' : isSymlink ? 'symlink' : 'file',
-    linkTarget,
-    size: isDirectory ? 0 : Number(sizeText) || 0,
-    modifyTime: resolveListingDate(monthText, dayText, timeOrYear, now),
-    permissions,
-    mode,
-    owner: owner && !/^\d+$/.test(owner) ? owner : undefined,
-    group: group || undefined,
-  };
-}
-
-function stripTrailingSlash(value) {
-  return String(value || '').replace(/\/+$/, '');
-}
-
-/**
- * lftp renders the current directory as `ftp://user:password@host:port/path`
- * (pwd output, and some error strings). The password must never leave the
- * backend, so credential-bearing URLs are stripped wherever lftp output is
- * turned into data, and `open -u user,pass` echoes are redacted as well.
+ * Strip a credential pair from anything that may reach the renderer or a log.
+ * basic-ftp redacts `PASS` in its own verbose output, but an error string built
+ * from user input could still echo `user:password@host`.
  */
 function scrubCredentials(text) {
   return String(text ?? '')
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]*@/gi, '$1')
-    .replace(/(-u\s+)[^\s,]+,[^\s]+/g, '$1[REDACTED]');
-}
-
-/** Pull the remote path out of an lftp URL line (`ftp://user:pass@h:21/tmp`). */
-function pathFromLftpUrlLine(line) {
-  const text = scrubCredentials(String(line || '').trim());
-  const urlMatch = /^[a-z][a-z0-9+.-]*:\/\/[^/]*(\/.*)?$/i.exec(text);
-  if (urlMatch) return urlMatch[1] || '/';
-  return text;
-}
-
-function parseListing(stdout, options = {}) {
-  const records = [];
-  for (const line of String(stdout || '').split('\n')) {
-    const record = parseListingLine(line, options);
-    if (record) records.push(record);
-  }
-  return records;
+    .replace(/(-u\s+)[^\s,]+,[^\s]+/g, '$1[REDACTED]')
+    .replace(/(password[^:]*:\s*)\S+/gi, '$1[REDACTED]');
 }
 
 /**
- * Fallback listing: `cls -1` prints bare names (directories suffixed with `/`),
- * used when a server's long listing is a format we cannot parse. Types are then
- * only as good as the trailing slash, which beats showing nothing at all.
+ * Map a basic-ftp / socket failure onto the codes fileOps already understands.
+ * FTP reply codes are the reliable signal; the text is only a fallback for the
+ * servers that answer 550 for "access denied" as well as "no such file".
  */
-function parseNameListing(stdout) {
-  const records = [];
-  for (const rawLine of String(stdout || '').split('\n')) {
-    const line = rawLine.replace(/\r$/, '').trim();
-    if (!line) continue;
-    const isDirectory = /\/$/.test(line);
-    const name = stripTrailingSlash(line.replace(/^\.\//, '')).split('/').pop();
-    if (!name || name === '.' || name === '..') continue;
-    records.push({
-      name,
-      type: isDirectory ? 'directory' : 'file',
-      linkTarget: null,
-      size: 0,
-      modifyTime: undefined,
-      permissions: undefined,
-      unresolved: true,
-    });
+function mapFtpError(error) {
+  if (error instanceof FtpBackendError) return error;
+  const message = scrubCredentials(error?.message || 'FTP operation failed').trim();
+  const text = message.toLowerCase();
+  const reply = Number(error?.code);
+  const code = Number.isFinite(reply) ? reply : null;
+
+  if (code === 530) return new FtpBackendError(message, 'EAUTH', error);
+  if (/permission denied|access denied|not allowed|read-only/.test(text)) {
+    return new FtpBackendError(message, 'EACCES', error);
   }
-  return records;
+  if (code === 550) {
+    if (/not empty/.test(text)) return new FtpBackendError(message, 'ENOTEMPTY', error);
+    return /exist/.test(text)
+      ? new FtpBackendError(message, 'EEXIST', error)
+      : new FtpBackendError(message, 'ENOENT', error);
+  }
+  if (code === 552) return new FtpBackendError(message, 'ENOSPC', error);
+  if (code === 553) return new FtpBackendError(message, 'EACCES', error);
+  if (/timeout|timed out/.test(`${text} ${error?.code || ''}`.toLowerCase())) {
+    return new FtpBackendError('The FTP server did not answer in time', 'ETIMEDOUT', error);
+  }
+  if (error?.code === 'ENOTFOUND' || error?.code === 'EAI_AGAIN') {
+    return new FtpBackendError(message, 'ENOTFOUND', error);
+  }
+  if (error?.code === 'ECONNREFUSED' || error?.code === 'ECONNRESET' || error?.code === 'EPIPE') {
+    return new FtpBackendError(message, error.code, error);
+  }
+  if (error?.code === 'ABORT_ERR') return new FtpBackendError(message, 'ABORT_ERR', error);
+  return new FtpBackendError(message, 'EFTP', error);
 }
 
-/** Browser entry shape shared with the SCP backend. */
-function toListEntry(record) {
-  const sizeNum = Number(record.size) || 0;
+/** `rwxr-xr-x` for the file list, when the server's listing carried bits. */
+function formatUnixPermissions(permissions) {
+  if (!permissions || typeof permissions !== 'object') return undefined;
+  const bits = [permissions.user, permissions.group, permissions.world];
+  if (bits.some((value) => !Number.isFinite(Number(value)))) return undefined;
+  let text = '';
+  for (const value of bits) {
+    const mode = Number(value);
+    text += `${mode & 4 ? 'r' : '-'}${mode & 2 ? 'w' : '-'}${mode & 1 ? 'x' : '-'}`;
+  }
+  return text;
+}
+
+/**
+ * Browser entry shape shared with the SCP backend.
+ * @param {import('basic-ftp').FileInfo} info
+ */
+function toListEntry(info) {
+  const name = String(info?.name ?? '').replace(/\/+$/, '');
+  const sizeNum = Number(info?.size) || 0;
+  const isDirectory = Boolean(info?.isDirectory);
+  const isSymlink = Boolean(info?.isSymbolicLink);
+  const permissions = formatUnixPermissions(info?.permissions);
+  const modifyTime = info?.modifiedAt instanceof Date ? info.modifiedAt.getTime() : undefined;
   return {
-    name: record.name,
-    type: record.type,
-    linkTarget: record.type === 'symlink' ? record.linkTarget || null : null,
-    size: `${sizeNum} bytes`,
-    lastModified: new Date(record.modifyTime || Date.now()).toISOString(),
-    ...(record.permissions ? { permissions: record.permissions } : {}),
-    ...(record.owner ? { owner: record.owner } : {}),
-    _size: sizeNum,
-    _modifyTime: record.modifyTime,
+    name,
+    type: isDirectory ? 'directory' : isSymlink ? 'symlink' : 'file',
+    linkTarget: isSymlink ? info?.link || null : null,
+    size: `${isDirectory ? 0 : sizeNum} bytes`,
+    lastModified: new Date(modifyTime || Date.now()).toISOString(),
+    ...(permissions ? { permissions } : {}),
+    ...(info?.user ? { owner: String(info.user) } : {}),
+    ...(info?.group ? { group: String(info.group) } : {}),
+    _size: isDirectory ? 0 : sizeNum,
+    _modifyTime: modifyTime,
   };
 }
 
-function toStatResult(record, { fallbackPath } = {}) {
-  const isDirectory = record?.type === 'directory';
-  const isSymbolicLink = record?.type === 'symlink';
-  if (!record) {
+function toStatResult(info, { fallbackPath } = {}) {
+  if (!info) {
     // Root and any path we cannot see in its parent listing (a server that
     // refuses to list "/"): assume a directory rather than failing navigation.
     return {
@@ -275,21 +162,17 @@ function toStatResult(record, { fallbackPath } = {}) {
       path: fallbackPath,
     };
   }
+  const isDirectory = Boolean(info.isDirectory);
   return {
-    type: record.type,
+    type: isDirectory ? 'directory' : info.isSymbolicLink ? 'symlink' : 'file',
     isDirectory,
-    isSymbolicLink,
-    size: isDirectory ? undefined : Number(record.size) || 0,
-    modifyTime: record.modifyTime,
-    permissions: record.permissions,
-    mode: record.mode,
+    isSymbolicLink: Boolean(info.isSymbolicLink),
+    size: isDirectory ? undefined : Number(info.size) || 0,
+    modifyTime: info.modifiedAt instanceof Date ? info.modifiedAt.getTime() : undefined,
+    permissions: formatUnixPermissions(info.permissions),
+    mode: undefined,
     path: fallbackPath,
   };
-}
-
-/** Quote a remote token for lftp (double-quote grammar). */
-function quote(value) {
-  return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 function normalizeRemotePath(remotePath) {
@@ -302,7 +185,7 @@ function parentOf(remotePath) {
   const normalized = normalizeRemotePath(remotePath);
   if (normalized === '.' || normalized === '/') return null;
   const parent = path.posix.dirname(normalized);
-  if (!parent || parent === '.' ) return '/';
+  if (!parent || parent === '.') return '/';
   return parent;
 }
 
@@ -312,16 +195,23 @@ function baseNameOf(remotePath) {
   return normalized.split('/').filter(Boolean).pop() || normalized;
 }
 
-/** Read /proc/<pid>/io to estimate upload progress on Linux; 0 elsewhere. */
-function readProcessReadBytes(pid) {
-  if (!pid || process.platform !== 'linux') return 0;
-  try {
-    const text = fs.readFileSync(`/proc/${pid}/io`, 'utf8');
-    const match = /^rchar:\s*(\d+)$/m.exec(text);
-    return match ? Number(match[1]) : 0;
-  } catch {
-    return 0;
+/**
+ * A remote path goes into a raw FTP command line (`MKD <path>`), so a CR/LF in
+ * it would inject a second command. Reject the whole class instead of trimming.
+ */
+function assertSafeRemotePath(remotePath) {
+  const value = String(remotePath ?? '');
+  if (/[\r\n\0]/.test(value)) {
+    throw new FtpBackendError('Remote path contains a control character', 'EINVAL');
   }
+  return value;
+}
+
+/** Join a remote directory and a file name without doubling or dropping slashes. */
+function joinRemotePath(dir, name) {
+  const base = String(dir ?? '').trim();
+  if (!base || base === '.' || base === '/') return base === '/' ? `/${name}` : name;
+  return `${base.replace(/\/+$/, '')}/${name}`;
 }
 
 /**
@@ -330,7 +220,7 @@ function readProcessReadBytes(pid) {
  * @param {{
  *   host: string, port?: number, user?: string, password?: string,
  *   secure?: boolean, insecure?: boolean,
- *   tempDir?: string, settings?: string[], timeoutMs?: number,
+ *   tempDir?: string, timeoutMs?: number,
  *   log?: (message: string, detail?: unknown) => void,
  * }} config
  */
@@ -345,190 +235,229 @@ function createFtpBackend(config = {}) {
   };
   if (!endpoint.host) throw new FtpBackendError('FTP host is required', 'EINVAL');
 
-  const settings = ['set ftp:list-options -a', ...(Array.isArray(config.settings) ? config.settings : [])];
+  const timeoutMs = Number(config.timeoutMs) > 0 ? Number(config.timeoutMs) : DEFAULT_TIMEOUT_MS;
   const tempDir = config.tempDir;
   const log = typeof config.log === 'function' ? config.log : () => {};
-  const activeChildren = new Set();
+  /** Test seam: suites inject a scripted client instead of dialling a server. */
+  const makeClient = typeof config.clientFactory === 'function'
+    ? config.clientFactory
+    : (timeout) => new Client(timeout);
+
+  /** @type {import('basic-ftp').Client | null} */
+  let client = null;
+  /** Serializes operations: basic-ftp multiplexes nothing on one connection. */
+  let chain = Promise.resolve();
   let disposed = false;
 
   function assertUsable() {
     if (disposed) throw new FtpBackendError('FTP session is closed', 'ECONNRESET');
   }
 
-  async function run(commands, options = {}) {
-    assertUsable();
-    const signal = options.signal || null;
-    if (signal?.aborted) throw new FtpBackendError('FTP operation cancelled', 'ABORT_ERR');
-
-    const timeoutMs = Number(options.timeoutMs) > 0
-      ? Number(options.timeoutMs)
-      : (Number(config.timeoutMs) > 0 ? Number(config.timeoutMs) : undefined);
-
-    let killed = false;
-    let onAbort = null;
-    const result = await runLftpCommands({
-      ...endpoint,
-      commands,
-      settings: [...settings, ...(options.settings || [])],
-      tempDir,
-      timeoutMs,
-      scriptTag: options.scriptTag || 'op',
-      onProcess: (child) => {
-        activeChildren.add(child);
-        onAbort = () => {
-          killed = true;
-          try { child.kill('SIGKILL'); } catch { /* already gone */ }
-        };
-        if (signal) {
-          if (signal.aborted) onAbort();
-          else signal.addEventListener('abort', onAbort, { once: true });
-        }
-        child.on('close', () => activeChildren.delete(child));
-      },
-    });
-
-    if (onAbort) signal?.removeEventListener?.('abort', onAbort);
-    if (killed || signal?.aborted) throw new FtpBackendError('FTP operation cancelled', 'ABORT_ERR');
-    if (!result.ok) throw mapLftpFailure(result);
-    return result;
+  function accessOptions() {
+    return {
+      host: endpoint.host,
+      port: endpoint.port,
+      user: endpoint.user,
+      password: endpoint.password,
+      // `true` is explicit FTPS (AUTH TLS), which is what the host's
+      // "FTPS (explicit TLS)" toggle has always meant.
+      secure: endpoint.secure ? true : false,
+      ...(endpoint.secure && endpoint.insecure
+        ? { secureOptions: { rejectUnauthorized: false } }
+        : {}),
+    };
   }
 
-  /** One long-format listing of `remotePath` (cd first, so names stay bare). */
-  async function rawListing(remotePath, { signal, timeoutMs } = {}) {
-    const dir = normalizeRemotePath(remotePath);
-    const commands = [];
-    if (dir !== '.') commands.push(`cd ${quote(dir)}`);
-    commands.push('cls -l');
-    const result = await run(commands, { signal, timeoutMs, scriptTag: 'list' });
-    return scrubCredentials(result.stdout.toString('utf8'));
+  async function connect() {
+    if (client && !client.closed) return client;
+    const next = makeClient(timeoutMs);
+    next.ftp.log = (message) => log(`[FTP] ${message}`);
+    try {
+      await next.access(accessOptions());
+    } catch (error) {
+      next.close();
+      throw mapFtpError(error);
+    }
+    client = next;
+    return client;
+  }
+
+  /**
+   * Run one operation against the shared connection.
+   *
+   * @template T
+   * @param {(conn: import('basic-ftp').Client) => Promise<T>} fn
+   * @param {{ signal?: AbortSignal | null }} [options]
+   * @returns {Promise<T>}
+   */
+  function run(fn, options = {}) {
+    assertUsable();
+    const signal = options.signal || null;
+    const task = chain.then(async () => {
+      assertUsable();
+      if (signal?.aborted) throw new FtpBackendError('FTP operation cancelled', 'ABORT_ERR');
+      const conn = await connect();
+      let aborted = false;
+      const onAbort = () => {
+        aborted = true;
+        // Closing the socket is the only way to interrupt an in-flight
+        // transfer; connect() reopens on the next operation.
+        try {
+          conn.close();
+        } catch {
+          /* already closed */
+        }
+      };
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+      try {
+        return await fn(conn);
+      } catch (error) {
+        if (aborted || signal?.aborted) {
+          throw new FtpBackendError('FTP operation cancelled', 'ABORT_ERR', error);
+        }
+        throw mapFtpError(error);
+      } finally {
+        signal?.removeEventListener?.('abort', onAbort);
+        if (aborted) client = null;
+      }
+    });
+    // Keep the queue alive after a failure without swallowing it for the caller.
+    chain = task.then(() => undefined, () => undefined);
+    return task;
+  }
+
+  /** Report transfer bytes as (transferred, total) for one operation. */
+  function withProgress(conn, onProgress, total, { expect } = {}) {
+    if (typeof onProgress !== 'function') return () => {};
+    conn.trackProgress((info) => {
+      if (expect && info.type !== expect) return;
+      onProgress(Number(info.bytesOverall) || 0, total);
+    });
+    return () => conn.trackProgress();
+  }
+
+  /** One listing of `remotePath` (absolute or `.` for the login directory). */
+  async function listInfos(conn, remotePath) {
+    const dir = normalizeRemotePath(assertSafeRemotePath(remotePath));
+    const infos = await conn.list(dir === '.' ? undefined : dir);
+    return infos.filter((info) => info.name !== '.' && info.name !== '..' && info.name !== '');
+  }
+
+  /** Find one entry by listing its parent, which every FTP server supports. */
+  async function findInfo(conn, target) {
+    const parent = parentOf(target);
+    const base = baseNameOf(target);
+    const siblings = await listInfos(conn, parent ?? '/').catch(() => []);
+    const hit = siblings.find((info) => info.name === base);
+    if (hit) return hit;
+    // A server that refuses to list the parent may still list the path itself.
+    const direct = await listInfos(conn, target).catch(() => []);
+    return direct.find((info) => info.name === base) || null;
   }
 
   // ---------------------------------------------------------------- browsing
 
   async function list(remotePath, options = {}) {
-    const signal = options.signal || null;
-    const stdout = await rawListing(remotePath, { signal, timeoutMs: options.timeoutMs });
-    let records = parseListing(stdout);
-    if (records.length === 0 && stdout.trim()) {
-      // A long listing we cannot read (unusual server format) still has a
-      // name-only fallback, which at least keeps navigation possible.
-      console.log(`[FTP] Long listing was unparseable; falling back to cls -1 (${JSON.stringify(stdout.split('\n').slice(0, 5))})`);
-      const dir = normalizeRemotePath(remotePath);
-      const commands = [];
-      if (dir !== '.') commands.push(`cd ${quote(dir)}`);
-      commands.push('cls -1');
-      const names = await run(commands, { signal, scriptTag: 'list-names' });
-      records = parseNameListing(names.stdout.toString('utf8'));
-    }
-    return records.map(toListEntry);
+    return run(async (conn) => {
+      const infos = await listInfos(conn, remotePath);
+      return infos.map(toListEntry);
+    }, options);
   }
 
   async function stat(remotePath, options = {}) {
-    const signal = options.signal || null;
     const target = normalizeRemotePath(remotePath);
     if (target === '/' || target === '.') {
       return toStatResult(null, { fallbackPath: target });
     }
-    const parent = parentOf(target);
-    const base = baseNameOf(target);
-    const stdout = await rawListing(parent ?? '/', { signal, timeoutMs: options.timeoutMs });
-    const record = parseListing(stdout).find((entry) => entry.name === base);
-    if (!record) {
-      // The server may already have listed just this path.
-      const direct = parseListing(await rawListing(target, { signal, timeoutMs: options.timeoutMs }))
-        .find((entry) => entry.name === base);
-      if (direct) return toStatResult(direct, { fallbackPath: target });
-      throw new FtpBackendError(`No such file or directory: ${target}`, 'ENOENT');
-    }
-    return toStatResult(record, { fallbackPath: target });
+    return run(async (conn) => {
+      const info = await findInfo(conn, target);
+      if (!info) throw new FtpBackendError(`No such file or directory: ${target}`, 'ENOENT');
+      return toStatResult(info, { fallbackPath: target });
+    }, options);
   }
 
+  /** The login directory. */
   async function homeDir() {
-    const result = await run(['pwd'], { scriptTag: 'pwd' });
-    const line = result.stdout.toString('utf8')
-      .split('\n')
-      .map((entry) => entry.trim())
-      .filter(Boolean)
-      .pop() || '';
-    // lftp prints the endpoint URL before the path; only the path is returned.
-    return pathFromLftpUrlLine(line) || '/';
+    return run((conn) => conn.pwd());
   }
 
   async function realpath(remotePath) {
-    const target = normalizeRemotePath(remotePath);
-    const result = await run([`cd ${quote(target)}`, 'pwd'], { scriptTag: 'realpath' });
-    const line = result.stdout.toString('utf8')
-      .split('\n')
-      .map((entry) => entry.trim())
-      .filter(Boolean)
-      .pop() || '';
-    const resolved = pathFromLftpUrlLine(line);
-    return resolved.startsWith('/') ? resolved : `/${resolved}`;
+    const target = assertSafeRemotePath(normalizeRemotePath(remotePath));
+    return run(async (conn) => {
+      const before = await conn.pwd();
+      try {
+        await conn.cd(target);
+        const resolved = await conn.pwd();
+        return resolved.startsWith('/') ? resolved : `/${resolved}`;
+      } finally {
+        // `.`/relative paths in later operations resolve against the login
+        // directory, so a path lookup must not move the connection's cwd.
+        await conn.cd(before).catch(() => {});
+      }
+    });
   }
 
   // ------------------------------------------------------------------- writes
 
   async function mkdir(remotePath, options = {}) {
-    const target = normalizeRemotePath(remotePath);
+    const target = normalizeRemotePath(assertSafeRemotePath(remotePath));
     if (target === '.' || target === '/') return true;
-    if (options.recursive !== false) {
-      await ensureDir(target, { signal: options.signal || null });
-      return true;
-    }
-    await run([`mkdir -f ${quote(target)}`], { signal: options.signal || null, scriptTag: 'mkdir' });
+    await run(async (conn) => {
+      if (options.recursive === false) {
+        await conn.send(`MKD ${target}`);
+        return;
+      }
+      // ensureDir also changes the working directory, which `.`-relative
+      // operations would then see; restore it.
+      const before = await conn.pwd().catch(() => null);
+      try {
+        await conn.ensureDir(target);
+      } finally {
+        if (before) await conn.cd(before).catch(() => {});
+      }
+    }, { signal: options.signal || null });
     return true;
   }
 
-  /**
-   * lftp has no recursive mkdir and still fails on a missing parent, so the
-   * segments are created top-down. `mkdir -f` ignores an existing directory, so
-   * a failure here is real (an unwritable parent, a file in the way) and is
-   * reported instead of being swallowed — "New folder" must not lie.
-   */
-  async function ensureDir(remotePath, { signal } = {}) {
-    const target = normalizeRemotePath(remotePath);
-    if (!target || target === '.' || target === '/') return;
-    const absolute = target.startsWith('/');
-    const segments = target.split('/').filter(Boolean);
-    let current = absolute ? '' : '.';
-    for (const segment of segments) {
-      current = current === '.' ? segment : `${current}/${segment}`;
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        await run([`mkdir -f ${quote(current)}`], { signal, scriptTag: 'mkdir' });
-      } catch (error) {
-        // Some servers reject `mkdir -f` on an existing directory; only treat
-        // the segment as present when it really lists as a directory.
-        // eslint-disable-next-line no-await-in-loop
-        const attrs = await stat(current, { signal }).catch(() => null);
-        if (!attrs?.isDirectory) throw error;
-      }
+  /** Create the parent directories of `target` so an upload cannot fail on them. */
+  async function ensureParent(conn, target) {
+    const parent = parentOf(target);
+    if (!parent || parent === '.' || parent === '/' || parent === target) return;
+    const before = await conn.pwd().catch(() => null);
+    try {
+      await conn.ensureDir(parent);
+    } finally {
+      if (before) await conn.cd(before).catch(() => {});
     }
   }
 
-  /**
-   * Remove a remote path. lftp parses options *before* operands, so the flags
-   * must lead: `rm "/x" -f` makes lftp try to delete a file literally named
-   * `-f` (server answers `550 Error (/-f)`).
-   */
   async function remove(remotePath, options = {}) {
-    const target = normalizeRemotePath(remotePath);
-    const flags = options.recursive === false ? "-f" : "-rf";
-    await run([`rm ${flags} ${quote(target)}`], { signal: options.signal || null, scriptTag: "remove" });
+    const target = normalizeRemotePath(assertSafeRemotePath(remotePath));
+    await run(async (conn) => {
+      const info = await findInfo(conn, target).catch(() => null);
+      if (info?.isDirectory) {
+        if (options.recursive === false) await conn.removeEmptyDir(target);
+        else await conn.removeDir(target);
+        return;
+      }
+      // A file (or an entry we could not see): REMOVE is also what an empty
+      // directory needs, and a missing path is reported as ENOENT rather than
+      // silently succeeding.
+      await conn.remove(target);
+    }, { signal: options.signal || null });
     return true;
   }
 
   async function unlink(remotePath, options = {}) {
-    const target = normalizeRemotePath(remotePath);
-    await run([`rm -f ${quote(target)}`], { signal: options.signal || null, scriptTag: "unlink" });
+    const target = normalizeRemotePath(assertSafeRemotePath(remotePath));
+    await run((conn) => conn.remove(target), { signal: options.signal || null });
     return true;
   }
 
   async function rename(oldPath, newPath, options = {}) {
-    await run(
-      [`mv ${quote(normalizeRemotePath(oldPath))} ${quote(normalizeRemotePath(newPath))}`],
-      { signal: options.signal || null, scriptTag: 'rename' },
-    );
+    const from = assertSafeRemotePath(normalizeRemotePath(oldPath));
+    const to = assertSafeRemotePath(normalizeRemotePath(newPath));
+    await run((conn) => conn.rename(from, to), { signal: options.signal || null });
     return true;
   }
 
@@ -545,176 +474,140 @@ function createFtpBackend(config = {}) {
 
   // ------------------------------------------------------------------ content
 
+  /** Collect a download into a Buffer without spilling to a temp file. */
   async function readFile(remotePath, options = {}) {
     const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : null;
     if (maxBytes) {
       const attrs = await stat(remotePath, options).catch(() => null);
       if (attrs && Number.isFinite(attrs.size) && attrs.size > maxBytes) {
-        const error = new FtpBackendError(
-          `Remote file is too large to read into memory (${attrs.size} bytes; maximum ${maxBytes} bytes).`,
-          'SFTP_READ_TOO_LARGE',
-        );
-        error.maxBytes = maxBytes;
-        error.actualBytes = attrs.size;
-        throw error;
+        throw tooLarge(attrs.size, maxBytes);
       }
     }
-    const result = await run([`cat ${quote(normalizeRemotePath(remotePath))}`], {
-      signal: options.signal || null,
-      timeoutMs: options.timeoutMs,
-      scriptTag: 'read',
+    const chunks = [];
+    let total = 0;
+    const sink = new Writable({
+      write(chunk, _encoding, callback) {
+        total += chunk.length;
+        if (maxBytes && total > maxBytes) {
+          callback(tooLarge(total, maxBytes));
+          return;
+        }
+        chunks.push(chunk);
+        callback();
+      },
     });
-    if (maxBytes && result.stdout.length > maxBytes) {
-      const error = new FtpBackendError(
-        `Remote file is too large to read into memory (maximum ${maxBytes} bytes).`,
-        'SFTP_READ_TOO_LARGE',
-      );
-      error.maxBytes = maxBytes;
-      error.actualBytes = result.stdout.length;
-      throw error;
-    }
-    return result.stdout;
+    const target = normalizeRemotePath(assertSafeRemotePath(remotePath));
+    await run((conn) => conn.downloadTo(sink, target), { signal: options.signal || null });
+    return Buffer.concat(chunks);
+  }
+
+  function tooLarge(actualBytes, maxBytes) {
+    const error = new FtpBackendError(
+      `Remote file is too large to read into memory (${actualBytes} bytes; maximum ${maxBytes} bytes).`,
+      'SFTP_READ_TOO_LARGE',
+    );
+    error.maxBytes = maxBytes;
+    error.actualBytes = actualBytes;
+    return error;
   }
 
   async function writeFile(remotePath, content, options = {}) {
-    const target = normalizeRemotePath(remotePath);
+    const target = normalizeRemotePath(assertSafeRemotePath(remotePath));
     const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content ?? '');
-    const staged = stageLocalFile(buffer, tempDir, 'write');
-    const signal = options.signal || null;
-    try {
-      const parent = parentOf(target);
-      const commands = [];
-      if (parent && parent !== '.' && parent !== '/') {
-        await ensureDir(parent, { signal });
-        commands.push(`cd ${quote(parent)}`);
-      }
-      commands.push(`put ${quote(staged)} -o ${quote(baseNameOf(target))}`);
-      await run(commands, { signal, scriptTag: 'write' });
-      return true;
-    } finally {
-      removeLocalFile(staged);
-    }
+    await run(async (conn) => {
+      await ensureParent(conn, target);
+      const source = new Readable({
+        read() {
+          this.push(buffer);
+          this.push(null);
+        },
+      });
+      await conn.uploadFrom(source, target);
+    }, { signal: options.signal || null });
+    return true;
   }
 
   async function uploadFile(localPath, remotePath, options = {}) {
-    const signal = options.signal || null;
-    const target = normalizeRemotePath(remotePath);
-    const parent = parentOf(target);
+    const target = normalizeRemotePath(assertSafeRemotePath(remotePath));
     const expectedSize = Number(options.fileSize) > 0
       ? Number(options.fileSize)
       : (() => {
         try { return fs.statSync(localPath).size; } catch { return 0; }
       })();
-
     const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
     onProgress?.(0, expectedSize);
 
-    if (parent && parent !== '/' && parent !== '.') await ensureDir(parent, { signal });
+    await run(async (conn) => {
+      await ensureParent(conn, target);
+      const stopProgress = withProgress(conn, onProgress, expectedSize, { expect: 'upload' });
+      try {
+        await conn.uploadFrom(localPath, target);
+      } finally {
+        stopProgress();
+      }
+    }, { signal: options.signal || null });
 
-    const commands = [];
-    if (parent && parent !== '.') commands.push(`cd ${quote(parent)}`);
-    commands.push(`put ${quote(localPath)} -o ${quote(baseNameOf(target))}`);
-
-    let childPid = null;
-    const poll = onProgress && expectedSize > 0
-      ? setInterval(() => {
-        const read = readProcessReadBytes(childPid);
-        if (read > 0) onProgress(Math.min(read, expectedSize), expectedSize);
-      }, PROGRESS_POLL_MS)
-      : null;
-    poll?.unref?.();
-
-    try {
-      await run(commands, {
-        signal,
-        timeoutMs: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_TRANSFER_TIMEOUT_MS,
-        scriptTag: 'put',
-        onProcess: (child) => { childPid = child.pid ?? null; },
-      });
-    } finally {
-      if (poll) clearInterval(poll);
-    }
     onProgress?.(expectedSize, expectedSize);
     return true;
   }
 
   /**
-   * FTP has no streaming read; the file is staged in the app temp dir and then
-   * piped into the caller's writable, reporting progress from the staged file.
+   * Stream a download straight into the caller's writable (no staging file).
+   * basic-ftp ends the stream it is given, so it gets our own sink which
+   * forwards chunks and leaves the caller's writable open for the next file.
    */
   async function downloadToWritable(remotePath, writable, options = {}) {
-    const staged = await downloadToTempFile(remotePath, options);
-    const stagedPath = staged.path;
+    const target = normalizeRemotePath(assertSafeRemotePath(remotePath));
+    const expectedSize = Number(options.fileSize) > 0 ? Number(options.fileSize) : 0;
+    const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
     let transferred = 0;
-    let onWritableError = null;
+
+    const sink = new Writable({
+      write(chunk, _encoding, callback) {
+        transferred += chunk.length;
+        onProgress?.(transferred, expectedSize || transferred);
+        if (writable.write(chunk)) {
+          callback();
+          return;
+        }
+        // Honour backpressure from the caller instead of buffering the file.
+        writable.once('drain', callback);
+      },
+    });
+    const onWritableError = (error) => {
+      try { sink.destroy(error); } catch { /* already gone */ }
+    };
+    writable.on?.('error', onWritableError);
+
     try {
-      await new Promise((resolve, reject) => {
-        const stream = fs.createReadStream(stagedPath, { highWaterMark: 256 * 1024 });
-        let settled = false;
-        const fail = (error) => {
-          if (settled) return;
-          settled = true;
-          try { stream.destroy(); } catch { /* ignore */ }
-          reject(error);
-        };
-        onWritableError = fail;
-        writable.on('error', fail);
-        stream.on('error', fail);
-        stream.on('data', (chunk) => {
-          transferred += chunk.length;
-          if (typeof options.onProgress === 'function') {
-            options.onProgress(transferred, Number(options.fileSize) || staged.size);
-          }
-        });
-        stream.on('end', () => {
-          if (!settled) {
-            settled = true;
-            resolve();
-          }
-        });
-        stream.pipe(writable, { end: false });
-      });
-      return { bytes: staged.size };
+      await run((conn) => conn.downloadTo(sink, target), { signal: options.signal || null });
+      return { bytes: transferred };
     } finally {
-      if (onWritableError) writable.removeListener?.('error', onWritableError);
-      removeLocalFile(stagedPath);
+      writable.removeListener?.('error', onWritableError);
     }
   }
 
+  /**
+   * Download into `localPath` atomically: the bytes land in a sibling `.part`
+   * file and are renamed only once the size matches, so a partial transfer never
+   * shows up as a finished file.
+   */
   async function downloadFile(remotePath, localPath, options = {}) {
-    const signal = options.signal || null;
-    const target = normalizeRemotePath(remotePath);
     const expectedSize = Number(options.fileSize) > 0 ? Number(options.fileSize) : 0;
     const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
-
     fs.mkdirSync(path.dirname(localPath), { recursive: true });
     const tempPath = `${localPath}.nc-ftp-part`;
     removeLocalFile(tempPath);
     onProgress?.(0, expectedSize);
 
-    const commands = [`get ${quote(target)} -o ${quote(tempPath)}`];
-    const poll = onProgress
-      ? setInterval(() => {
-        let current = 0;
-        try { current = fs.statSync(tempPath).size; } catch { current = 0; }
-        if (current > 0) onProgress(current, expectedSize || current);
-      }, PROGRESS_POLL_MS)
-      : null;
-    poll?.unref?.();
-
     try {
-      await run(commands, {
-        signal,
-        timeoutMs: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_TRANSFER_TIMEOUT_MS,
-        scriptTag: 'get',
-      });
-    } finally {
-      if (poll) clearInterval(poll);
+      await downloadToLocalFile(remotePath, tempPath, { ...options, onProgress });
+    } catch (error) {
+      removeLocalFile(tempPath);
+      throw error;
     }
 
-    const downloadedSize = (() => {
-      try { return fs.statSync(tempPath).size; } catch { return 0; }
-    })();
+    const downloadedSize = fileSize(tempPath);
     if (expectedSize > 0 && downloadedSize !== expectedSize) {
       removeLocalFile(tempPath);
       throw new FtpBackendError(
@@ -727,48 +620,47 @@ function createFtpBackend(config = {}) {
     return { bytes: downloadedSize };
   }
 
+  async function downloadToLocalFile(remotePath, localPath, options = {}) {
+    const target = normalizeRemotePath(assertSafeRemotePath(remotePath));
+    const expectedSize = Number(options.fileSize) > 0 ? Number(options.fileSize) : 0;
+    await run(async (conn) => {
+      const stopProgress = withProgress(conn, options.onProgress, expectedSize, { expect: 'download' });
+      try {
+        await conn.downloadTo(localPath, target);
+      } finally {
+        stopProgress();
+      }
+    }, { signal: options.signal || null });
+  }
+
   /**
    * Stage a download in the app temp dir first. The pane's in-memory reads and
    * the editor both go through this path when a partial write must not be
-   * visible, and it gives the transfer row a pollable byte counter.
+   * visible.
    */
   async function downloadToTempFile(remotePath, options = {}) {
-    const target = normalizeRemotePath(remotePath);
+    const target = normalizeRemotePath(assertSafeRemotePath(remotePath));
     const dir = tempDir || require('node:os').tmpdir();
     fs.mkdirSync(dir, { recursive: true });
-    const stagedPath = path.join(dir, `nc-ftp-${process.pid}-${Date.now()}-${baseNameOf(target) || 'download'}`);
-    const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
-    const poll = onProgress
-      ? setInterval(() => {
-        let current = 0;
-        try { current = fs.statSync(stagedPath).size; } catch { current = 0; }
-        if (current > 0) onProgress(current, Number(options.fileSize) || current);
-      }, PROGRESS_POLL_MS)
-      : null;
-    poll?.unref?.();
+    const stagedPath = path.join(
+      dir,
+      `nc-ftp-${process.pid}-${Date.now()}-${baseNameOf(target) || 'download'}`,
+    );
     try {
-      await run([`get ${quote(target)} -o ${quote(stagedPath)}`], {
-        signal: options.signal || null,
-        timeoutMs: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_TRANSFER_TIMEOUT_MS,
-        scriptTag: 'get',
-      });
+      await downloadToLocalFile(target, stagedPath, options);
     } catch (error) {
       removeLocalFile(stagedPath);
       throw error;
-    } finally {
-      if (poll) clearInterval(poll);
     }
-    let size = 0;
-    try { size = fs.statSync(stagedPath).size; } catch { size = 0; }
-    return { path: stagedPath, size };
+    return { path: stagedPath, size: fileSize(stagedPath) };
   }
 
-  function stageLocalFile(buffer, dir, tag) {
-    const targetDir = dir || require('node:os').tmpdir();
-    fs.mkdirSync(targetDir, { recursive: true });
-    const stagedPath = path.join(targetDir, `nc-ftp-${process.pid}-${Date.now()}-${tag}.tmp`);
-    fs.writeFileSync(stagedPath, buffer, { mode: 0o600 });
-    return stagedPath;
+  function fileSize(filePath) {
+    try {
+      return fs.statSync(filePath).size;
+    } catch {
+      return 0;
+    }
   }
 
   function removeLocalFile(filePath) {
@@ -779,11 +671,14 @@ function createFtpBackend(config = {}) {
     }
   }
 
+  /** Close the control connection (used by closeSftp and on session teardown). */
   function abortAll() {
-    for (const child of [...activeChildren]) {
-      try { child.kill('SIGKILL'); } catch { /* ignore */ }
+    try {
+      client?.close();
+    } catch {
+      /* already closed */
     }
-    activeChildren.clear();
+    client = null;
   }
 
   function dispose() {
@@ -815,19 +710,99 @@ function createFtpBackend(config = {}) {
   };
 }
 
+/**
+ * Upload a batch of local files with one connection (terminal drag-and-drop).
+ *
+ * `onProgress(transferredBytes, totalBytes, remoteName)` reports the whole batch,
+ * not one file at a time, so the transfer center can draw a single determinate
+ * row over everything the user dropped.
+ */
+async function uploadFilesToEndpoint(options = {}) {
+  const files = Array.isArray(options.files) ? options.files : [];
+  if (files.length === 0) return { ok: false, code: 'no-files', error: 'No files to upload' };
+  if (!String(options.host || '').trim()) {
+    return { ok: false, code: 'invalid-request', error: 'FTP host is required' };
+  }
+  const backend = createFtpBackend({
+    host: options.host,
+    port: options.port,
+    user: options.user,
+    password: options.password,
+    secure: options.secure,
+    insecure: options.insecure,
+    tempDir: options.tempDir,
+    timeoutMs: options.timeoutMs,
+    log: options.log,
+    clientFactory: options.clientFactory,
+  });
+  const remoteDir = String(options.remoteDir ?? '').trim();
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+  const sizes = files.map((file) => {
+    try {
+      return fs.statSync(String(file?.localPath || '')).size;
+    } catch {
+      return 0;
+    }
+  });
+  const totalBytes = sizes.reduce((sum, size) => sum + size, 0);
+  let completedBytes = 0;
+  /** The target whose bytes are in flight, so an abort can remove the stub. */
+  let inFlightTarget = null;
+  try {
+    onProgress?.(0, totalBytes, '');
+    for (const [index, file] of files.entries()) {
+      const localPath = String(file?.localPath || '').trim();
+      if (!localPath) return { ok: false, code: 'invalid-request', error: 'file entry is missing localPath' };
+      const remoteName = String(file?.remoteName || path.basename(localPath));
+      const target = joinRemotePath(remoteDir, remoteName);
+      const fileSize = sizes[index];
+      const base = completedBytes;
+      inFlightTarget = target;
+      // eslint-disable-next-line no-await-in-loop
+      await backend.uploadFile(localPath, target, {
+        fileSize,
+        signal: options.signal || null,
+        onProgress: onProgress
+          ? (done) => onProgress(base + Math.min(Number(done) || 0, fileSize), totalBytes, remoteName)
+          : null,
+      });
+      inFlightTarget = null;
+      completedBytes += fileSize;
+      onProgress?.(completedBytes, totalBytes, remoteName);
+    }
+    return { ok: true, totalBytes };
+  } catch (error) {
+    // A cancelled upload must not leave a truncated file on the device.
+    if (error?.code === 'ABORT_ERR' && inFlightTarget) {
+      await backend.unlink(inFlightTarget).catch(() => {});
+    }
+    return {
+      ok: false,
+      code: error?.code || 'EFTP',
+      error: scrubCredentials(error?.message || String(error)),
+      totalBytes,
+      transferredBytes: completedBytes,
+    };
+  } finally {
+    backend.dispose();
+  }
+}
+
 module.exports = {
   FtpBackendError,
   createFtpBackend,
   getFtpBackendForClient,
   isFtpModeClient,
+  uploadFilesToEndpoint,
+  joinRemotePath,
   _internal: {
-    parseListing,
-    parseListingLine,
-    parseNameListing,
-    resolveListingDate,
-    mapLftpFailure,
+    mapFtpError,
     toStatResult,
+    toListEntry,
     parentOf,
     baseNameOf,
+    joinRemotePath,
+    formatUnixPermissions,
+    scrubCredentials,
   },
 };

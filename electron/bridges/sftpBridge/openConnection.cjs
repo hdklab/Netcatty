@@ -769,7 +769,7 @@ function createOpenConnectionApi(ctx) {
     
     /**
      * Open an FTP-mode file session. Nothing SSH is dialled: the endpoint is
-     * probed with a single lftp `pwd`, which validates host/port/credentials and
+     * probed with a single PWD, which validates host/port/credentials and
      * yields the directory the pane opens in.
      */
     async function openFtpSftpSession(event, options, connId) {

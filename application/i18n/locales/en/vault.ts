@@ -1019,7 +1019,7 @@ export const enVaultMessages: Messages = {
   'hostDetails.ftp.insecure': 'Skip TLS certificate verification',
   'hostDetails.ftp.username': 'FTP Username (optional)',
   'hostDetails.ftp.password': 'FTP Password (optional)',
-  'hostDetails.ftp.hint': 'Files dropped on a telnet or serial terminal are uploaded over FTP into the current directory of the terminal (requires lftp).',
+  'hostDetails.ftp.hint': 'Files dropped on a telnet or serial terminal are uploaded over FTP into the current directory of the terminal.',
   'hostDetails.tags': 'Tags',
   'hostDetails.group': 'Group',
   'hostDetails.selectGroup': 'Select Group',

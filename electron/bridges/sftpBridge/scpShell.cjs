@@ -449,7 +449,7 @@ function modeToPermissionsString(mode) {
 
 /**
  * Normalize file protocol preference from host/open options.
- * `ftp` is the lftp-backed mode for hosts with no SSH at all (telnet/serial
+ * `ftp` is the FTP-backed mode for hosts with no SSH at all (telnet/serial
  * devices that only serve FTP); see sftpBridge/ftpBackend.cjs.
  * @returns {'auto'|'sftp'|'scp'|'ftp'}
  */

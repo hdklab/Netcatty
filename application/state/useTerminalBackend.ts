@@ -518,12 +518,6 @@ export const useTerminalBackend = () => {
     return bridge.startZmodemDragDropUpload(sessionId, files, uploadCommand);
   }, []);
 
-  const ftpCapabilities = useCallback(async () => {
-    const bridge = netcattyBridge.get();
-    if (!bridge?.ftpCapabilities) return { lftp: false, lftpPath: null };
-    return bridge.ftpCapabilities();
-  }, []);
-
   const ftpUpload = useCallback(
     async (payload: Parameters<NonNullable<NetcattyBridge["ftpUpload"]>>[0]) => {
       const bridge = netcattyBridge.get();
@@ -534,6 +528,19 @@ export const useTerminalBackend = () => {
     },
     [],
   );
+
+  const onFtpUploadProgress = useCallback((
+    cb: Parameters<NonNullable<NetcattyBridge["onFtpUploadProgress"]>>[0],
+  ) => {
+    const bridge = netcattyBridge.get();
+    return bridge?.onFtpUploadProgress?.(cb) ?? (() => {});
+  }, []);
+
+  const ftpCancelUpload = useCallback(async (uploadId: string) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.ftpCancelUpload) return { ok: false, code: "unavailable" };
+    return bridge.ftpCancelUpload(uploadId);
+  }, []);
 
   const cancelZmodem = useCallback((sessionId: string, options?: { interrupt?: boolean }) => {
     const bridge = netcattyBridge.get();
@@ -621,8 +628,9 @@ export const useTerminalBackend = () => {
         selectFile,
         selectDirectory,
         startZmodemDragDropUpload,
-        ftpCapabilities,
         ftpUpload,
+        onFtpUploadProgress,
+        ftpCancelUpload,
         cancelZmodem,
         onZmodemEvent,
         execCommand,
@@ -708,8 +716,9 @@ export const useTerminalBackend = () => {
       selectFile,
       selectDirectory,
       startZmodemDragDropUpload,
-      ftpCapabilities,
       ftpUpload,
+      onFtpUploadProgress,
+      ftpCancelUpload,
       cancelZmodem,
       onZmodemEvent,
       execCommand,

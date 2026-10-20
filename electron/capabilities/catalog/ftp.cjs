@@ -3,7 +3,7 @@
 const { CAPABILITY_STATUS } = require("../constants.cjs");
 
 /**
- * FTP/FTPS transfers through the external `lftp` client.
+ * FTP/FTPS transfers through the built-in client (basic-ftp, main process).
  *
  * This is the backend for hosts that only speak FTP — typically a device you
  * reach over telnet/serial, where no SFTP subsystem exists. The terminal
@@ -21,7 +21,7 @@ const FTP_CAPABILITIES = [
     domain: "sftp",
     status: CAPABILITY_STATUS.IMPLEMENTED,
     description:
-      "Upload local files into a remote directory over FTP/FTPS using the external lftp client (for hosts without SFTP).",
+      "Upload local files into a remote directory over FTP/FTPS (for hosts without SFTP).",
     policy: {
       write: true,
       sensitiveRead: false,

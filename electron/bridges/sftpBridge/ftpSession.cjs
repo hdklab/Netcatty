@@ -5,9 +5,10 @@
  *
  * The renderer treats the file panel uniformly, so an FTP target is registered
  * in the same `sftpClients` map keyed by an `sftpId`; the only difference is that
- * its operations are served by the lftp-backed backend instead of an ssh2 SFTP
- * channel. Nothing here touches SSH: dialling SSH on a telnet device's terminal
- * port is what used to leave the file panel spinning on "Connecting…" forever.
+ * its operations are served by the in-process basic-ftp backend instead of an
+ * ssh2 SFTP channel. Nothing here touches SSH: dialling SSH on a telnet device's
+ * terminal port is what used to leave the file panel spinning on "Connecting…"
+ * forever.
  */
 
 const tempDirBridge = require('../tempDirBridge.cjs');
@@ -35,7 +36,6 @@ function buildFtpEndpointConfig(options = {}) {
     secure: Boolean(options.secure || options.ftpSecure),
     insecure: Boolean(options.insecure || options.ftpInsecure),
     tempDir: options.tempDir || resolveSessionTempDir(),
-    settings: Array.isArray(options.settings) ? options.settings : undefined,
     timeoutMs: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : undefined,
   };
 }

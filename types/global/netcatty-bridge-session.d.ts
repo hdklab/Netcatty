@@ -505,11 +505,12 @@ declare global {
       }>,
       uploadCommand?: string,
     ): Promise<{ success: boolean; error?: string }>;
-    /** Whether an external `lftp` is available for FTP/FTPS uploads. */
-    ftpCapabilities?(): Promise<{ lftp: boolean; lftpPath: string | null }>;
+    /** Whether the built-in FTP/FTPS client is available (always true today). */
+    ftpCapabilities?(): Promise<{ available: boolean }>;
     /**
-     * Upload dropped files into `remoteDir` over FTP/FTPS via lftp. Files may
-     * carry a local `path` or in-memory `data` (staged in the app temp dir).
+     * Upload dropped files into `remoteDir` over FTP/FTPS with the built-in
+     * client. Files may carry a local `path` or in-memory `data` (staged in the
+     * app temp dir).
      */
     ftpUpload?(payload: {
       host: string;
@@ -520,32 +521,23 @@ declare global {
       insecure?: boolean;
       remoteDir?: string;
       timeoutMs?: number;
+      /** Correlates the progress frames of this batch with its transfer row. */
+      uploadId?: string;
       files: Array<{ path?: string; name: string; remoteName?: string; data?: ArrayBuffer | string }>;
-    }): Promise<{ ok: boolean; code?: string; error?: string }>;
+    }): Promise<{ ok: boolean; code?: string; error?: string; totalBytes?: number; transferredBytes?: number }>;
     /**
-     * Settings → 文件传输: absolute path of the user's own `lftp`. Wins over the
-     * `NETCATTY_LFTP_PATH` env var and the PATH scan; `''` clears it.
+     * Throttled byte progress for an FTP/FTPS drag-drop upload, correlated by the
+     * `uploadId` passed to `ftpUpload`. Returns the unsubscribe function.
      */
-    ftpSetLftpPath?(path: string): Promise<{
-      ok: boolean;
-      configuredPath: string;
-      configuredUsable: boolean;
-      envPath: string;
-      resolvedPath: string | null;
-      source: 'settings' | 'env' | 'path' | 'auto' | 'none' | 'settings-invalid' | 'env-invalid';
-      autoDetected: boolean;
-      platform: string;
-    }>;
-    /** What the FTP backend would actually execute right now. */
-    ftpGetLftpStatus?(): Promise<{
-      configuredPath: string;
-      configuredUsable: boolean;
-      envPath: string;
-      resolvedPath: string | null;
-      source: 'settings' | 'env' | 'path' | 'auto' | 'none' | 'settings-invalid' | 'env-invalid';
-      autoDetected: boolean;
-      platform: string;
-    }>;
+    onFtpUploadProgress?(cb: (progress: {
+      uploadId: string;
+      transferred: number;
+      total: number;
+      speed: number;
+      fileName?: string;
+    }) => void): () => void;
+    /** Stop an in-flight FTP/FTPS drag-drop upload; the partial file is removed. */
+    ftpCancelUpload?(uploadId: string): Promise<{ ok: boolean; code?: string }>;
     onZmodemOverwriteRequest?(
       sessionId: string,
       cb: (payload: { sessionId: string; requestId: string; filename: string }) => void

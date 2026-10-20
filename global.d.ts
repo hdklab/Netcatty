@@ -143,7 +143,7 @@ declare global {
     // Use sudo for SFTP server
     sudo?: boolean;
     // Remote file protocol: auto (SFTP then SCP fallback) | sftp | scp |
-    // ftp (external lftp driver, for hosts with no SSH at all)
+    // ftp (built-in FTP/FTPS client, for hosts with no SSH at all)
     fileProtocol?: 'auto' | 'sftp' | 'scp' | 'ftp';
     // FTP/FTPS endpoint flags, only read when fileProtocol is 'ftp'
     secure?: boolean;

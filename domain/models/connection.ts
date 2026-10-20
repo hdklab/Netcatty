@@ -250,7 +250,7 @@ export interface Host {
   telnetPassword?: string; // Telnet-specific password
   // FTP/FTPS transfers for sessions that have no SFTP of their own (telnet,
   // serial, local): a file dropped on the terminal is uploaded with the
-  // external `lftp` client straight into the terminal's current directory.
+  // built-in FTP client straight into the terminal's current directory.
   ftpEnabled?: boolean; // Allow FTP/FTPS uploads for this host
   ftpPort?: number; // FTP port (default 21; implicit FTPS is often 990)
   ftpSecure?: boolean; // Use FTPS (explicit TLS) instead of plain FTP
@@ -264,7 +264,7 @@ export interface Host {
   sftpSudo?: boolean; // Use sudo for SFTP operations (requires password)
   // Remote file browser protocol: Auto tries SFTP then falls back to SCP-mode
   // (shell browse + scp -t/-f transfers) when the SFTP subsystem is unavailable.
-  // `ftp` browses and transfers with the external lftp client — the only option
+  // `ftp` browses and transfers with the built-in FTP client — the only option
   // for hosts whose terminal protocol (telnet/serial) has no SSH at all.
   sftpFileProtocol?: 'auto' | 'sftp' | 'scp' | 'ftp';
   sftpEncoding?: SftpFilenameEncoding; // Filename encoding for SFTP operations

@@ -254,7 +254,7 @@ async function executeLocalCattyCapability(ctx: LocalExecutionContext): Promise<
 
   switch (spec.capabilityId) {
     case 'ftp.upload': {
-      // FTP/FTPS transfer through the external lftp client. The bridge runs in
+      // FTP/FTPS transfer through the main process's built-in FTP client. It runs in
       // the main process, so the payload is forwarded over IPC; credentials are
       // whatever the caller supplied (the vault is not readable from here).
       const params = args as {

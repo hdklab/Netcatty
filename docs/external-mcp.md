@@ -119,7 +119,8 @@ hermes mcp list        # netcatty ✓ enabled
 
 #### `ftp_upload`（toolset `sftp_advanced`）
 
-给**没有 SFTP 的主机**（telnet / 串口设备）用的 FTP/FTPS 上传，走本机外部命令 `lftp`：
+给**没有 SFTP 的主机**（telnet / 串口设备）用的 FTP/FTPS 上传，走主进程内置的 `basic-ftp` 客户端
+（不需要在本机安装任何外部程序）：
 
 ```
 ftp_upload { host, port?, user?, password?, secure?, insecure?, remoteDir?, files, timeoutMs? }
@@ -129,7 +130,7 @@ ftp_upload { host, port?, user?, password?, secure?, insecure?, remoteDir?, file
 - `secure: "true"` → FTPS（显式 TLS）；自签证书再传 `insecure: "true"`。
 - **凭据必须显式传**：保险箱里的主机密码在渲染层，主进程按设计读不到（`vault_hosts_list`
   也只返回元数据）。要么在参数里给 `user/password`，要么在应用里用终端拖拽（那条路能读到保险箱）。
-- 本机没装 `lftp` 时返回 `{ ok:false, code:"lftp-not-found" }`。
+- 连不上或登录失败时返回 `{ ok:false, code }`：`EAUTH`（530）、`ENOENT`（550）、`ETIMEDOUT`、`ENOTFOUND` 等。
 - 该能力 `policy.write = true`：确认模式会请求批准，观察模式直接拒绝。
 
 ## 6. 本次实测记录（本机，应用为 `release/linux-unpacked` 打包版）

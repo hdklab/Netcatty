@@ -4,13 +4,11 @@
 import { FileType, Pencil, Trash2 } from "lucide-react";
 import React, { useCallback, useMemo, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
-import { useFtpClientLftpPath } from "../../../application/state/useFtpClientLftpPath";
 import { useSftpFileAssociations } from "../../../application/state/useSftpFileAssociations";
 import { useSettingsState } from "../../../application/state/useSettingsState";
 import type { FileOpenerType, SystemAppInfo } from "../../../lib/sftpFileUtils";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { Button } from "../../ui/button";
-import { Input } from "../../ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import {
   SectionHeader,
@@ -112,26 +110,6 @@ export default function SettingsFileAssociationsTab() {
       setEditingExtension(null);
     }
   }, [setOpenerForExtension]);
-
-  // External lftp drives every FTP-only host (telnet/serial devices). Detection
-  // covers PATH and the common install locations, so most machines need nothing
-  // here; the field exists for the cases it cannot guess (Windows, custom builds).
-  const { lftpPath, setLftpPath, status: lftpStatus, isChecking, refreshStatus } = useFtpClientLftpPath();
-  const [lftpPathDraft, setLftpPathDraft] = useState(lftpPath);
-
-  const lftpStatusKey = lftpStatus ? lftpStatus.source : isChecking ? 'checking' : 'loading';
-  const lftpStatusText = useMemo(() => {
-    if (lftpStatus?.configuredPath && !lftpStatus.configuredUsable) {
-      return t('settings.ftpClient.status.configuredMissing', { path: lftpStatus.configuredPath });
-    }
-    if (lftpStatus?.resolvedPath) {
-      return lftpStatus.source === 'env'
-        ? t('settings.ftpClient.status.env', { path: lftpStatus.resolvedPath })
-        : t('settings.ftpClient.status.resolved', { path: lftpStatus.resolvedPath });
-    }
-    if (!lftpStatus) return t('settings.ftpClient.status.checking');
-    return t('settings.ftpClient.status.missing');
-  }, [lftpStatus, t]);
 
   return (
     <SettingsTabContent value="file-associations">
@@ -394,49 +372,6 @@ export default function SettingsFileAssociationsTab() {
           </table>
         </div>
       )}
-      <SectionHeader title={t('settings.ftpClient.title')} />
-      <SettingCard>
-        <div className="px-4 py-3 space-y-2">
-          <div className="text-xs text-muted-foreground">{t('settings.ftpClient.desc')}</div>
-          <div className="flex items-center gap-2">
-            <Input
-              value={lftpPathDraft}
-              onChange={(event) => setLftpPathDraft(event.target.value)}
-              onBlur={() => setLftpPath(lftpPathDraft)}
-              placeholder={t('settings.ftpClient.pathPlaceholder')}
-              aria-label={t('settings.ftpClient.pathLabel')}
-              data-lftp-path-input="true"
-              className="h-8 flex-1 font-mono text-xs"
-            />
-            <Button
-              variant="secondary"
-              size="sm"
-              className="h-8"
-              onClick={() => {
-                setLftpPath(lftpPathDraft);
-                void refreshStatus();
-              }}
-            >
-              {t('settings.ftpClient.recheck')}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8"
-              onClick={() => {
-                setLftpPathDraft('');
-                setLftpPath('');
-              }}
-            >
-              {t('settings.ftpClient.clear')}
-            </Button>
-          </div>
-          <div className="text-xs text-muted-foreground" data-lftp-status={lftpStatusKey}>
-            {lftpStatusText}
-          </div>
-          <div className="text-[11px] text-muted-foreground">{t('settings.ftpClient.pathHint')}</div>
-        </div>
-      </SettingCard>
     </SettingsTabContent>
   );
 }

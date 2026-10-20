@@ -26,7 +26,7 @@ import {
   type TerminalProps,
 } from "../terminalHelpers";
 import { createUploadTaskCallbacks } from "../../../application/state/sftp/uploadTaskCallbacks";
-import { startUploadScanningTask } from "../../../lib/uploadService";
+import { sftpTransferCenterStore } from "../../../application/state/sftpTransferCenterStore";
 
 /**
  * The transfer center is a popover in the top bar, so an upload started from a
@@ -72,8 +72,6 @@ interface UseTerminalDragDropOptions {
       files: ZmodemDragDropFile[],
       uploadCommand?: string,
     ) => Promise<{ success: boolean; error?: string }>;
-    /** Whether an external `lftp` is usable on this machine (FTP/FTPS drops). */
-    ftpCapabilities?: () => Promise<{ lftp: boolean; lftpPath: string | null }>;
     /** Upload dropped files over FTP/FTPS into the terminal's current directory. */
     ftpUpload?: (payload: {
       host: string;
@@ -83,8 +81,19 @@ interface UseTerminalDragDropOptions {
       secure?: boolean;
       insecure?: boolean;
       remoteDir?: string;
+      uploadId?: string;
       files: Array<{ path?: string; name: string; remoteName?: string; data?: ArrayBuffer }>;
-    }) => Promise<{ ok: boolean; code?: string; error?: string }>;
+    }) => Promise<{ ok: boolean; code?: string; error?: string; totalBytes?: number; transferredBytes?: number }>;
+    /** Byte progress for one FTP drop, correlated by its `uploadId`. */
+    onFtpUploadProgress?: (cb: (progress: {
+      uploadId: string;
+      transferred: number;
+      total: number;
+      speed: number;
+      fileName?: string;
+    }) => void) => () => void;
+    /** Stop an in-flight FTP drop (the partial remote file is removed). */
+    ftpCancelUpload?: (uploadId: string) => Promise<{ ok: boolean; code?: string }>;
   };
   isSensitiveInput?: () => boolean;
   rzMissingFallbackTimeoutMs?: number;
@@ -361,17 +370,15 @@ export async function handleTerminalDropEntries({
     && host.ftpEnabled
     && terminalBackend.ftpUpload
   ) {
-    // FTP/FTPS via the external `lftp` client: the file lands in the terminal's
+    // FTP/FTPS with the built-in client: the file lands in the terminal's
     // tracked current directory, or in the FTP account's login directory when the
     // device never reports a cwd (telnet/serial shells have no OSC 7). Falls
-    // through to ZMODEM only when the plan is not usable at all (no lftp, no
-    // host) so the drop is never silently lost.
+    // through to ZMODEM only when the plan is not usable at all (no FTP on the
+    // host, no host name) so the drop is never silently lost.
     const initialPath = await resolveSftpInitialPath({ requireActiveShellCwd: true }).catch(() => undefined);
-    const capabilities = await terminalBackend.ftpCapabilities?.().catch(() => undefined);
     const plan = resolveFtpDropPlan({
       host,
       remoteDir: initialPath,
-      lftpAvailable: Boolean(capabilities?.lftp),
       credentials: { username: resolvedLoginUsername, password: resolvedSudoPassword ?? host.password },
     });
     if (plan.ok) {
@@ -379,29 +386,80 @@ export async function handleTerminalDropEntries({
       if (ftpFiles.length === 0) {
         throw new Error("No files to upload");
       }
-      // FTP uploads are one blocking lftp call with no byte stream, so the
-      // transfer center gets an indeterminate row for the duration — otherwise
-      // the drop looks like nothing happened until the final toast.
+      // One determinate row for the whole drop: the main process streams
+      // throttled byte counts back over IPC (correlated by uploadId), so the bar
+      // moves instead of spinning. In-memory drops know their size up front; a
+      // path-only drop gets its total with the first progress frame.
+      const uploadId = crypto.randomUUID();
+      // One owner per drop: its Cancel button stops this upload and nothing else.
+      const callbacks = createUploadTaskCallbacks({
+        ownerId: `terminal-drop:${sessionId}:${uploadId}`,
+        connectionId: "ftp-drop",
+        targetPath: plan.plan.remoteDir || "/",
+        targetHostId: host.id,
+        targetHostLabel: host.label,
+        // There is no resume offset for an FTP put, so do not offer pause.
+        resumable: false,
+      });
+      const taskId = crypto.randomUUID();
       const first = ftpFiles[0];
       const uploadLabel = ftpFiles.length > 1
         ? `${first.remoteName || first.name} +${ftpFiles.length - 1}`
         : (first.remoteName || first.name);
-      const progressTask = startUploadScanningTask(
-        createUploadTaskCallbacks({
-          ownerId: `terminal-drop:${sessionId}`,
-          connectionId: "ftp-drop",
-          targetPath: plan.plan.remoteDir || "/",
-          targetHostId: host.id,
-          targetHostLabel: host.label,
-        }),
-        undefined,
-        { label: uploadLabel },
+      const knownTotal = ftpFiles.reduce((sum, file) => sum + (file.data?.byteLength ?? 0), 0);
+      callbacks.onTaskCreated?.({
+        id: taskId,
+        fileName: uploadLabel,
+        displayName: uploadLabel,
+        isDirectory: false,
+        progressMode: "bytes",
+        totalBytes: knownTotal,
+        transferredBytes: 0,
+        speed: 0,
+        fileCount: ftpFiles.length,
+        completedCount: 0,
+      });
+      let cancelled = false;
+      const unregisterOwner = sftpTransferCenterStore.registerOwner(
+        `terminal-drop:${sessionId}:${uploadId}`,
+        {
+          pause: () => {},
+          resume: () => {},
+          cancel: (id) => {
+            if (id !== taskId || cancelled) return;
+            cancelled = true;
+            callbacks.onTaskCancelled?.(taskId);
+            void terminalBackend.ftpCancelUpload?.(uploadId);
+          },
+          retry: () => {},
+          prioritize: () => {},
+          dismiss: (id) => sftpTransferCenterStore.dismiss(id),
+        },
       );
       openTerminalDropTransferCenter();
-      let result: { ok: boolean; code?: string; error?: string };
+      const unsubscribe = terminalBackend.onFtpUploadProgress?.((progress) => {
+        if (!progress || progress.uploadId !== uploadId) return;
+        const transferred = Math.max(0, Number(progress.transferred) || 0);
+        const total = Math.max(0, Number(progress.total) || 0);
+        callbacks.onTaskProgress?.(taskId, {
+          transferred,
+          total,
+          speed: Math.max(0, Number(progress.speed) || 0),
+          percent: total > 0 ? Math.min(100, (transferred / total) * 100) : 0,
+          phase: "transferring",
+        });
+      }) ?? (() => {});
+      let result: {
+        ok: boolean;
+        code?: string;
+        error?: string;
+        totalBytes?: number;
+        transferredBytes?: number;
+      };
       try {
         result = await terminalBackend.ftpUpload({
           ...plan.plan,
+          uploadId,
           files: ftpFiles.map((file) => ({
             path: file.path,
             name: file.name,
@@ -410,14 +468,21 @@ export async function handleTerminalDropEntries({
           })),
         });
       } catch (error) {
-        progressTask.fail(error);
+        if (!cancelled) {
+          callbacks.onTaskFailed?.(taskId, error instanceof Error ? error.message : String(error));
+        }
         throw error;
+      } finally {
+        unsubscribe();
+        unregisterOwner();
       }
       if (!result.ok) {
-        progressTask.fail(new Error(result.error || "FTP upload failed"));
+        // The row is already marked cancelled; do not turn it into a failure.
+        if (cancelled || result.code === "ABORT_ERR") return;
+        callbacks.onTaskFailed?.(taskId, result.error || "FTP upload failed");
         throw new Error(result.error || "FTP upload failed");
       }
-      progressTask.complete();
+      callbacks.onTaskCompleted?.(taskId, result.totalBytes ?? knownTotal);
       // Always say where the file landed: with no tracked cwd the upload goes to
       // the FTP login directory, which is rarely the shell's directory.
       toast.success(

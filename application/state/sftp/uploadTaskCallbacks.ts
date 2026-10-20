@@ -15,6 +15,8 @@ interface UploadTaskCallbacksParams {
   targetHostId?: string;
   targetHostLabel?: string;
   targetConnectionKey?: string;
+  /** `false` for a transfer this owner cannot pause/resume (e.g. an FTP drop). */
+  resumable?: boolean;
   store?: UploadTransferStore;
 }
 
@@ -25,6 +27,7 @@ export const createUploadTaskCallbacks = ({
   targetHostId,
   targetHostLabel,
   targetConnectionKey,
+  resumable = true,
   store = sftpTransferCenterStore,
 }: UploadTaskCallbacksParams): UploadCallbacks => ({
   onScanningStart: (taskId: string, info?: { label?: string }) => {
@@ -93,7 +96,7 @@ export const createUploadTaskCallbacks = ({
       parentTaskId: task.parentTaskId,
       origin: "drag-drop",
       background: false,
-      resumable: true,
+      resumable,
       phase: "transferring",
       controlKind: task.controlKind,
     }]);

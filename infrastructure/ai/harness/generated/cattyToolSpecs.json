@@ -2418,7 +2418,7 @@
     "toolName": "ftp_upload",
     "rpcMethod": "netcatty/ftp/upload",
     "localExecution": false,
-    "description": "Upload local files into a remote directory over FTP/FTPS using the external lftp client (for hosts without SFTP).",
+    "description": "Upload local files into a remote directory over FTP/FTPS (for hosts without SFTP).",
     "inputShape": {
       "host": {
         "type": "string",
