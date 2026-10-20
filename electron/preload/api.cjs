@@ -1487,6 +1487,22 @@ function createPreloadApi(ctx) {
   // Renderer reports the dirty-check result back to the main process.
   reportDirtyEditorsResult: (hasDirty) => ipcRenderer.send("app:dirty-editors-result", { hasDirty }),
   
+  // Local proxy server: this PC serves SOCKS5/HTTP to other devices.
+  startLocalProxyServer: async (options) => {
+    return ipcRenderer.invoke("netcatty:proxyserver:start", options);
+  },
+  stopLocalProxyServer: async () => {
+    return ipcRenderer.invoke("netcatty:proxyserver:stop");
+  },
+  getLocalProxyServerStatus: async () => {
+    return ipcRenderer.invoke("netcatty:proxyserver:status");
+  },
+  onLocalProxyServerStatus: (listener) => {
+    const handler = (_event, payload) => listener(payload);
+    ipcRenderer.on("netcatty:proxyserver:status", handler);
+    return () => ipcRenderer.removeListener("netcatty:proxyserver:status", handler);
+  },
+
   // Port Forwarding API
   startPortForward: async (options) => {
     return ipcRenderer.invoke("netcatty:portforward:start", options);

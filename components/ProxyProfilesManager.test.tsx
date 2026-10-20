@@ -89,6 +89,14 @@ test("ProxyProfilesManager uses the shared Vault list row style when persisted",
   assert.match(markup, /127\.0\.0\.1:8080/);
 });
 
+test("ProxyProfilesManager exposes the local proxy service entry point", () => {
+  const markup = renderManager();
+
+  assert.match(markup, /Proxy service/);
+  // The panel is closed until the header button is pressed.
+  assert.doesNotMatch(markup, /Proxy endpoint/);
+});
+
 test("ProxyProfilesManager validates proxy ports", () => {
   assert.equal(isValidProxyPort(1), true);
   assert.equal(isValidProxyPort(65535), true);

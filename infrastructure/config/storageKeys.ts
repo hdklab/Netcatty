@@ -214,6 +214,8 @@ export const STORAGE_KEY_AI_SIDEBAR = 'netcatty_ai_sidebar_v1';
 export const STORAGE_KEY_AI_SIDEBAR_WIDTH = 'netcatty_ai_sidebar_width';
 export const STORAGE_KEY_AI_COMMAND_BLOCKLIST = 'netcatty_ai_command_blocklist_v1';
 export const STORAGE_KEY_AI_COMMAND_TIMEOUT = 'netcatty_ai_command_timeout_v1';
+/** Local proxy server ("this PC as a SOCKS5/HTTP proxy") configuration. */
+export const STORAGE_KEY_LOCAL_PROXY_SERVER = 'netcatty_local_proxy_server_v1';
 export const STORAGE_KEY_AI_RESPONSE_IDLE_TIMEOUT = 'netcatty_ai_response_idle_timeout_v1';
 export const STORAGE_KEY_AI_MAX_ITERATIONS = 'netcatty_ai_max_iterations_v1';
 export const STORAGE_KEY_AI_SESSIONS = 'netcatty_ai_sessions_v1';

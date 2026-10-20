@@ -9,12 +9,14 @@ import {
   Pencil,
   Plus,
   Route,
+  Server,
   Settings2,
   SquareTerminal,
   Trash2,
 } from "lucide-react";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
+import { syncLocalProxyServerProfiles, useLocalProxyServer } from "../application/state/localProxyServerStore";
 import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import {
   formatProxyConfigEndpoint,
@@ -74,6 +76,7 @@ import {
   vaultProxySocksIconClass,
 } from "./vault/VaultEntityIcon";
 import { useVaultItemReorder } from "./vault/vaultReorderDrag";
+import { ProxyServerPanel } from "./ProxyServerPanel";
 
 interface ProxyProfilesManagerProps {
   proxyProfiles: ProxyProfile[];
@@ -283,6 +286,8 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
     viewMode === "list" ? "list" : "grid";
   const [draft, setDraft] = useState<ProxyProfile | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ProxyProfile | null>(null);
+  const [serverPanelOpen, setServerPanelOpen] = useState(false);
+  const { status: proxyServerStatus } = useLocalProxyServer();
   const listRef = useRef<HTMLDivElement | null>(null);
   const manualCredentialsValue = "__manual_credentials__";
   const missingIdentityValue = "__missing_identity__";
@@ -296,6 +301,10 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
   const selectedDraftIdentityValue =
     selectedDraftIdentity?.id ||
     (hasMissingDraftIdentity ? missingIdentityValue : manualCredentialsValue);
+
+  useEffect(() => {
+    syncLocalProxyServerProfiles(proxyProfiles);
+  }, [proxyProfiles]);
 
   const usageByProfileId = useMemo(() => {
     const map = new Map<string, number>();
@@ -408,6 +417,21 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
     <div className="h-full flex relative">
       <div className={cn("flex-1 flex flex-col min-h-0 transition-all duration-200", draft && "mr-[380px]")}>
         <VaultPageHeader>
+            <Button
+              onClick={() => setServerPanelOpen(true)}
+              variant="secondary"
+              className={vaultHeaderSecondaryButtonClass}
+            >
+              <Server size={14} />
+              {t("proxyServer.action.open")}
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "ml-1 h-1.5 w-1.5 rounded-full",
+                  proxyServerStatus.running ? "bg-emerald-500" : "bg-muted-foreground/40",
+                )}
+              />
+            </Button>
             <Button
               onClick={openCreate}
               variant="secondary"
@@ -702,6 +726,12 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
           </AsidePanelFooter>
         </AsidePanel>
       )}
+
+      <ProxyServerPanel
+        open={serverPanelOpen}
+        onClose={() => setServerPanelOpen(false)}
+        proxyProfiles={proxyProfiles}
+      />
 
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent>

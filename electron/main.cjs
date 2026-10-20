@@ -1726,6 +1726,11 @@ if (!gotLock) {
       console.warn("Error during port forwarding cleanup:", err);
     }
     try {
+      require("./bridges/localProxyServerBridge.cjs").stopLocalProxyServer();
+    } catch (err) {
+      console.warn("Error during local proxy server cleanup:", err);
+    }
+    try {
       getGlobalShortcutBridge().cleanup();
     } catch (err) {
       console.warn("Error during global shortcut cleanup:", err);

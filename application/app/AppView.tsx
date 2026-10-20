@@ -38,6 +38,7 @@ import { useMainWindowInputFocusRecovery } from '../state/useMainWindowInputFocu
 import { useExternalMcpToggleState } from '../state/useExternalMcpToggleState';
 import { selectPluginThemeTokens } from '../state/pluginContributionEnvironment';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+import { bootstrapLocalProxyServer, syncLocalProxyServerProfiles } from '../state/localProxyServerStore';
 import { resolveEffectiveTerminalHost } from '../../domain/terminalHostResolution';
 import { useDefaultLocalShellContext } from '../../lib/useDiscoveredShells';
 import { getAvailablePaneMagnificationController } from '../../domain/paneMagnification';
@@ -286,6 +287,14 @@ function AppViewInner({ domains }: AppViewProps) {
     updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, vaultFocusRequest, workspaceRenameTarget, workspaces,
     VaultViewContainer, SftpViewMount, TerminalLayerMount, WorkflowViewMount, LogViewWrapper,
   } = ctx;
+
+  // Local proxy server ("this PC as a SOCKS5/HTTP proxy"): mirror the main-process
+  // status and resume a service the user left enabled, even while the vault proxy
+  // page is not mounted.
+  useEffect(() => bootstrapLocalProxyServer(), []);
+  useEffect(() => {
+    syncLocalProxyServerProfiles(proxyProfiles);
+  }, [proxyProfiles]);
 
   // Chrome-visible settings slice comes from settingsChromeStore, not from the
   // App chrome domain bag — the whole `settings` object changes identity on

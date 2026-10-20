@@ -472,6 +472,7 @@ function createBridgeRegistrar(context) {
     });
     transferBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     portForwardingBridge.registerHandlers(ipcMain, { terminalWorkerManager });
+    require("../bridges/localProxyServerBridge.cjs").registerHandlers(ipcMain);
     if (electronModule.WebContentsView && electronModule.session?.fromPartition) {
       const { createHostBrowserManager } = require("../hostBrowser/hostBrowserManager.cjs");
       const hostBrowserManager = createHostBrowserManager({
