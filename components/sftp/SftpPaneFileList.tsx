@@ -291,7 +291,17 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
   const renderRow = useCallback(
     (entry: SftpFileEntry, index: number) => (
       <ContextMenu>
-        <ContextMenuTrigger>
+        {/* Right-clicking a row that is not part of the multi-selection moves the
+            selection to that row first, exactly like Explorer/Finder. Without
+            this the highlight stayed on three files while "Download" silently
+            acted on the one under the cursor. */}
+        <ContextMenuTrigger
+          onContextMenu={() => {
+            if (!pane.selectedFiles.has(entry.name)) {
+              handleRowSelect(entry, index, { metaKey: false, ctrlKey: false, shiftKey: false } as React.MouseEvent);
+            }
+          }}
+        >
           <SftpFileRow
             entry={entry}
             index={index}
