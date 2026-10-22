@@ -280,6 +280,12 @@ export interface Host {
   ftpIdentityId?: string; // Reusable identity for the FTP login
   ftpUsername?: string; // FTP user; falls back to the telnet/login user when empty
   ftpPassword?: string; // FTP password; falls back to the telnet/login password when empty
+  /**
+   * File-server-only host: connecting opens the file transfer view instead of a
+   * terminal. The terminal protocol fields stay on the host so SFTP/SCP/FTP can
+   * still authenticate, but no shell is ever started.
+   */
+  fileTransferOnly?: boolean;
   // Serial-specific configuration (for protocol='serial' hosts)
   serialConfig?: SerialConfig;
   // SFTP specific configuration
@@ -288,7 +294,7 @@ export interface Host {
   // (shell browse + scp -t/-f transfers) when the SFTP subsystem is unavailable.
   // `ftp` browses and transfers with the built-in FTP client — the only option
   // for hosts whose terminal protocol (telnet/serial) has no SSH at all.
-  sftpFileProtocol?: 'auto' | 'sftp' | 'scp' | 'ftp';
+  sftpFileProtocol?: 'auto' | 'sftp' | 'scp' | 'ftp' | 'none';
   sftpEncoding?: SftpFilenameEncoding; // Filename encoding for SFTP operations
   sftpBookmarks?: SftpBookmark[]; // Bookmarked SFTP paths for quick navigation
   sftpFollowTerminalCwd?: boolean; // Overrides global SFTP follow-terminal-directory setting

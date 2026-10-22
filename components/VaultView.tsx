@@ -103,7 +103,6 @@ import {
   KnownHost,
   ManagedSource,
   ProxyProfile,
-  SerialConfig,
   SSHKey,
   Snippet,
 } from "../types";
@@ -119,8 +118,7 @@ import {
   isQuickConnectInput,
   parseQuickConnectInputWithWarnings,
 } from "../domain/quickConnect";
-import SerialConnectModal from "./SerialConnectModal";
-import SerialHostDetailsPanel from "./SerialHostDetailsPanel";
+import type { HostConnectionType } from "../domain/serialHost";
 import { NotesManager } from "./notes/NotesManager";
 import { ImportVaultDialog } from "./vault/ImportVaultDialog";
 import { HostTreeGroupDeleteDialog } from "./host/HostTreeGroupDeleteDialog";
@@ -235,10 +233,6 @@ interface VaultViewProps {
   onOpenSettings: () => void;
   onOpenQuickSwitcher: () => void;
   onCreateLocalTerminal: () => void;
-  onConnectSerial?: (
-    config: SerialConfig,
-    options?: { charset?: string },
-  ) => void;
   onDeleteHost: (id: string) => void;
   onConnect: (host: Host) => void;
   onOpenHostFromNote?: (host: Host, source?: { noteId: string }) => void;
@@ -327,7 +321,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onOpenSettings,
   onOpenQuickSwitcher,
   onCreateLocalTerminal,
-  onConnectSerial,
   onDeleteHost,
   onConnect,
   onOpenHostFromNote,
@@ -382,7 +375,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [renameGroupName, setRenameGroupName] = useState("");
   const [renameGroupError, setRenameGroupError] = useState<string | null>(null);
   const [isImportOpen, setIsImportOpen] = useState(false);
-  const [isSerialModalOpen, setIsSerialModalOpen] = useState(false);
+  const [newHostConnectionType, setNewHostConnectionType] =
+    useState<HostConnectionType>("ssh");
   const [isDeleteGroupOpen, setIsDeleteGroupOpen] = useState(false);
   const [deleteTargetPath, setDeleteTargetPath] = useState<string | null>(null);
   const [bulkDeleteGroupPaths, setBulkDeleteGroupPaths] = useState<string[]>(
@@ -685,6 +679,21 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     setIsLocalShellHostPanelOpen(false);
     setEditingLocalShellHost(null);
     setNewHostGroupPath(null);
+    setNewHostConnectionType("ssh");
+    setIsHostPanelOpen(true);
+  }, []);
+
+  // "Serial port" entry under the New Host menu — the same host editor with the
+  // serial connection type preselected, so serial hosts live in the host list
+  // instead of a separate dialog.
+  const handleNewSerialHost = useCallback(() => {
+    setIsGroupPanelOpen(false);
+    setEditingGroupPath(null);
+    setEditingHost(null);
+    setIsLocalShellHostPanelOpen(false);
+    setEditingLocalShellHost(null);
+    setNewHostGroupPath(null);
+    setNewHostConnectionType("serial");
     setIsHostPanelOpen(true);
   }, []);
 
@@ -1568,6 +1577,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           handleImportFileSelected,
           handleNewHost,
           handleNewLocalShellHost,
+          handleNewSerialHost,
           handleCancelLocalShellHost,
           handleSaveLocalShellHost,
           handleProtocolSelect,
@@ -1598,7 +1608,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           isQuickConnectOpen,
           isRenameGroupOpen,
           isSearchQuickConnect,
-          isSerialModalOpen,
           Key,
           keyBindings,
           KeychainManager,
@@ -1619,12 +1628,12 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           moveHostsToGroup,
           Network,
           newFolderName,
+          newHostConnectionType,
           newHostGroupPath,
           NotebookText,
           NotesManager,
           onCommitPluginImporterData,
           onConnect,
-          onConnectSerial,
           onCreateLocalTerminal,
           onDeleteHost,
           onImportOrReuseKey,
@@ -1672,8 +1681,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           selectedGroupPaths,
           selectedHostIds,
           selectedTags,
-          SerialConnectModal,
-          SerialHostDetailsPanel,
           sessionCount,
           Set,
           setBulkDeleteGroupPaths,
@@ -1692,7 +1699,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           setIsNewFolderOpen,
           setIsQuickConnectOpen,
           setIsRenameGroupOpen,
-          setIsSerialModalOpen,
+          setNewHostConnectionType,
           setLastPinnedId,
           setNewFolderName,
           setNewHostGroupPath,

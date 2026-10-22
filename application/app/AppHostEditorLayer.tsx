@@ -6,7 +6,6 @@ import type { LogView } from '../state/logViewState';
 import { useI18n } from '../i18n/I18nProvider';
 import HostDetailsPanel from '../../components/HostDetailsPanel';
 import LocalShellHostDetailsPanel from '../../components/LocalShellHostDetailsPanel';
-import SerialHostDetailsPanel from '../../components/SerialHostDetailsPanel';
 import { PortalContainerProvider } from '../../components/ui/portal-container';
 import { resolveGroupDefaults } from '../../domain/groupConfig';
 import { STORAGE_KEY_VAULT_HOST_PANEL_WIDTH } from '@/infrastructure/config/storageKeys';
@@ -23,16 +22,16 @@ import type {
 } from '../../types';
 import { useWorkSurfaceVisible } from './AppHostEditorSurface';
 
-export type WorkSurfaceHostEditorKind = 'standard' | 'serial' | 'local';
+export type WorkSurfaceHostEditorKind = 'standard' | 'local';
 
 export function resolveWorkSurfaceHostEditorKind(
   target: WorkSurfaceHostEditorTarget,
 ): WorkSurfaceHostEditorKind {
-  return target.mode === 'edit' && target.openedHost.protocol === 'serial'
-    ? 'serial'
-    : target.mode === 'edit' && target.openedHost.protocol === 'local'
-      ? 'local'
-      : 'standard';
+  // Serial hosts use the standard host editor now: its connection-type picker
+  // covers SSH / Mosh / ET / Telnet / Serial in one panel.
+  return target.mode === 'edit' && target.openedHost.protocol === 'local'
+    ? 'local'
+    : 'standard';
 }
 
 function addGroupAndAncestors(groups: Set<string>, path: string | null | undefined) {
@@ -168,19 +167,6 @@ export const AppHostEditorLayer: React.FC<AppHostEditorLayerProps> = ({
             key={editorKey}
             initialData={target.openedHost}
             groups={groups}
-            onSave={onSave}
-            onCancel={onCancel}
-            layout="overlay"
-            className="pointer-events-auto"
-            {...hostPanelResizeProps}
-          />
-        ) : target.mode === 'edit' && target.openedHost.protocol === 'serial' ? (
-          <SerialHostDetailsPanel
-            key={editorKey}
-            initialData={target.openedHost}
-            allTags={allTags}
-            groups={groups}
-            groupDefaults={groupDefaults}
             onSave={onSave}
             onCancel={onCancel}
             layout="overlay"

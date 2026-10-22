@@ -772,6 +772,7 @@ Vaults 标签保持扁平，不使用这块背景。
   'vault.tree.expandAll': '展开全部',
   'vault.tree.collapseAll': '折叠全部',
   'vault.hosts.newHost': '新建主机',
+  'vault.hosts.newSerialHost': '串口主机',
   'vault.hosts.newLocalShell': '本地终端 (CMD)',
   'vault.hosts.newGroup': '新建分组',
   'vault.hosts.import': '导入',

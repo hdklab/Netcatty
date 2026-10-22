@@ -229,7 +229,9 @@ export const buildSftpHostCredentials = ({
     proxy: proxyConfig,
     jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
     sudo: host.sftpSudo,
-    fileProtocol: host.sftpFileProtocol || "auto",
+    // "none" means the host opted out of file transfer; any path that still
+    // reaches here falls back to auto instead of failing the connection.
+    fileProtocol: host.sftpFileProtocol && host.sftpFileProtocol !== "none" ? host.sftpFileProtocol : "auto",
     identityFilePaths: keyAuth.identityFilePaths,
     ...targetAgentAuth,
     keepaliveInterval: targetKeepalive.interval,

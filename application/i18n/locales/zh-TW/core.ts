@@ -774,6 +774,7 @@ Vaults 分頁維持扁平，不使用這塊背景。
   'vault.tree.expandAll': '展開全部',
   'vault.tree.collapseAll': '摺疊全部',
   'vault.hosts.newHost': '新增主機',
+  'vault.hosts.newSerialHost': '序列埠主機',
   'vault.hosts.newLocalShell': '本地終端 (CMD)',
   'vault.hosts.newGroup': '新增群組',
   'vault.hosts.import': '匯入',

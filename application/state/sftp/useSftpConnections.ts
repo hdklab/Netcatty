@@ -995,7 +995,7 @@ export const useSftpConnections = ({
           // no worse than the previous UX of always showing a spinner.
           reusedConnection: !!sourceSessionId,
           sourceSessionId: requireSourceSessionReuse ? sourceSessionId : undefined,
-          fileProtocol: host.sftpFileProtocol ?? 'auto',
+          fileProtocol: host.sftpFileProtocol && host.sftpFileProtocol !== 'none' ? host.sftpFileProtocol : 'auto',
         };
 
         updateTargetTab((prev) => ({

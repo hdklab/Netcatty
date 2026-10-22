@@ -715,9 +715,12 @@ export const useSessionState = ({
   }, []);
 
   const createWorkspaceWithHosts = useCallback((name: string, hosts: Host[]) => {
-    if (hosts.length === 0) return;
+    // File-server-only hosts never start a shell; a workspace of terminal panes
+    // cannot represent them, so they are left out instead of dialling SSH.
+    const terminalHosts = hosts.filter((host) => !host.fileTransferOnly);
+    if (terminalHosts.length === 0) return;
 
-    const sessionSeeds = hosts.map(host => ({
+    const sessionSeeds = terminalHosts.map(host => ({
       id: crypto.randomUUID(),
       host,
     }));
@@ -749,13 +752,15 @@ export const useSessionState = ({
     | { kind: 'host'; host: Host };
 
   const createWorkspaceFromTargets = useCallback((targets: WorkspaceTarget[], name?: string): string | null => {
-    if (targets.length === 0) return null;
+    // File-server-only hosts have no terminal to put in a pane.
+    const paneTargets = targets.filter((target) => target.kind !== 'host' || !target.host.fileTransferOnly);
+    if (paneTargets.length === 0) return null;
     // A caller-provided name is an explicit title; without one the workspace is
     // auto-titled and the tab derives a host-based label.
     const explicitName = name?.trim();
     const workspaceTitle = explicitName || DEFAULT_WORKSPACE_TITLE;
 
-    const newSessions: TerminalSession[] = targets.map((target) => {
+    const newSessions: TerminalSession[] = paneTargets.map((target) => {
       if (target.kind === 'local') {
         const sessionId = crypto.randomUUID();
         return createLocalTerminalSession(sessionId, {
@@ -907,6 +912,8 @@ export const useSessionState = ({
     host: Host,
     direction: SplitDirection = 'vertical',
   ): string | null => {
+    // File-server-only hosts have no terminal pane to add.
+    if (host.fileTransferOnly) return null;
     // Cheap early-exit using the ref when the workspace is clearly
     // absent. The authoritative check lives inside the setWorkspaces
     // updater below so we also cover the concurrent-close race.

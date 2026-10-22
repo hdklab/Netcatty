@@ -1126,6 +1126,7 @@ Resalta el panel dividido enfocado:
   'vault.tree.expandAll': 'Expandir todo',
   'vault.tree.collapseAll': 'Contraer todo',
   'vault.hosts.newHost': 'Nuevo host',
+  'vault.hosts.newSerialHost': 'Host serie',
   'vault.hosts.newLocalShell': 'Shell local (CMD)',
   'vault.hosts.newGroup': 'Nuevo grupo',
   'vault.hosts.import': 'Importar',

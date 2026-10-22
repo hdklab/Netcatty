@@ -556,14 +556,23 @@ export interface VaultAgentApiDeps {
    * external MCP client rather than the in-app Catty AI chat — and gates the "silent
    * sessions" setting so the in-app chat's host_open still opens a visible tab.
    */
-  openHost?: (host: Host, isExternalMcpCall: boolean) => {
-    ok: true;
-    sessionId: string;
-    host: Host;
-  } | {
-    ok: false;
-    error: string;
-  };
+  openHost?: (host: Host, isExternalMcpCall: boolean) =>
+    | {
+      ok: true;
+      sessionId: string;
+      host: Host;
+    }
+    | {
+      /** File-server-only host: the file view opened, no terminal session exists. */
+      ok: true;
+      sessionId: null;
+      opened: 'fileTransfer';
+      host: Host;
+    }
+    | {
+      ok: false;
+      error: string;
+    };
   /**
    * Find an existing terminal session for a vault host so `host.open` can
    * reuse it instead of always opening a new tab. Reconnecting SSH tabs keep
@@ -744,6 +753,19 @@ export async function handleVaultAgentOp(
       const opened = deps.openHost(effectiveHost, isExternalMcpCall);
       if (!opened.ok) {
         return { ok: false, error: opened.error };
+      }
+
+      if (opened.sessionId === null) {
+        return {
+          ok: true,
+          opened: 'fileTransfer',
+          hostId: effectiveHost.id,
+          ...(isSavedVaultHost(effectiveHost) ? { savedHostId: effectiveHost.id } : {}),
+          protocol,
+          host: summarizeHostForList(effectiveHost),
+          message:
+            'Opened the file transfer view for this host; no terminal session was created because the host is configured as file-transfer only. Use the SFTP tools (sftp_list / sftp_read / sftp_write) with this hostId instead of terminal_execute.',
+        };
       }
 
       await registerOpenedSessionInMcpScope(opened.sessionId, effectiveHost, chatSessionId);

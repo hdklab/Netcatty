@@ -756,33 +756,6 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
           title={t("hostDetails.section.sftp")}
         >
           <HostDetailsSettingRow
-            label={t("hostDetails.sftp.fileProtocol")}
-            hint={t("hostDetails.sftp.fileProtocol.desc")}
-          >
-            <Select
-              value={form.sftpFileProtocol || "auto"}
-              onValueChange={(val) => {
-                const protocol = val as Host["sftpFileProtocol"];
-                update("sftpFileProtocol", protocol);
-                // Neither SCP nor FTP mode has a sudo-sftp elevation path;
-                // clear a contradictory saved flag.
-                if ((protocol === "scp" || protocol === "ftp") && form.sftpSudo) {
-                  update("sftpSudo", false);
-                }
-              }}
-            >
-              <SelectTrigger className="h-8 w-32">
-                <SelectValue placeholder={t("hostDetails.sftp.fileProtocol.auto")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="auto">{t("hostDetails.sftp.fileProtocol.auto")}</SelectItem>
-                <SelectItem value="sftp">{t("hostDetails.sftp.fileProtocol.sftp")}</SelectItem>
-                <SelectItem value="scp">{t("hostDetails.sftp.fileProtocol.scp")}</SelectItem>
-                <SelectItem value="ftp">{t("hostDetails.sftp.fileProtocol.ftp")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </HostDetailsSettingRow>
-          <HostDetailsSettingRow
             label={t("hostDetails.sftp.sudo")}
             hint={t("hostDetails.sftp.sudo.desc")}
           >

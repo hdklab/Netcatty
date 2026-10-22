@@ -3,11 +3,12 @@ import {
   Radio,
   Shield,
   Terminal as TerminalIcon,
+  Usb,
 } from "lucide-react";
 import React from "react";
 import type { HostProtocol } from "../types";
 
-export type ProtocolVisualKey = Extract<HostProtocol, "ssh" | "mosh" | "et" | "telnet">;
+export type ProtocolVisualKey = Extract<HostProtocol, "ssh" | "mosh" | "et" | "telnet" | "serial">;
 
 export interface ProtocolVisualStyle {
   icon: React.ReactNode;
@@ -35,6 +36,11 @@ export const PROTOCOL_VISUAL_STYLES: Record<ProtocolVisualKey, ProtocolVisualSty
     icon: <TerminalIcon size={18} />,
     idle: "bg-amber-500/10 text-amber-500",
     selected: "bg-amber-500/20 text-amber-500",
+  },
+  serial: {
+    icon: <Usb size={18} />,
+    idle: "bg-teal-500/10 text-teal-500",
+    selected: "bg-teal-500/20 text-teal-500",
   },
 };
 

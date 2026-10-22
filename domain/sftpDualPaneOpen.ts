@@ -43,9 +43,14 @@ export type DualPaneSftpPlan = {
   addRightTab: boolean;
 };
 
-export function canOpenDualPaneSftp(host: { protocol?: string }): boolean {
+export function canOpenDualPaneSftp(host: {
+  protocol?: string;
+  sftpFileProtocol?: string;
+}): boolean {
   const protocol = host.protocol ?? "ssh";
   if (protocol === "serial") return false;
+  // A host with file transfer disabled has nothing to open.
+  if (host.sftpFileProtocol === "none") return false;
   // Local-shell vault hosts have no SFTP/SSH channel: opening dual-pane SFTP
   // from one would try to SSH into localhost with empty credentials.
   if (protocol === "local") return false;

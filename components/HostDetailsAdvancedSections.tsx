@@ -55,6 +55,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
   proxySummaryLabel,
   proxySummaryTooltip,
   clearProxyConfig,
+  hideSshOnly = false,
 }) => {
   const inheritedDeviceType = effectiveGroupDefaults?.deviceType;
   const effectiveDeviceType = form.deviceType ?? inheritedDeviceType;
@@ -190,6 +191,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
           </HostDetailsSettingRow>
         </HostDetailsSection>
 
+        {!hideSshOnly && (
         <HostDetailsSection
           icon={<Wifi size={14} className="text-muted-foreground" />}
           title={t("hostDetails.section.mosh")}
@@ -212,7 +214,9 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             }}
           />
         </HostDetailsSection>
+        )}
 
+        {!hideSshOnly && (
         <HostDetailsSection
           icon={<Wifi size={14} className="text-muted-foreground" />}
           title={t("hostDetails.section.et")}
@@ -251,8 +255,10 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             </>
           )}
         </HostDetailsSection>
+        )}
 
         {/* System SSH Agent login */}
+        {!hideSshOnly && (
         <HostDetailsSection
           icon={<KeyRound size={14} className="text-muted-foreground" />}
           title={t("hostDetails.section.systemSshAgent")}
@@ -319,8 +325,10 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             </div>
           )}
         </HostDetailsSection>
+        )}
 
         {/* Agent Forwarding */}
+        {!hideSshOnly && (
         <HostDetailsSection
           icon={<Forward size={14} className="text-muted-foreground" />}
           title={t("hostDetails.section.agentForwarding")}
@@ -345,9 +353,10 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             </div>
           )}
         </HostDetailsSection>
+        )}
 
         {/* X11 Forwarding */}
-        {showX11Forwarding && (
+        {showX11Forwarding && !hideSshOnly && (
           <HostDetailsSection
             icon={<TerminalSquare size={14} className="text-muted-foreground" />}
             title={t("hostDetails.section.x11Forwarding")}
@@ -361,7 +370,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
           </HostDetailsSection>
         )}
 
-        {(!form.protocol || ['ssh', 'telnet', 'mosh', 'et'].includes(form.protocol)) && (
+        {(!form.protocol || ['ssh', 'telnet', 'mosh', 'et'].includes(form.protocol)) && !hideSshOnly && (
         <HostDetailsSection
           icon={<Router size={14} className="text-muted-foreground" />}
           title={t("hostDetails.section.deviceType")}
@@ -418,6 +427,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
         )}
 
         {/* SSH Algorithms */}
+        {!hideSshOnly && (
         <HostDetailsSection
           icon={<ShieldAlert size={14} className="text-muted-foreground" />}
           title={t("hostDetails.section.sshAlgorithms")}
@@ -491,6 +501,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             </CollapsibleContent>
           </Collapsible>
         </HostDetailsSection>
+        )}
 
         {/* Terminal Behavior — input/output key mappings (backspace, etc.) */}
         <HostDetailsSection
@@ -520,6 +531,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
         </HostDetailsSection>
 
         {/* Per-host keepalive override */}
+        {!hideSshOnly && (
         <HostDetailsSection
           icon={<HeartPulse size={14} className="text-muted-foreground" />}
           title={t("hostDetails.section.keepalive")}
@@ -579,7 +591,9 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             </div>
           )}
         </HostDetailsSection>
+        )}
 
+        {!hideSshOnly && (
         <HostDetailsSection
           icon={<Timer size={14} className="text-muted-foreground" />}
           title={t("hostDetails.section.sshTimeouts")}
@@ -621,8 +635,10 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             />
           </HostDetailsSettingRow>
         </HostDetailsSection>
+        )}
 
         {/* Proxy via Hosts (Jump Hosts / ProxyJump) */}
+        {!hideSshOnly && (
         <HostDetailsSection
           icon={<Link2 size={14} className="text-muted-foreground" />}
           title={t("hostDetails.jumpHosts")}
@@ -690,8 +706,10 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             </Button>
           )}
         </HostDetailsSection>
+        )}
 
         {/* Proxy Configuration */}
+        {!hideSshOnly && (
         <HostDetailsSection
           icon={<Globe size={14} className="text-muted-foreground" />}
           title={t("hostDetails.proxy")}
@@ -767,8 +785,10 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             </Button>
           )}
         </HostDetailsSection>
+        )}
 
         {/* Environment Variables */}
+        {!hideSshOnly && (
         <HostDetailsSection
           icon={<Variable size={14} className="text-muted-foreground" />}
           title={t("hostDetails.envVars")}
@@ -805,6 +825,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             </Button>
           )}
         </HostDetailsSection>
+        )}
 
         {/* Startup Command */}
         <HostDetailsSection

@@ -633,6 +633,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       connectedKeyRef.current = null;
       return;
     }
+    // File transfer disabled for this host: never auto-connect the file panel.
+    if (activeHost.sftpFileProtocol === 'none') {
+      connectedKeyRef.current = null;
+      return;
+    }
     if (proto === 'local' || activeHost.id?.startsWith('local-')) {
       if (hasActiveWork) return;
       const leftConn = s.leftPane.connection;

@@ -208,6 +208,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     handleImportFileSelected,
     handleNewHost,
     handleNewLocalShellHost,
+    handleNewSerialHost,
     handleCancelLocalShellHost,
     handleSaveLocalShellHost,
     handleProtocolSelect,
@@ -237,7 +238,6 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     isQuickConnectOpen,
     isRenameGroupOpen,
     isSearchQuickConnect,
-    isSerialModalOpen,
     Key,
     keyBindings,
     KeychainManager,
@@ -256,9 +256,9 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     moveHostsToGroup,
     Network,
     newFolderName,
+    newHostConnectionType,
     newHostGroupPath,
     onConnect,
-    onConnectSerial,
     onCreateLocalTerminal,
     onDeleteHost,
     onImportOrReuseKey,
@@ -299,8 +299,6 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     selectedGroupPaths,
     selectedHostIds,
     selectedTags,
-    SerialConnectModal,
-    SerialHostDetailsPanel,
     sessionCount,
     Set,
     setBulkDeleteGroupPaths,
@@ -319,7 +317,6 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     setIsNewFolderOpen,
     setIsQuickConnectOpen,
     setIsRenameGroupOpen,
-    setIsSerialModalOpen,
     setLastPinnedId,
     setNewFolderName,
     setNewHostGroupPath,
@@ -1073,6 +1070,13 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                     <Button
                       variant="ghost"
                       className="justify-start gap-2"
+                      onClick={handleNewSerialHost}
+                    >
+                      <Usb size={14} className="shrink-0" /> {t("vault.hosts.newSerialHost")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="justify-start gap-2"
                       onClick={() => {
                         setTargetParentPath(selectedGroupPath);
                         setNewFolderName("");
@@ -1125,15 +1129,6 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 >
                   <TerminalSquare size={14} className="mr-2" />{" "}
                   {t("common.terminal")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className={vaultHeaderSecondaryButtonClass}
-                  onClick={() => setIsSerialModalOpen(true)}
-                  tabIndex={isHostAsideOpen ? -1 : 0}
-                >
-                  <Usb size={14} className="mr-2" /> {t("serial.button")}
                 </Button>
               </div>
             </VaultPageHeader>
@@ -1546,10 +1541,13 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
 
           {/* Host Details Panel */}
           {currentSection === "hosts" &&
-            isHostPanelOpen &&
-            editingHost?.protocol !== "serial" && (
+            isHostPanelOpen && (
               <HostDetailsPanel
+                key={editingHost ? editingHost.id : `new-host-${newHostConnectionType}`}
                 initialData={editingHost}
+                defaultConnectionType={
+                  editingHost ? undefined : newHostConnectionType
+                }
                 availableKeys={keys}
                 identities={identities}
                 proxyProfiles={proxyProfiles}
@@ -1596,31 +1594,6 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                   onUpdateCustomGroups(
                     Array.from(new Set([...customGroups, groupPath])),
                   );
-                }}
-                layout="inline"
-                {...vaultHostPanelResizeProps}
-              />
-            )}
-
-          {/* Serial Host Details Panel - for editing serial port hosts */}
-          {currentSection === "hosts" &&
-            isHostPanelOpen &&
-            editingHost?.protocol === "serial" && (
-              <SerialHostDetailsPanel
-                initialData={editingHost}
-                allTags={allTags}
-                groups={allGroupPaths}
-                groupDefaults={editingHostGroupDefaults}
-                onSave={(host) => {
-                  onUpdateHosts(upsertHostById(hosts, host));
-                  setIsHostPanelOpen(false);
-                  setEditingHost(null);
-                  setNewHostGroupPath(null);
-                }}
-                onCancel={() => {
-                  setIsHostPanelOpen(false);
-                  setEditingHost(null);
-                  setNewHostGroupPath(null);
                 }}
                 layout="inline"
                 {...vaultHostPanelResizeProps}
@@ -1965,19 +1938,6 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
         </LazyLoadBoundary>
       )}
 
-      {/* Serial Connect Modal */}
-      <SerialConnectModal
-        open={isSerialModalOpen}
-        onClose={() => setIsSerialModalOpen(false)}
-        onConnect={(config, options) => {
-          if (onConnectSerial) {
-            onConnectSerial(config, options);
-          }
-        }}
-        onSaveHost={(host) => {
-          onUpdateHosts([...hosts, host]);
-        }}
-      />
     </div>
   );
 }

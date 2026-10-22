@@ -4,6 +4,7 @@ import {
   EyeOff,
   FileText,
   FolderPlus,
+  MapPin,
   PlugZap,
   Plus,
   Settings2,
@@ -32,7 +33,7 @@ import {
   resolveHostTerminalFontSize,
   resolveHostTerminalThemeId,
 } from "../domain/terminalAppearance";
-import { EnvVar, GroupConfig, Host, Identity, KnownHost, ManagedSource, ProxyConfig, ProxyProfile, Snippet, SSHKey, TerminalSettings } from "../types";
+import { EnvVar, GroupConfig, Host, Identity, KnownHost, ManagedSource, ProxyConfig, ProxyProfile, SerialConfig, Snippet, SSHKey, TerminalSettings } from "../types";
 import { DISTRO_COLORS, DISTRO_LOGOS } from "./DistroAvatar";
 import ThemeSelectPanel from "./ThemeSelectPanel";
 import {
@@ -68,10 +69,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import {
   ChainPanel,
   CreateGroupPanel,
-  HostDetailsSection,
   EnvVarsPanel,
+  HostDetailsSection,
   ProxyPanel,
-  HostDetailsSettingRow,
 } from "./host-details";
 import { HostNotesEditor } from "./host/HostNotesEditor";
 import { HostDetailsScriptsSection } from "./host/HostDetailsScriptsSection";
@@ -82,6 +82,20 @@ import {
   stripBuiltInConnectionFieldsForPluginHost,
 } from "../domain/pluginConnection";
 import { PluginConnectionSection } from "./PluginConnectionSection";
+import { HostFileTransferSection } from "./host-details/HostFileTransferSection";
+import { HostConnectionTypeSelect } from "./host-details/HostConnectionTypeSelect";
+import { HostSerialConnectionSection } from "./host-details/HostSerialConnectionSection";
+import {
+  applyHostConnectionType,
+  buildSerialHostForSave,
+  defaultSerialHostLabel,
+  isSerialHostDraftValid,
+  normalizeSerialConfig,
+  resolveHostConnectionType,
+  resolveSerialPortPath,
+  SSH_FAMILY_CONNECTION_TYPES,
+  type HostConnectionType,
+} from "../domain/serialHost";
 import { useHostConnectionTest } from "../application/state/useHostConnectionTest";
 import { HostConnectionTestDialog } from "./host-details/HostConnectionTestDialog";
 
@@ -105,6 +119,8 @@ interface HostDetailsPanelProps {
   allTags?: string[]; // All available tags for autocomplete
   allHosts?: Host[]; // All hosts for chain selection
   defaultGroup?: string | null; // Default group for new hosts (from current navigation)
+  /** Connection type preselected for a new host (e.g. the "serial" shortcut). */
+  defaultConnectionType?: HostConnectionType;
   terminalThemeId: string;
   terminalFontSize: number;
   onSave: (host: Host) => void;
@@ -136,6 +152,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   allTags = [],
   allHosts = [],
   defaultGroup,
+  defaultConnectionType = "ssh",
   terminalThemeId,
   terminalFontSize,
   onSave,
@@ -170,9 +187,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   const baselineHydratedRef = useRef(snippets.length > 0);
   const openingQueueIdsRef = useRef<string[]>([]);
   const [form, setForm] = useState<Host>(
-    () =>
-      (initialData ? normalizePrimaryTelnetState(initialData) : null) ||
-      ({
+    () => {
+      if (initialData) return normalizePrimaryTelnetState(initialData);
+      const draft = {
         id: crypto.randomUUID(),
         label: "",
         hostname: "",
@@ -187,7 +204,21 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
         distroMode: "auto",
         createdAt: Date.now(),
         group: defaultGroup || undefined, // Pre-fill with current navigation group
-      } as Host),
+      } as Host;
+      // A shortcut entry (e.g. the serial host item) opens this same editor
+      // with the connection method already chosen.
+      if (defaultConnectionType === "ssh") return draft;
+      const switched = applyHostConnectionType(draft, defaultConnectionType);
+      return defaultConnectionType === "serial"
+        ? {
+            ...switched,
+            username: "",
+            label: switched.serialConfig?.path
+              ? defaultSerialHostLabel(switched.serialConfig.path)
+              : switched.label,
+          }
+        : switched;
+    },
   );
 
   const [activeSubPanel, setActiveSubPanel] = useState<SubPanel>("none");
@@ -534,10 +565,60 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     });
   };
   const pluginProtocolActive = isPluginHostProtocol(form.protocol);
+  const connectionType = resolveHostConnectionType(form);
+  const isSerialProtocol = form.protocol === "serial";
+  const isTelnetProtocol = form.protocol === "telnet";
+  const isFileOnly = Boolean(form.fileTransferOnly);
+  const usesSshSections = !isSerialProtocol
+    && !isTelnetProtocol
+    && SSH_FAMILY_CONNECTION_TYPES.includes(connectionType);
+  const serialConfig = useMemo(
+    () => normalizeSerialConfig(form.serialConfig, form.hostname),
+    [form.serialConfig, form.hostname],
+  );
+  const updateSerialConfig = useCallback((patch: Partial<SerialConfig>) => {
+    setForm((prev) => {
+      const previous = normalizeSerialConfig(prev.serialConfig, prev.hostname);
+      const next = { ...previous, ...patch };
+      const autoLabel = defaultSerialHostLabel(next.path);
+      return {
+        ...prev,
+        serialConfig: next,
+        hostname: next.path,
+        port: next.baudRate,
+        // A label the user typed wins; the generated "Serial: <port>" label
+        // follows the selected device instead of going stale.
+        label: prev.label?.trim() && prev.label !== defaultSerialHostLabel(previous.path)
+          ? prev.label
+          : autoLabel,
+      };
+    });
+  }, []);
+  const selectConnectionType = useCallback((next: HostConnectionType) => {
+    setForm((prev) => {
+      const switched = applyHostConnectionType(prev, next);
+      if (next !== "serial") {
+        // Drop a generated serial label when the host is no longer a serial port.
+        const autoLabel = prev.protocol === "serial"
+          ? defaultSerialHostLabel(prev.serialConfig?.path ?? prev.hostname)
+          : null;
+        return autoLabel && switched.label === autoLabel
+          ? { ...switched, label: switched.hostname }
+          : switched;
+      }
+      const path = resolveSerialPortPath(switched);
+      const label = switched.label?.trim() ? switched.label : defaultSerialHostLabel(path);
+      // A new SSH draft seeds "root"; serial auto-login must not inherit it.
+      const username = !initialData && switched.username === "root" ? "" : switched.username;
+      return { ...switched, label, username };
+    });
+  }, [initialData]);
   const hasHostname = form.hostname.trim().length > 0;
   const canSaveHost = pluginProtocolActive
     ? pluginConnectionValid && Boolean(sanitizePluginConnection(form.pluginConnection, form.protocol))
-    : hasHostname;
+    : isSerialProtocol
+      ? isSerialHostDraftValid(form)
+      : hasHostname;
 
   const handleSubmit = async () => {
     if (savingHostRef.current) return;
@@ -545,14 +626,17 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     try {
     const flushed = await totpFlushRef.current?.();
     if (flushed && !flushed.ok) return;
-    const hostname = form.hostname.trim()
-      || (pluginProtocolActive ? form.label.trim() || form.pluginConnection?.providerId || "plugin" : "");
+    const hostname = isSerialProtocol
+      ? resolveSerialPortPath(form)
+      : form.hostname.trim()
+        || (pluginProtocolActive ? form.label.trim() || form.pluginConnection?.providerId || "plugin" : "");
     if (!hostname || !canSaveHost) return;
-    if (!pluginProtocolActive && !hasRequiredHostAuthCredential({ host: effectiveAuthHost, keys: availableKeys, identities })) {
+    const usesFtpOnly = isFileOnly && form.sftpFileProtocol === "ftp";
+    if (!pluginProtocolActive && !isSerialProtocol && !usesFtpOnly && !hasRequiredHostAuthCredential({ host: effectiveAuthHost, keys: availableKeys, identities })) {
       toast.error(t("hostDetails.auth.credentialRequired"));
       return;
     }
-    const proxySave = pluginProtocolActive
+    const proxySave = pluginProtocolActive || isSerialProtocol
       ? { normalizedProxyConfig: undefined, error: undefined }
       : prepareProxyConfigForSave({
       proxyConfig: form.proxyConfig,
@@ -624,6 +708,25 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
       }),
       authPolicyVersion: 1,
       managedSourceId: finalManagedSourceId,
+      fileTransferOnly: isFileOnly || undefined,
+      // File transfer disabled means no transfer settings survive. Otherwise
+      // keep whatever FTP configuration the host already had: only an explicit
+      // FTP selection turns it on, and a plain save must not silently disable
+      // drag-and-drop uploads on a host that was already using FTP.
+      ...(form.sftpFileProtocol === "none"
+        ? {
+          sftpFileProtocol: "none" as const,
+          ftpEnabled: undefined,
+          ftpPort: undefined,
+          ftpSecure: undefined,
+          ftpInsecure: undefined,
+          ftpUsername: undefined,
+          ftpPassword: undefined,
+          ftpIdentityId: undefined,
+        }
+        : form.sftpFileProtocol === "ftp"
+          ? { ftpEnabled: true }
+          : { ftpEnabled: form.ftpEnabled }),
     };
     if (flushed?.ok) {
       if (flushed.totp) cleaned.totp = flushed.totp;
@@ -634,7 +737,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
       if (!pluginConnection) return;
       cleaned = stripBuiltInConnectionFieldsForPluginHost({ ...cleaned, pluginConnection });
     }
-    cleaned = prepareTelnetCredentialsForSave(normalizePrimaryTelnetState(cleaned));
+    cleaned = isSerialProtocol
+      ? buildSerialHostForSave(cleaned)
+      : prepareTelnetCredentialsForSave(normalizePrimaryTelnetState(cleaned));
     if (
       onImportKey &&
       pendingReferenceKeyPath &&
@@ -1030,6 +1135,29 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     );
   }
 
+  const fileTransferSection = (
+            <HostFileTransferSection
+              protocol={form.sftpFileProtocol ?? "auto"}
+              onProtocolChange={(next) => {
+                update("sftpFileProtocol", next);
+                if ((next === "scp" || next === "ftp" || next === "none") && form.sftpSudo) {
+                  update("sftpSudo", false);
+                }
+              }}
+              ftpEnabled={Boolean(form.ftpEnabled)}
+              ftpPort={form.ftpPort}
+              ftpSecure={form.ftpSecure}
+              ftpInsecure={form.ftpInsecure}
+              ftpUsername={form.ftpUsername}
+              ftpPassword={form.ftpPassword}
+              onUpdate={update}
+              showPassword={showFtpPassword}
+              onTogglePassword={() => setShowFtpPassword((previous) => !previous)}
+              t={t}
+              required={isFileOnly}
+            />
+  );
+
   return (
     <AsidePanel
       open={true}
@@ -1044,7 +1172,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
       }
       actions={
         <>
-          {!pluginProtocolActive && form.protocol !== "telnet" && (
+          {!pluginProtocolActive && !isSerialProtocol && form.protocol !== "telnet" && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="inline-flex">
@@ -1141,118 +1269,36 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           </div>
         </HostDetailsSection>
 
-        <PluginConnectionSection
-          form={form}
-          setForm={setForm}
-          t={t}
-          onValidityChange={setPluginConnectionValid}
-          identities={identities}
-          keys={availableKeys}
-        />
+        {!pluginProtocolActive && (
+          <HostDetailsSection
+            icon={<Settings2 size={14} className="text-muted-foreground" />}
+            title={t("hostDetails.connectionType")}
+          >
+            <HostConnectionTypeSelect
+              value={connectionType}
+              onChange={selectConnectionType}
+              t={t}
+            />
+          </HostDetailsSection>
+        )}
 
-        {!pluginProtocolActive ? <HostDetailsConnectionSections
-          t={t}
-          form={form}
-          setForm={setForm}
-          totpFlushRef={totpFlushRef}
-          update={update}
-          groupDefaults={effectiveGroupDefaults}
-          effectiveAuthMethod={effectiveAuthMethod}
-          effectiveUsername={effectiveAuth.username}
-          effectiveIdentityId={effectiveAuthHost.identityId}
-          selectedIdentity={selectedIdentity}
-          clearIdentity={clearIdentity}
-          identities={identities}
-          identitySuggestionsOpen={identitySuggestionsOpen}
-          filteredIdentitySuggestions={filteredIdentitySuggestions}
-          setIdentitySuggestionsOpen={setIdentitySuggestionsOpen}
-          availableKeys={availableKeys}
-          applyIdentity={applyIdentity}
-          showPassword={showPassword}
-          setShowPassword={setShowPassword}
-          pendingReferenceKeyPath={pendingReferenceKeyPath}
-          setPendingReferenceKeyPath={setPendingReferenceKeyPath}
-          selectedCredentialType={selectedCredentialType}
-          setSelectedCredentialType={setSelectedCredentialType}
-          credentialPopoverOpen={credentialPopoverOpen}
-          setCredentialPopoverOpen={setCredentialPopoverOpen}
-          keysByCategory={keysByCategory}
-          newKeyFilePath={newKeyFilePath}
-          setNewKeyFilePath={setNewKeyFilePath}
-          addLocalKeyFilePath={addLocalKeyFilePath}
-          handleDistroModeChange={handleDistroModeChange}
-          distroOptions={distroOptions}
-          effectiveFormDistro={effectiveFormDistro}
-          getDistroOptionLabel={getDistroOptionLabel}
-        /> : null}
+        {!pluginProtocolActive ? fileTransferSection : null}
 
-        {onSnippetsChange ? (
-          <HostDetailsScriptsSection
-            host={form}
-            onHostChange={setForm}
-            snippets={snippets}
-            t={t}
-          />
+        {!pluginProtocolActive && isTelnetProtocol ? (
+          <HostDetailsSection
+            icon={<MapPin size={14} className="text-muted-foreground" />}
+            title={t("hostDetails.section.address")}
+          >
+            <Input
+              placeholder={t("hostDetails.hostname.placeholder")}
+              value={form.hostname}
+              onChange={(e) => update("hostname", e.target.value)}
+              className="h-10 w-full"
+            />
+          </HostDetailsSection>
         ) : null}
 
-        <HostDetailsSection
-          icon={<FileText size={14} className="text-muted-foreground shrink-0" />}
-          title={t("hostDetails.notes.label")}
-          hint={t("hostDetails.notes.help")}
-          action={
-            <Switch
-              checked={showNotesEditor}
-              onCheckedChange={setShowNotesEditor}
-              aria-label={
-                showNotesEditor
-                  ? t("hostDetails.notes.toggle.hide")
-                  : t("hostDetails.notes.toggle.show")
-              }
-            />
-          }
-        >
-          {showNotesEditor ? (
-            <HostNotesEditor
-              panelKey={form.id}
-              value={form.notes ?? ""}
-              onChange={(notes) => update("notes", notes)}
-              showHeader={false}
-              defaultTab="edit"
-            />
-          ) : null}
-        </HostDetailsSection>
-
-        <HostDetailsAdvancedSections
-          t={t}
-          form={form}
-          setForm={setForm}
-          update={update}
-          effectiveThemeId={effectiveThemeId}
-          hasEffectiveThemeOverride={hasEffectiveThemeOverride}
-          effectiveFontSize={effectiveFontSize}
-          hasEffectiveFontSizeOverride={hasEffectiveFontSizeOverride}
-          sshAgentStatus={sshAgentStatus}
-          sshForwardingAgentStatus={sshForwardingAgentStatus}
-          effectiveGroupDefaults={effectiveGroupDefaults}
-          effectiveAuthMethod={effectiveAuthMethod}
-          showAlgorithmOverrides={showAlgorithmOverrides}
-          setShowAlgorithmOverrides={setShowAlgorithmOverrides}
-          chainedHosts={chainedHosts}
-          setActiveSubPanel={setActiveSubPanel}
-          clearHostChain={clearHostChain}
-          proxySummaryType={proxySummaryType}
-          proxySummaryLabel={proxySummaryLabel}
-          proxySummaryTooltip={proxySummaryTooltip}
-          clearProxyConfig={clearProxyConfig}
-        />
-
-        <div className="flex items-center gap-3 py-2">
-          <div className="flex-1 h-px bg-border/60" />
-          <span className="text-xs text-muted-foreground">{t("hostDetails.otherProtocols")}</span>
-          <div className="flex-1 h-px bg-border/60" />
-        </div>
-
-        {form.telnetEnabled || form.protocol === "telnet" ? (
+{isTelnetProtocol ? (
           <HostDetailsSection
             icon={<Plus size={14} className="text-muted-foreground" />}
             title="Telnet"
@@ -1385,94 +1431,134 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
               </span>
             </button>
           </HostDetailsSection>
-        ) : (
-          <Button
-            variant="ghost"
-            className="w-full h-10 justify-start gap-2 border border-dashed border-border/60"
-            onClick={() => {
-              update("telnetEnabled", true);
-            }}
-          >
-            <Plus size={14} />
-            {t("hostDetails.telnet.add")}
-          </Button>
-        )}
+        ) : null}
 
-        {form.ftpEnabled ? (
-          <HostDetailsSection icon={<Plus size={14} className="text-muted-foreground" />} title="FTP">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex-1 min-w-0 h-12 flex items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 px-3">
-                <span className="truncate text-sm font-medium leading-5 text-foreground">
-                  {t("hostDetails.ftp.on")}
-                </span>
-                <div className="ml-auto w-1/2 min-w-0 flex items-center gap-2 justify-end">
-                  <Input
-                    type="number"
-                    value={form.ftpPort ?? ""}
-                    placeholder="21"
-                    onChange={(e) => update("ftpPort", parseOptionalPortInput(e.target.value))}
-                    className="h-8 flex-1 min-w-0 text-center"
-                  />
-                  <span className="text-xs text-muted-foreground">{t("hostDetails.port")}</span>
-                </div>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                onClick={() => update("ftpEnabled", false)}
-              >
-                <X size={14} />
-              </Button>
-            </div>
 
-            <HostDetailsSettingRow label={t("hostDetails.ftp.secure")}>
-              <Switch
-                checked={Boolean(form.ftpSecure)}
-                onCheckedChange={(checked) => update("ftpSecure", checked)}
-              />
-            </HostDetailsSettingRow>
-            <HostDetailsSettingRow label={t("hostDetails.ftp.insecure")}>
-              <Switch
-                checked={Boolean(form.ftpInsecure)}
-                onCheckedChange={(checked) => update("ftpInsecure", checked)}
-              />
-            </HostDetailsSettingRow>
+        <PluginConnectionSection
+          form={form}
+          setForm={setForm}
+          t={t}
+          onValidityChange={setPluginConnectionValid}
+          identities={identities}
+          keys={availableKeys}
+        />
 
-            <Input
-              value={form.ftpUsername ?? ""}
-              placeholder={t("hostDetails.ftp.username")}
-              onChange={(e) => update("ftpUsername", e.target.value)}
-              className="h-10"
+        {!pluginProtocolActive && isSerialProtocol ? (
+          <HostSerialConnectionSection
+            value={serialConfig}
+            onChange={updateSerialConfig}
+            t={t}
+            username={form.username ?? ""}
+            onUsernameChange={(value) => update("username", value)}
+            password={form.password ?? ""}
+            onPasswordChange={(value) => update("password", value)}
+            onPasswordClear={() => update("password", undefined)}
+            canClearPassword={Boolean(form.password)}
+            charset={form.charset ?? ""}
+            onCharsetChange={(value) => update("charset", value)}
+            inheritedCharset={effectiveGroupDefaults?.charset}
+          />
+        ) : null}
+
+        {!pluginProtocolActive && (usesSshSections || isFileOnly) ? <HostDetailsConnectionSections
+          t={t}
+          form={form}
+          setForm={setForm}
+          totpFlushRef={totpFlushRef}
+          update={update}
+          groupDefaults={effectiveGroupDefaults}
+          effectiveAuthMethod={effectiveAuthMethod}
+          effectiveUsername={effectiveAuth.username}
+          effectiveIdentityId={effectiveAuthHost.identityId}
+          selectedIdentity={selectedIdentity}
+          clearIdentity={clearIdentity}
+          identities={identities}
+          identitySuggestionsOpen={identitySuggestionsOpen}
+          filteredIdentitySuggestions={filteredIdentitySuggestions}
+          setIdentitySuggestionsOpen={setIdentitySuggestionsOpen}
+          availableKeys={availableKeys}
+          applyIdentity={applyIdentity}
+          showPassword={showPassword}
+          setShowPassword={setShowPassword}
+          pendingReferenceKeyPath={pendingReferenceKeyPath}
+          setPendingReferenceKeyPath={setPendingReferenceKeyPath}
+          selectedCredentialType={selectedCredentialType}
+          setSelectedCredentialType={setSelectedCredentialType}
+          credentialPopoverOpen={credentialPopoverOpen}
+          setCredentialPopoverOpen={setCredentialPopoverOpen}
+          keysByCategory={keysByCategory}
+          newKeyFilePath={newKeyFilePath}
+          setNewKeyFilePath={setNewKeyFilePath}
+          addLocalKeyFilePath={addLocalKeyFilePath}
+          handleDistroModeChange={handleDistroModeChange}
+          distroOptions={distroOptions}
+          effectiveFormDistro={effectiveFormDistro}
+          getDistroOptionLabel={getDistroOptionLabel}
+        /> : null}
+
+        {onSnippetsChange && !isFileOnly ? (
+          <HostDetailsScriptsSection
+            host={form}
+            onHostChange={setForm}
+            snippets={snippets}
+            t={t}
+          />
+        ) : null}
+
+        <HostDetailsSection
+          icon={<FileText size={14} className="text-muted-foreground shrink-0" />}
+          title={t("hostDetails.notes.label")}
+          hint={t("hostDetails.notes.help")}
+          action={
+            <Switch
+              checked={showNotesEditor}
+              onCheckedChange={setShowNotesEditor}
+              aria-label={
+                showNotesEditor
+                  ? t("hostDetails.notes.toggle.hide")
+                  : t("hostDetails.notes.toggle.show")
+              }
             />
-            <div className="relative">
-              <Input
-                type={showFtpPassword ? "text" : "password"}
-                value={form.ftpPassword ?? ""}
-                placeholder={t("hostDetails.ftp.password")}
-                onChange={(e) => update("ftpPassword", e.target.value)}
-                className="h-10 pr-10"
-              />
-              <button
-                type="button"
-                onClick={() => setShowFtpPassword(!showFtpPassword)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {showFtpPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-            <p className="text-xs leading-relaxed text-muted-foreground">{t("hostDetails.ftp.hint")}</p>
-          </HostDetailsSection>
-        ) : (
-          <Button
-            variant="ghost"
-            className="w-full h-10 justify-start gap-2 border border-dashed border-border/60"
-            onClick={() => update("ftpEnabled", true)}
-          >
-            <Plus size={14} />
-            {t("hostDetails.ftp.add")}
-          </Button>
-        )}
+          }
+        >
+          {showNotesEditor ? (
+            <HostNotesEditor
+              panelKey={form.id}
+              value={form.notes ?? ""}
+              onChange={(notes) => update("notes", notes)}
+              showHeader={false}
+              defaultTab="edit"
+            />
+          ) : null}
+        </HostDetailsSection>
+
+        {!isSerialProtocol && !isFileOnly ? (
+        <HostDetailsAdvancedSections
+          t={t}
+          form={form}
+          setForm={setForm}
+          update={update}
+          effectiveThemeId={effectiveThemeId}
+          hasEffectiveThemeOverride={hasEffectiveThemeOverride}
+          effectiveFontSize={effectiveFontSize}
+          hasEffectiveFontSizeOverride={hasEffectiveFontSizeOverride}
+          sshAgentStatus={sshAgentStatus}
+          sshForwardingAgentStatus={sshForwardingAgentStatus}
+          effectiveGroupDefaults={effectiveGroupDefaults}
+          effectiveAuthMethod={effectiveAuthMethod}
+          showAlgorithmOverrides={showAlgorithmOverrides}
+          setShowAlgorithmOverrides={setShowAlgorithmOverrides}
+          chainedHosts={chainedHosts}
+          setActiveSubPanel={setActiveSubPanel}
+          clearHostChain={clearHostChain}
+          proxySummaryType={proxySummaryType}
+          proxySummaryLabel={proxySummaryLabel}
+          proxySummaryTooltip={proxySummaryTooltip}
+          clearProxyConfig={clearProxyConfig}
+          hideSshOnly={isTelnetProtocol}
+        />
+        ) : null}
+
       </AsidePanelContent>
       <AsidePanelFooter>
         <Button

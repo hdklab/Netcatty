@@ -243,7 +243,7 @@ test("HostDetailsPanel displays inherited telnet port before falling back to 23"
   assert.match(findInputByValue(markup, "2325"), /type="number"/);
 });
 
-test("HostDetailsPanel uses group telnet port instead of ssh port for optional telnet", () => {
+test("HostDetailsPanel uses the group telnet port when Telnet is the chosen connection type", () => {
   const markup = renderToStaticMarkup(
     React.createElement(
       I18nProvider,
@@ -254,7 +254,7 @@ test("HostDetailsPanel uses group telnet port instead of ssh port for optional t
         React.createElement(HostDetailsPanel, {
           initialData: {
             ...hostWithMissingProxyProfile,
-            protocol: "ssh",
+            protocol: "telnet",
             telnetEnabled: true,
             telnetPort: undefined,
             port: 2222,

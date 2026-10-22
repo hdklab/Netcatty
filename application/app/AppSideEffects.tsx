@@ -19,6 +19,7 @@ import {
 } from '../state/connectionLogsStore';
 import { getNotesSnapshot } from '../state/notesStore';
 import { useVaultAgentBridge } from '../state/useVaultAgentBridge';
+import { requestOpenDualPaneSftp } from '../state/sftp/sftpDualPaneOpenStore';
 import { useWindowControls } from '../state/useWindowControls';
 import { useTerminalKeyboardFocus } from '../state/useTerminalKeyboardFocus';
 import { editorTabStore, useEditorTabChromeList } from '../state/editorTabStore';
@@ -1457,6 +1458,12 @@ export function AppSideEffects() {
 
   // Wrapper to connect to host with logging
   const handleConnectToHost = useCallback((host: Host, alreadyEffective = false, hidden = false) => {
+    // File-server-only hosts never start a shell: connecting opens the file
+    // transfer view for them instead of a terminal tab.
+    if (host.fileTransferOnly) {
+      requestOpenDualPaneSftp(host.id);
+      return undefined;
+    }
     const liveTerminalSettings = temporaryConnectionSettingsRef.current;
     const connectionHost = prepareConnectionHost(
       host,
@@ -1502,6 +1509,14 @@ export function AppSideEffects() {
     const hidden = isExternalMcpCall && readExternalMcpSilentSessions();
     const sessionId = handleConnectToHost(host, true, hidden);
     if (!sessionId) {
+      // A file-server-only host legitimately opens the file transfer view
+      // instead of a terminal session, so there is no session id to return.
+      if (host.fileTransferOnly) {
+        if (readExternalMcpFocusOnHostOpen()) {
+          void netcattyBridge.get()?.openMainWindow?.();
+        }
+        return { ok: true as const, sessionId: null, opened: 'fileTransfer' as const, host };
+      }
       return { ok: false as const, error: `Failed to open host "${host.id}".` };
     }
     // Surface the main window for external MCP / CLI open requests, unless the
