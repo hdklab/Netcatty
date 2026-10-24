@@ -8475,4 +8475,5 @@ module.exports = {
   _hasLocalUploadAcknowledgedPrefixForTests: (transferId) => (
     localUploadAcknowledgedPrefix.has(String(transferId))
   ),
+  _withSequentialSftpTransferSlotForTests: withSequentialSftpTransferSlot,
 };
