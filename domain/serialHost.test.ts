@@ -58,6 +58,22 @@ test("draft validation needs a serial path plus a positive integer baud rate", (
   assert.equal(isSerialHostDraftValid({ hostname: "COM3", serialConfig: { path: "COM3", baudRate: 1.5 } }), false);
 });
 
+test("a Windows named-pipe console is a serial path without UART settings", () => {
+  const pipe = "\\\\.\\pipe\\vm-console";
+
+  assert.equal(isSerialPortPath(pipe), true);
+  // Baud rate and framing do not apply to a pipe, so an empty/zero rate still saves.
+  assert.equal(isSerialHostDraftValid({ hostname: pipe, serialConfig: { path: pipe, baudRate: 0 } }), true);
+  assert.equal(isSerialHostDraftValid({ hostname: "", serialConfig: { path: pipe, baudRate: 115200 } }), true);
+  assert.equal(defaultSerialHostLabel(pipe), "Serial: vm-console");
+  // A pipe path is a device path, never an SSH hostname to keep.
+  const switched = applyHostConnectionType(
+    applyHostConnectionType(host({ hostname: pipe, port: 115200 }), "serial"),
+    "ssh",
+  );
+  assert.equal(switched.hostname, "");
+});
+
 test("a saved serial host keeps the path as hostname and the baud rate as port", () => {
   const saved = buildSerialHostForSave(host({
     protocol: "serial",

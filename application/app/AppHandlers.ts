@@ -9,6 +9,8 @@ import { getAvailablePaneMagnificationController } from '../../domain/paneMagnif
 import { sanitizeHostIconFields } from '../../domain/hostIcon';
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 import { getTerminalPassthroughActions } from '../state/useGlobalHotkeys';
+import { getSettingsChromeSnapshot } from '../state/settingsChromeStore';
+import { isHostTreeWorkTabSurface } from './workTabSurface';
 import { tabShortcutDigitFromEvent } from '../../domain/models/keyBindings';
 import { isPortForwardingAutoReconnectEnabled } from '../../domain/portForwardingReconnect';
 import { buildNumberShortcutTabTargets } from './tabShortcutTargets';
@@ -276,6 +278,9 @@ export function handleGlobalHotkeyKeyDownImpl(getCtx: AppContextGetter, e: Keybo
     const paneZoomBinding = keyBindings.find((binding) => binding.action === 'togglePaneZoom');
     const paneZoomKeyStr = paneZoomBinding ? (isMac ? paneZoomBinding.mac : paneZoomBinding.pc) : null;
     const isPaneZoomHotkey = paneZoomKeyStr ? matchesKeyBinding(e, paneZoomKeyStr, isMac) : false;
+    const hostTreeBinding = keyBindings.find((binding) => binding.action === 'toggleHostTree');
+    const hostTreeKeyStr = hostTreeBinding ? (isMac ? hostTreeBinding.mac : hostTreeBinding.pc) : null;
+    const isHostTreeHotkey = hostTreeKeyStr ? matchesKeyBinding(e, hostTreeKeyStr, isMac) : false;
 
     if (
       (isFormElement || isMonacoElement)
@@ -283,6 +288,7 @@ export function handleGlobalHotkeyKeyDownImpl(getCtx: AppContextGetter, e: Keybo
       && e.key !== 'Escape'
       && !isQuickSwitchHotkey
       && !isPaneZoomHotkey
+      && !(isMonacoElement && isHostTreeHotkey)
       && !forwardedNativeShortcutEvents.has(e)
     ) {
       return;
@@ -322,9 +328,10 @@ export function handleGlobalHotkeyKeyDownImpl(getCtx: AppContextGetter, e: Keybo
         continue;
       }
 
-      // An unavailable broadcast action must leave the chord to the terminal
-      // (notably tmux's Ctrl+B prefix). Dispatch once before consuming it.
-      if (binding.action === 'broadcast') {
+      // An unavailable action must leave the chord to the terminal.
+      // Broadcast keeps Ctrl/Cmd+B for tmux; the host list keeps Ctrl/Cmd+Shift+B
+      // when the sidebar cannot show. Dispatch once before consuming it.
+      if (binding.action === 'broadcast' || binding.action === 'toggleHostTree') {
         if (executeHotkeyAction(binding.action, e) === true) {
           e.preventDefault();
           e.stopPropagation();
@@ -801,7 +808,7 @@ export async function closeTabsBatchImpl(getCtx: AppContextGetter, targetIds: st
 }
 
 export function executeHotkeyActionImpl(getCtx: AppContextGetter, action: string, e: KeyboardEvent) {
-  const { IS_DEV, MOVE_FOCUS_DEBOUNCE_MS, activeTabStore, addConnectionLogRef, canUseGlobalBroadcast, closePluginViewTab, closeSession, closeTabInFlightRef, closeWorkspace, collectSessionIds, confirmIfBusyLocalTerminal, createLocalTerminalWithCurrentShell, editorTabs, fromEditorTabId, handleOpenSettingsRef, handleRequestCloseEditorTabRef, isEditorTabId, isPluginViewTabId, isQuickSwitcherOpen, lastMoveFocusTimeRef, moveFocusInWorkspace, orderedTabs, resolveCloseIntent, resolveSnippetsShortcutIntent, sessions, setActiveTabId, setAddToWorkspaceDialog, setIsQuickSwitcherOpen, setNavigateToSection, settings, sftpPaneMagnificationRef, splitSessionWithCurrentShell, systemInfoRef, terminalPaneMagnificationRef, toEditorTabId, toggleBroadcast, toggleGlobalBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWindowOpacity, workspaces } = getCtx();
+  const { IS_DEV, MOVE_FOCUS_DEBOUNCE_MS, activeTabStore, addConnectionLogRef, canUseGlobalBroadcast, closePluginViewTab, closeSession, closeTabInFlightRef, closeWorkspace, collectSessionIds, confirmIfBusyLocalTerminal, createLocalTerminalWithCurrentShell, editorTabs, fromEditorTabId, handleOpenSettingsRef, handleRequestCloseEditorTabRef, isEditorTabId, isPluginViewTabId, isQuickSwitcherOpen, lastMoveFocusTimeRef, moveFocusInWorkspace, orderedTabs, resolveCloseIntent, resolveSnippetsShortcutIntent, sessions, setActiveTabId, setAddToWorkspaceDialog, setIsQuickSwitcherOpen, setNavigateToSection, settings, sftpPaneMagnificationRef, splitSessionWithCurrentShell, systemInfoRef, terminalPaneMagnificationRef, toEditorTabId, toggleBroadcast, toggleGlobalBroadcast, toggleHostTree, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWindowOpacity, workspaces } = getCtx();
 {
     const shortcutTabs = buildNumberShortcutTabTargets({
       showSftpTab: settings.showSftpTab ?? true,
@@ -997,6 +1004,18 @@ export function executeHotkeyActionImpl(getCtx: AppContextGetter, action: string
       case 'toggleSidePanel':
         toggleSidePanelRef.current?.();
         break;
+      case 'toggleHostTree': {
+        const currentId = activeTabStore.getActiveTabId();
+        if (!isHostTreeWorkTabSurface({
+          enabled: getSettingsChromeSnapshot().showHostTreeSidebar,
+          activeTabId: currentId,
+          orderedTabs: orderedTabs ?? [],
+          sessionIds: new Set((sessions ?? []).map((session: TerminalSession) => session.id)),
+          workspaceIds: new Set((workspaces ?? []).map((workspace: { id: string }) => workspace.id)),
+        }) || typeof toggleHostTree !== 'function') return false;
+        toggleHostTree();
+        return true;
+      }
       case 'broadcast': {
         // Workspace tabs keep their local broadcast state; orphan tabs share
         // the global state when at least two visible orphan tabs exist.
@@ -1145,6 +1164,7 @@ export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host, hi
     if (effectiveHost.protocol === 'serial') {
       const portName = host.hostname.split('/').pop() || host.hostname;
       const sessionId = connectToHost(effectiveHost, { hidden });
+      if (!sessionId) return null;
       addConnectionLog({
         sessionId,
         hostId: host.id,
@@ -1164,6 +1184,7 @@ export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host, hi
     const protocol = resolveEffectiveTerminalProtocol(effectiveHost);
     const resolvedAuth = resolveHostAuth({ host: effectiveHost, keys, identities });
     const sessionId = connectToHost(effectiveHost, { hidden });
+    if (!sessionId) return null;
     addConnectionLog({
       sessionId,
       hostId: host.id,
@@ -1184,7 +1205,7 @@ export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host, hi
   }
 }
 
-export function handleTerminalDataCaptureImpl(getCtx: AppContextGetter, sessionId: string, data: string) {
+export async function handleTerminalDataCaptureImpl(getCtx: AppContextGetter, sessionId: string, data: string) {
   const { IS_DEV, connectionLogs, selectConnectionLogForTerminalDataCapture, sessions, updateConnectionLog } = getCtx();
 {
     if (IS_DEV) console.log('[handleTerminalDataCapture] Called', { sessionId, dataLength: data.length });
@@ -1200,7 +1221,10 @@ export function handleTerminalDataCaptureImpl(getCtx: AppContextGetter, sessionI
     if (IS_DEV) console.log('[handleTerminalDataCapture] Matching log', matchingLog);
 
     if (matchingLog) {
-      updateConnectionLog(matchingLog.id, {
+      // The IndexedDB replay write commits asynchronously. Waiting here keeps
+      // a crash during session teardown from dropping the newest capture any
+      // more often than the old synchronous localStorage write.
+      await updateConnectionLog(matchingLog.id, {
         endTime: Date.now(),
         terminalData: data,
       });

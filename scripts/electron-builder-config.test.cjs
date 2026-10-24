@@ -144,6 +144,13 @@ test("asarUnpack no longer references removed legacy agent packages", () => {
 test("asarUnpack keeps MCP server runtime deps unpacked", () => {
   // @modelcontextprotocol/sdk is now a direct dep and the MCP server hard-requires it.
   assert.ok(config.asarUnpack.includes("node_modules/@modelcontextprotocol/sdk/**/*"));
+  // externalMcpRedaction.cjs requires re2js. The launcher runs from
+  // app.asar.unpacked with ELECTRON_RUN_AS_NODE, which cannot see modules
+  // that exist only inside app.asar (issue #3910).
+  assert.ok(
+    config.asarUnpack.includes("node_modules/re2js/**/*"),
+    "external MCP bridge must unpack re2js so the stdio launcher can resolve it",
+  );
 });
 
 test("asarUnpack keeps Cursor SDK runtime deps unpacked", () => {
@@ -217,6 +224,22 @@ test("build.files trims release-only dependency payloads", () => {
   ]) {
     assert.ok(files.includes(glob), `build.files must exclude release-only payload: ${glob}`);
   }
+});
+
+test("build.files keeps README screenshot WebP out of the package", () => {
+  assert.ok(
+    config.files.includes("!docs/assets/readme/**/*"),
+    "README WebP screenshots must stay out of app.asar",
+  );
+  const { FileMatcher } = require("app-builder-lib/out/fileMatcher");
+  const root = path.resolve(__dirname, "..");
+  const matcher = new FileMatcher(root, path.join(root, "release"), (value) => value);
+  for (const pattern of config.files) matcher.addPattern(pattern);
+  const filter = matcher.createFilter();
+  const stat = { isDirectory: () => false };
+  assert.equal(filter(path.join(root, "docs/assets/readme/overview.webp"), stat), false);
+  assert.equal(filter(path.join(root, "electron/main.cjs"), stat), true);
+  assert.equal(filter(path.join(root, "public/icon.png"), stat), false);
 });
 
 test("build.files excludes Vite-bundled renderer-only packages", () => {

@@ -63,6 +63,9 @@ const DISCOVERY_SELF_HEAL_INTERVAL_MS = 15000;
 
 // Track which sockets have completed authentication
 const authenticatedSockets = new WeakSet();
+const managedPrivacyScopes = new WeakMap();
+const aiPrivacyService = require("../shared/aiPrivacyService.cjs");
+const { createManagedPrivacyBoundary } = require("../shared/managedPrivacyBoundary.cjs");
 // Sockets authenticated with the External MCP token (or that used the reserved scope).
 const externalMcpSockets = new Set();
 const sessionApprovedExternalSockets = new WeakSet();
@@ -1440,7 +1443,7 @@ async function handleMessage(socket, line) {
   }
 
   const { id, method, params } = msg;
-  debugLog("handleMessage", { id, method, params });
+  debugLog("handleMessage", { id, method });
   if (id == null || !method) return;
 
   // ── Authentication gate ──
@@ -1513,9 +1516,25 @@ async function handleMessage(socket, line) {
       );
     }
     notifyExternalMcpActivity(method, callParams);
-    const result = await dispatch(method, callParams, {
-      externalSocket: externalMcpSockets.has(socket) ? socket : null,
-    });
+    let result;
+    if (isExternalScope || externalMcpSockets.has(socket)) {
+      result = await dispatch(method, callParams, {
+        externalSocket: socket,
+        beforeExecute: aiPrivacyService.createPolicyGuard(),
+      });
+    } else {
+      const boundScope = managedPrivacyScopes.get(socket);
+      if (boundScope && boundScope !== callParams.chatSessionId) {
+        throw new Error("Managed agent connection cannot change its chat session.");
+      }
+      if (aiPrivacyService.isEnabled() && callParams.chatSessionId) {
+        managedPrivacyScopes.set(socket, callParams.chatSessionId);
+      }
+      result = await createManagedPrivacyBoundary(
+        (rpcMethod, rpcParams, context) => dispatch(rpcMethod, rpcParams, context),
+        aiPrivacyService,
+      )(method, callParams);
+    }
     const response = JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n";
     if (!socket.destroyed) socket.write(response);
   } catch (err) {
@@ -1655,17 +1674,17 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
     // The renderer creates the tab before replying to host_open. If the user
     // explicitly closes it while that reply is still in flight, the eventual
     // result must not revive ownership or scope metadata for the closed tab.
-    if ((closedTerminalSessionRevisions.get(sessionId) || 0) > generation?.closeRevision) return;
+    if ((closedTerminalSessionRevisions.get(sessionId) || 0) > generation?.closeRevision) return false;
     // Reuse adds visibility only: never grant ownership or change the original
     // owner's idle lifecycle merely because another chat referenced the tab.
     if (result?.reused === true) {
       if (generation?.ownershipGeneration?.revoked) {
         // A late renderer merge must not recreate a deleted chat's scope.
         scopedMetadata.delete(chatSessionId);
-        return;
+        return false;
       }
       ensureOpenedSessionMetadata(chatSessionId, sessionId, result);
-      return;
+      return true;
     }
     if (!openedSessionOwnership.register(
       chatSessionId,
@@ -1685,7 +1704,7 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
       // again. Remove only scope/live metadata here so a deleted chat cannot be
       // recreated by the renderer's late merge.
       forgetUnownedTerminalSessionMetadata(sessionId);
-      return;
+      return false;
     }
     closedTerminalSessionRevisions.delete(sessionId);
     // A full empty scope replace can land after the renderer's best-effort
@@ -1693,6 +1712,7 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
     // succeeds, restore the returned session atomically with its ownership.
     ensureOpenedSessionMetadata(chatSessionId, sessionId, result);
     sessionIdleManager.track(chatSessionId, sessionId);
+    return true;
   },
 });
 
@@ -1789,7 +1809,7 @@ function buildTerminalToolGuidance(toolHints) {
   return "";
 }
 
-async function handleWorkerTerminalExec(params = {}) {
+async function handleWorkerTerminalExec(params = {}, beforeExecute) {
   const { sessionId, command } = params;
   if (!sessionId || !command) throw new Error("sessionId and command are required");
   if (typeof command !== "string" || !command.trim()) {
@@ -1837,7 +1857,7 @@ async function handleWorkerTerminalExec(params = {}) {
       sessionMeta: meta,
       enforceWallTimeout: true,
       commandBlocklist,
-    }, {});
+    }, typeof beforeExecute === "function" ? { beforeExecute } : {});
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   } finally {
@@ -1846,7 +1866,7 @@ async function handleWorkerTerminalExec(params = {}) {
   }
 }
 
-async function handleWorkerJobStart(params = {}) {
+async function handleWorkerJobStart(params = {}, beforeExecute) {
   const { sessionId, command } = params;
   if (!sessionId || !command) throw new Error("sessionId and command are required");
   if (typeof command !== "string" || !command.trim()) {
@@ -1888,7 +1908,7 @@ async function handleWorkerJobStart(params = {}) {
       commandTimeoutMs,
       sessionMeta: meta,
       commandBlocklist,
-    }, {});
+    }, typeof beforeExecute === "function" ? { beforeExecute } : {});
     if (result?.ok && result.jobId) {
       if (pendingStart.cancelled || closingTerminalSessions.has(sessionId)) {
         await waitForWorkerCleanup(terminalWorkerManager.request("netcatty:ai:jobStop", {
@@ -2237,11 +2257,14 @@ async function dispatch(method, params, approvalContext = {}) {
     if (!handler) {
       throw new Error(`Unknown method: ${method}`);
     }
+    // Approval may have waited across a privacy-policy change. Check at execution,
+    // not only when the managed request entered the dispatcher.
+    approvalContext.beforeExecute?.();
     if (capability?.id === "terminal.execute" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
-      return await handleWorkerTerminalExec(params);
+      return await handleWorkerTerminalExec(params, approvalContext.beforeExecute);
     }
     if (capability?.id === "terminal.start" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
-      return await handleWorkerJobStart(params);
+      return await handleWorkerJobStart(params, approvalContext.beforeExecute);
     }
     if (capability?.id === "terminal.poll" && workerBackgroundJobs.has(params?.jobId)) {
       return await handleWorkerJobPoll(params);
@@ -2249,7 +2272,7 @@ async function dispatch(method, params, approvalContext = {}) {
     if (capability?.id === "terminal.stop" && workerBackgroundJobs.has(params?.jobId)) {
       return await handleWorkerJobStop(params);
     }
-    return await handler(params);
+    return await handler(params, approvalContext);
   } finally {
     if (activityStarted) {
       sessionIdleManager.endActivity(params?.chatSessionId, params.sessionId);

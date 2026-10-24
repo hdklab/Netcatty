@@ -343,6 +343,11 @@ const SIDE_PANEL_STABLE_CTX_KEYS = [
 ] as const;
 
 const WORKSPACE_CTX_KEYS = [
+  // Stay. Solo SSH A->B already keeps TerminalPanesHost equal when the sessions
+  // ref is unchanged (this compare does not feed the panes host). The visible
+  // pane still pays reveal flush + repaint, and focus retries at 50ms.
+  // Dropping activeTabId only skips one workspace-section pass; the live-store
+  // host/theme update still renders the section. That is not the settle cost.
   'activeTabId',
   'workspaceInnerRef',
   'workspaceOuterRef',
@@ -415,6 +420,8 @@ const WORKSPACE_CTX_KEYS = [
   'onSetWorkspaceFocusedSession',
   'onSplitSession',
   'isBroadcastEnabled',
+  'isComposeSendToAll',
+  'onToggleComposeSendTarget',
   'handleBroadcastInput',
   'handleBroadcastInterruptPriorityChange',
   'handleToggleWorkspaceComposeBar',
@@ -442,8 +449,10 @@ const WORKSPACE_CTX_KEYS = [
   'onEndSessionDrag',
   'onMoveSessionInWorkspace',
   'isGlobalBroadcastEnabled',
+  'isGlobalComposeSendToAll',
   'canUseGlobalBroadcast',
   'onToggleGlobalBroadcast',
+  'onToggleGlobalComposeSendTarget',
 ] as const;
 
 export function terminalLayerSidePanelStableCtxEqual(prev: Ctx, next: Ctx): boolean {
@@ -479,6 +488,10 @@ export function terminalLayerViewCtxEqual(prev: Ctx, next: Ctx): boolean {
   if (prev.refocusTerminalSession !== next.refocusTerminalSession) return false;
   if (prev.setIsComposeBarOpen !== next.setIsComposeBarOpen) return false;
   if (prev.isBroadcastEnabled !== next.isBroadcastEnabled) return false;
+  if (prev.isComposeSendToAll !== next.isComposeSendToAll) return false;
+  if (prev.onToggleComposeSendTarget !== next.onToggleComposeSendTarget) return false;
+  if (prev.isGlobalComposeSendToAll !== next.isGlobalComposeSendToAll) return false;
+  if (prev.onToggleGlobalComposeSendTarget !== next.onToggleGlobalComposeSendTarget) return false;
   if (prev.composeBarThemeColors !== next.composeBarThemeColors) return false;
   if (prev.workspaceOuterRef !== next.workspaceOuterRef) return false;
   // Use stable side-panel equal only: LIVE fields (cwd, theme focus, etc.) flow

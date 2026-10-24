@@ -63,6 +63,7 @@ import {
   isTerminalCloseGenerationCurrent,
   resolveConnectionLogCapturePayload,
   scheduleTerminalCloseTeardown,
+  scheduleTerminalCloseForGeneration,
   serializeTerminalCloseFallback,
 } from './runtime/terminalCloseCapture';
 import {
@@ -917,42 +918,60 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       bootAbort.abort();
       isBootActiveRef.current = false;
       if (hibernatedRef?.current) {
-        forceCloseHibernatedSession?.();
-        disposeOwnedRuntime();
+        const pendingClose = forceCloseHibernatedSession?.() as void | Promise<void>;
+        if (pendingClose && typeof pendingClose.then === "function") {
+          void pendingClose.finally(() => {
+            disposeOwnedRuntime();
+          });
+        } else {
+          disposeOwnedRuntime();
+        }
         return;
       }
 
       // A boot that never reached "connected" has nothing worth capturing, and
       // the teardown below awaits terminal drain plus serialization before it
-      // closes anything. Tell the main process now so it can abort the pending
-      // boot (passphrase prompt, TCP dial) for this epoch instead of letting it
+      // closes anything. Cancel the pending backend boot after giving an immediate
+      // remount a chance to replace this generation, instead of letting it
       // finish against a pane that is already gone. Attached popups never own
       // the backend session (skip closeSession) but still sync-dispose xterm.
       if (!hasConnectedRef.current) {
         if (!attachExistingSession) {
-          try {
-            const closeResult = terminalBackend.closeSession(
-              sessionRef.current ?? sessionId,
-              { bootEpoch: bootEpochRef ? bootEpochRef.current : undefined },
-            );
-            void Promise.resolve(closeResult).catch((err: unknown) => {
+          const closingBootEpoch = bootEpochRef ? bootEpochRef.current : undefined;
+          // StrictMode can remount this pane before a backend boot starts.
+          // Abort/dispose immediately, but do not report that remount as a tab close.
+          scheduleTerminalCloseForGeneration(closeGeneration, () => terminalBootCloseGenerationRef.current, () => {
+            try {
+              const closeResult = terminalBackend.closeSession(
+                sessionRef.current ?? sessionId,
+                { bootEpoch: closingBootEpoch },
+              );
+              void Promise.resolve(closeResult).catch((err: unknown) => {
+                logger.warn("Failed to cancel pending terminal boot on unmount", err);
+              });
+            } catch (err) {
               logger.warn("Failed to cancel pending terminal boot on unmount", err);
-            });
-          } catch (err) {
-            logger.warn("Failed to cancel pending terminal boot on unmount", err);
-          }
+            }
+          });
         }
         disposeOwnedRuntime();
         return;
       }
 
-      const persistCloseCapture = (data: string, source: string, dataLength: number) => {
+      const persistCloseCapture = async (data: string, source: string, dataLength: number) => {
         logger.info("[Terminal] Capturing data on unmount", {
           sessionId,
           source,
           dataLength,
         });
-        handleTerminalDataCaptureOnce(sessionId, data, { finalized: true });
+        const pendingCapture: unknown = handleTerminalDataCaptureOnce(sessionId, data, { finalized: true });
+        if (
+          pendingCapture !== undefined
+          && pendingCapture !== null
+          && typeof (pendingCapture as Promise<void>).then === "function"
+        ) {
+          await (pendingCapture as Promise<void>);
+        }
       };
 
       const term = termRef.current;
@@ -991,7 +1010,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           ? resolveConnectionLogCapturePayload(finalizeTerminalLogData)
           : null;
         if (connectionLogPayload) {
-          persistCloseCapture(
+          await persistCloseCapture(
             connectionLogPayload.data,
             connectionLogPayload.source,
             connectionLogPayload.data.length,
@@ -1018,7 +1037,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
               return;
             }
             if (payload) {
-              persistCloseCapture(payload.data, payload.source, payload.data.length);
+              await persistCloseCapture(payload.data, payload.source, payload.data.length);
             }
             ownedRuntime = null;
             scheduleTerminalCloseTeardown(teardown);
@@ -1317,7 +1336,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       applyUserCursorBlinkPreference(term, terminalSettingsRef.current);
       if (hasOpenAppDialog()) return;
       term.focus();
-      scheduleLayoutRecoveryRefit([0, 100]);
+      // Tab focus retries do not imply a lost renderer or a changed layout.
+      // Leave explicit app-resume/fullscreen recovery timers untouched when
+      // these bounds are already fitted, or recovery is still settling.
+      if (!currentContainerSizeAlreadyFit() && layoutRecoveryTimersRef.current.length === 0) {
+        scheduleLayoutRecoveryRefit([0, 100]);
+      }
     };
 
     window.addEventListener(TERMINAL_SESSION_RESTORE_FOCUS_EVENT, handleRestoreFocus);
@@ -1387,6 +1411,9 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
   const recoverTerminalAfterBecomeVisible = () => {
     flushTerminalWritesAfterBecomeVisible();
+    // A hidden pane can become visible before its asynchronous boot completes.
+    // Do not claim recovery until there is a runtime for the delayed pass to use.
+    if (!termRef.current || !xtermRuntimeRef.current) return;
 
     if (
       getHiddenDurationMs() < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS
@@ -1463,20 +1490,17 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   useEffect(() => {
     if (!isVisible) return;
 
-    const hiddenMs = hiddenAtRef.current
-      ? Date.now() - hiddenAtRef.current
-      : Number.POSITIVE_INFINITY;
     hiddenAtRef.current = null;
 
-    if (
-      lastWebglRecoveryLayoutKeyRef.current === paneLayoutKey
-      && hiddenMs < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS
-    ) {
+    // The layout effect already recovers long hides as well as short ones.
+    // Repeating it here discards the freshly populated, potentially shared atlas.
+    if (lastWebglRecoveryLayoutKeyRef.current === paneLayoutKey) {
       flushPendingOutputScroll();
       return;
     }
 
     const timer = setTimeout(() => {
+      if (!isVisibleRef.current || !termRef.current || !xtermRuntimeRef.current) return;
       lastWebglRecoveryLayoutKeyRef.current = paneLayoutKey;
       // A pane that mounted hidden deferred its WebGL renderer; create it now
       // that it's visible (no-op if already active or WebGL is disabled).
@@ -1687,14 +1711,16 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     // Fit twice: once after initial layout (100ms) and again after layout settles
     // (350ms) to handle race conditions during split operations where the container
     // dimensions may not be final on the first pass.
-    const timer1 = setTimeout(() => {
+    const refitSettledLayout = () => {
+      // Keep checking for late split/layout changes, but an unchanged tab does
+      // not need another forced fit (which clears its glyph atlas even when
+      // the row/column count is unchanged).
+      if (!isVisibleRef.current || currentContainerSizeAlreadyFit()) return;
       safeFit({ requireVisible: true });
       finishLayoutRecoveryAfterFit();
-    }, 100);
-    const timer2 = setTimeout(() => {
-      safeFit({ force: true, requireVisible: true });
-      finishLayoutRecoveryAfterFit();
-    }, 350);
+    };
+    const timer1 = setTimeout(refitSettledLayout, 100);
+    const timer2 = setTimeout(refitSettledLayout, 350);
     return () => { clearTimeout(timer1); clearTimeout(timer2); };
   }, [inWorkspace, isVisible]);
 

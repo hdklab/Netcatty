@@ -508,6 +508,10 @@ function init(deps) {
 }
 
 function openTerminalOutputSession(sessionId, webContents) {
+  require("./rendererSessionLifetime.cjs").trackRendererSessionLifetime(
+    sessions, sessionId, webContents,
+    (event, payload) => require("./terminalBridge.cjs").closeSession(event, payload),
+  );
   terminalOutputChannel?.openSession?.(sessionId, webContents);
 }
 
@@ -518,7 +522,7 @@ function closeTerminalOutputSession(sessionId) {
 /**
  * Connect through a chain of jump hosts
  */
-async function connectThroughChain(event, options, jumpHosts, targetHost, targetPort, sessionId) {
+async function connectThroughChain(event, options, jumpHosts, targetHost, targetPort, sessionId, onHostKeyAccepted) {
   const targetConnectionTimeouts = resolveSshConnectionTimeouts(options);
   const sender = event.sender;
   const connections = options?._connectionsRef || [];
@@ -606,6 +610,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         knownHosts: options.knownHosts,
         verifyHostKeys: jump.verifyHostKeys ?? options.verifyHostKeys,
         bootEpoch: options.bootEpoch,
+        onAccepted: onHostKeyAccepted,
       });
       attachSshDebugLogger(connOpts, sshDiagnosticLogger);
       logSshAlgorithms("Jump host", connOpts.algorithms, {
@@ -1621,7 +1626,9 @@ function registerHandlers(ipcMain, options = {}) {
       });
     });
   } else {
-    ipcMain.handle("netcatty:start", startSSHSessionWrapper);
+    ipcMain.handle("netcatty:start", options.manageSessionLogRestart === true
+      ? sessionLogStreamManager.withSessionLogRestart(startSSHSessionWrapper)
+      : startSSHSessionWrapper);
     ipcMain.handle("netcatty:ssh:exec", execCommand);
     ipcMain.handle("netcatty:ssh:pwd", getSessionPwd);
     ipcMain.handle("netcatty:ssh:remoteInfo", getSessionRemoteInfo);

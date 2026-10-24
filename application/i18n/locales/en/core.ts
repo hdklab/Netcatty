@@ -980,6 +980,7 @@ Highlight the focused split pane:
   'settings.shortcuts.category.terminal': 'Terminal',
   'settings.shortcuts.category.navigation': 'Navigation',
   'settings.shortcuts.category.app': 'App',
+  'settings.shortcuts.binding.toggle-host-tree': 'Toggle Host List',
   'settings.shortcuts.category.sftp': 'SFTP',
 
   // Context menus / common actions
@@ -1197,6 +1198,7 @@ Highlight the focused split pane:
   'vault.hosts.moveSelected': 'Move to group ({count})',
   'vault.hosts.moveSelected.description': 'Move the selected hosts to an existing group, or leave them ungrouped. Selected groups are not moved.',
   'vault.hosts.moveMultiple.success': 'Moved {count} hosts to {group}',
+  'vault.hosts.dragSelectionCount': '{count} hosts',
   'vault.hosts.moveToGroup.success': 'Moved {host} to {group}',
   'vault.hosts.errors.nameRequired': 'Host name is required.',
   'vault.hosts.empty.title': 'Set up your hosts',

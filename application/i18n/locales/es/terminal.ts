@@ -1,6 +1,15 @@
 import type { Messages } from '../types';
 
 export const esTerminalMessages: Messages = {
+  'terminal.toolbar.openSessionLog': 'Abrir registro de sesión',
+  'terminal.toolbar.sessionLogActions': 'Acciones del registro',
+  'terminal.toolbar.sessionLog.menu': 'Registro de sesión',
+  'terminal.toolbar.sessionLog.open': 'Abrir',
+  'terminal.toolbar.sessionLog.reveal': 'Mostrar en carpeta',
+  'terminal.toolbar.sessionLog.chooseApplication': 'Abrir con…',
+  'terminal.toolbar.sessionLog.systemDefault': 'Abrir con la aplicación predeterminada',
+  'terminal.toolbar.openSessionLogFailed': 'No se pudo abrir el registro.',
+
   'terminal.menu.saveScreen': 'Guardar pantalla actual',
   'terminal.saveScreen.failed': 'No se pudo guardar la pantalla del terminal.',
   // Diálogo de confirmación de pegado multilínea (#3398)
@@ -68,6 +77,8 @@ export const esTerminalMessages: Messages = {
   'terminal.composeBar.send': 'Enviar',
   'terminal.composeBar.close': 'Cerrar barra de redacción',
   'terminal.composeBar.broadcasting': 'Difundiendo a todas las sesiones',
+  'terminal.composeBar.sendToAll': 'Enviar a todas las sesiones',
+  'terminal.composeBar.sendToActive': 'Enviar solo a la sesión activa',
   'terminal.composeBar.broadcastAllowPassword': 'Difundir sin protección de contraseña',
   'terminal.composeBar.resize': 'Cambiar la altura de la barra de redacción',
   'terminal.composeBar.manageSnippets': 'Administrar snippets rápidos',
@@ -835,6 +846,7 @@ export const esTerminalMessages: Messages = {
   'serial.field.flowControl': 'Control de flujo',
   'serial.noPorts': 'No se detectaron puertos seriales. Conecta un dispositivo y actualiza.',
   'serial.field.customPort': 'Ruta de puerto personalizada',
+  'serial.field.namedPipeHint': 'Consola de VM en Windows: introduce \\\\.\\pipe\\name. La VM debe crear la canalización como servidor. Se ignoran la velocidad y la trama.',
   'serial.field.customPortPlaceholder': 'p. ej., /dev/ttys001 o COM1',
   'serial.type.hardware': 'Hardware',
   'serial.type.pseudo': 'Pseudoterminal',

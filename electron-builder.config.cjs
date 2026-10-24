@@ -118,6 +118,9 @@ module.exports = {
         'lib/**/*.json',
         'skills/**/*',
         '!public/**/*',
+        // README screenshots live under docs/ and are not app resources.
+        // Keep them out of app.asar if the files globs ever become permissive.
+        '!docs/assets/readme/**/*',
         '!**/*.map',
         '!**/*.d.ts',
         '!**/*.d.mts',
@@ -228,6 +231,9 @@ module.exports = {
         'node_modules/@cursor/sdk-*/**/*',
         'node_modules/sqlite3/**/*',
         'node_modules/@modelcontextprotocol/sdk/**/*',
+        // External MCP scripts run from asarUnpack via ELECTRON_RUN_AS_NODE and
+        // must resolve re2js from a real directory (issue #3910).
+        'node_modules/re2js/**/*',
         'lib/**/*.cjs',
         'lib/**/*.json',
         'node_modules/zod/**/*',

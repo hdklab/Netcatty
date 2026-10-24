@@ -18,6 +18,7 @@ import { reserveSessionSlot } from '../shared/sessionExecutionQueue';
 import { fitTerminalExecuteResultForModel } from './terminalCompression';
 import { fitLargeToolResultForModel } from './toolResultFitting';
 import { redactSecretsForModel } from './modelSecretRedaction';
+import { assertModelPrivacySession, type ModelPrivacyBridge } from './modelPrivacy';
 import {
   globalTerminalMonitorGuard,
   isStreamingMonitorCommand,
@@ -333,7 +334,7 @@ async function executeLocalCattyCapability(ctx: LocalExecutionContext): Promise<
       if (result == null) {
         return { error: `Handle "${handleId}" was not found for this chat session.` };
       }
-      return { ...result, content: redactSecretsForModel(result.content) };
+      return { ...result, content: redactSecretsForModel(result.content, chatSessionId) };
     }
     case 'harness.workspace.get_info': {
       const scopeCtx = resolveContext();
@@ -518,6 +519,9 @@ function createCatalogTool(spec: CattyToolSpec) {
         }
 
         await slot?.ready;
+        // SDK approval precedes execute; the policy can change while the user
+        // decides or while this call waits behind another terminal operation.
+        await assertModelPrivacySession(deps.bridge as ModelPrivacyBridge, deps.chatSessionId);
 
         if (spec.capabilityId === 'terminal.execute') {
           const { sessionId: sid, command } = args as { sessionId: string; command: string };

@@ -57,6 +57,7 @@ import {
 } from '../../domain/terminalAppearance';
 import { selectConnectionLogForTerminalDataCapture } from '../../domain/connectionLog';
 import { collectSessionIds } from '../../domain/workspace';
+import { resolveAgentHostWorkspace } from '../../domain/agentHostWorkspace';
 import { useHostOpenSessionReuse } from '../state/useHostOpenSessionReuse';
 import type { PaneMagnificationController } from '../../domain/paneMagnification';
 import { resolveCloseIntent } from '../state/resolveCloseIntent';
@@ -71,6 +72,7 @@ import {
 import { getCredentialProtectionAvailability } from '../../infrastructure/services/credentialProtection';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
+import { terminalHostTreeStore } from '../state/terminalHostTreeStore';
 import {
   markExternalMcpStartupReady,
   readExternalMcpFocusOnHostOpen,
@@ -255,6 +257,7 @@ export function AppSideEffects() {
     createLocalTerminal,
     createSerialSession,
     connectToHost,
+    appendHostToWorkspaceConfirmed,
     closeSession,
     closeSessions,
     closeWorkspace,
@@ -1127,6 +1130,7 @@ export function AppSideEffects() {
       toggleBroadcast,
       toggleGlobalBroadcast,
       canUseGlobalBroadcast: canUseGlobalBroadcastRef.current,
+      toggleHostTree: () => terminalHostTreeStore.toggle(),
       toggleScriptsSidePanelRef,
       toggleSidePanelRef,
       toggleWindowOpacity,
@@ -1457,7 +1461,7 @@ export function AppSideEffects() {
   temporaryConnectionSettingsRef.current = terminalSettings;
 
   // Wrapper to connect to host with logging
-  const handleConnectToHost = useCallback((host: Host, alreadyEffective = false, hidden = false) => {
+  const handleConnectToHost = useCallback((host: Host, alreadyEffective = false, hidden = false, workspaceId?: string) => {
     // File-server-only hosts never start a shell: connecting opens the file
     // transfer view for them instead of a terminal tab.
     if (host.fileTransferOnly) {
@@ -1481,7 +1485,9 @@ export function AppSideEffects() {
       : resolveEffectiveHost;
     return handleConnectToHostImpl(() => ({
       addConnectionLog,
-      connectToHost,
+      connectToHost: workspaceId
+        ? (candidate: Host) => appendHostToWorkspaceConfirmed(workspaceId, candidate)
+        : connectToHost,
       discoveredShells,
       host: connectionHost,
       identities,
@@ -1492,7 +1498,7 @@ export function AppSideEffects() {
       systemInfoRef,
       terminalSettings: liveTerminalSettings,
     }), connectionHost, hidden);
-  }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys, discoveredShells]);
+  }, [addConnectionLog, appendHostToWorkspaceConfirmed, connectToHost, resolveEffectiveHost, identities, keys, discoveredShells]);
 
   const handleConnectToHostWithTabName = useCallback((host: Host, tabName?: string) => {
     const sessionId = handleConnectToHost(host);
@@ -1502,12 +1508,14 @@ export function AppSideEffects() {
     return sessionId;
   }, [handleConnectToHost, renameSessionInline]);
 
-  const openHostForVaultAgent = useCallback((host: Host, isExternalMcpCall: boolean) => {
+  const openHostForVaultAgent = useCallback((host: Host, isExternalMcpCall: boolean, options?: { workspaceId?: string }) => {
+    const target = resolveAgentHostWorkspace(options?.workspaceId, activeTabStore.getActiveTabId(), workspaces.map(workspace => workspace.id));
+    if (target.error) return { ok: false as const, error: target.error };
     // Silent sessions only apply to actual external MCP clients (chatSessionId
     // equals the reserved external-MCP scope). The in-app Catty AI chat's
     // host_open always opens a visible tab, as documented.
     const hidden = isExternalMcpCall && readExternalMcpSilentSessions();
-    const sessionId = handleConnectToHost(host, true, hidden);
+    const sessionId = handleConnectToHost(host, true, hidden, target.workspaceId);
     if (!sessionId) {
       // A file-server-only host legitimately opens the file transfer view
       // instead of a terminal session, so there is no session id to return.
@@ -1524,8 +1532,8 @@ export function AppSideEffects() {
     if (readExternalMcpFocusOnHostOpen()) {
       void netcattyBridge.get()?.openMainWindow?.();
     }
-    return { ok: true as const, sessionId, host };
-  }, [handleConnectToHost]);
+    return { ok: true as const, sessionId, host, workspaceId: target.workspaceId };
+  }, [handleConnectToHost, workspaces]);
 
   const findExistingSessionForHostForVaultAgent = useHostOpenSessionReuse({
     sessions, hosts, keys, identities, resolveEffectiveHost,

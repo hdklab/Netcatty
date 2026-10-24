@@ -51,6 +51,7 @@ import {
   importVaultHostsFromText,
   mergeVaultImportIssues,
   resolveVaultImportKeyPassphraseConflicts,
+  toVaultImportExistingHostRef,
   VAULT_IMPORT_FORMATS,
   type VaultImportFormat,
 } from '../../domain/vaultImport';
@@ -556,11 +557,12 @@ export interface VaultAgentApiDeps {
    * external MCP client rather than the in-app Catty AI chat — and gates the "silent
    * sessions" setting so the in-app chat's host_open still opens a visible tab.
    */
-  openHost?: (host: Host, isExternalMcpCall: boolean) =>
+  openHost?: (host: Host, isExternalMcpCall: boolean, options?: { workspaceId?: string }) =>
     | {
       ok: true;
       sessionId: string;
       host: Host;
+      workspaceId?: string;
     }
     | {
       /** File-server-only host: the file view opened, no terminal session exists. */
@@ -568,6 +570,7 @@ export interface VaultAgentApiDeps {
       sessionId: null;
       opened: 'fileTransfer';
       host: Host;
+      workspaceId?: string;
     }
     | {
       ok: false;
@@ -694,6 +697,9 @@ export async function handleVaultAgentOp(
       };
     }
     case 'host.open': {
+      if (params.workspaceId !== undefined && (typeof params.workspaceId !== 'string' || !params.workspaceId.trim())) {
+        return { ok: false, error: 'workspaceId must be a workspace ID or current.' };
+      }
       const hostId = String(params.hostId || '').trim();
       if (!hostId) return { ok: false, error: 'hostId is required.' };
       const host = deps.getHosts().find((entry) => entry.id === hostId);
@@ -750,8 +756,10 @@ export async function handleVaultAgentOp(
         return { ok: false, error: 'Host open is not available in this window.' };
       }
 
-      const opened = deps.openHost(effectiveHost, isExternalMcpCall);
-      if (!opened.ok) {
+      const opened = deps.openHost(effectiveHost, isExternalMcpCall, {
+        workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : undefined,
+      });
+      if (opened.ok === false) {
         return { ok: false, error: opened.error };
       }
 
@@ -773,6 +781,7 @@ export async function handleVaultAgentOp(
       return {
         ok: true,
         sessionId: opened.sessionId,
+        ...(opened.workspaceId ? { workspaceId: opened.workspaceId } : {}),
         hostId: effectiveHost.id,
         ...(isSavedVaultHost(effectiveHost) && protocol !== 'serial' && protocol !== 'local'
           ? { savedHostId: effectiveHost.id }
@@ -975,7 +984,10 @@ export async function handleVaultAgentOp(
         ? params.fileName.trim()
         : undefined;
 
-      const importResult = importVaultHostsFromText(resolvedFormat, text, { fileName });
+      const importResult = importVaultHostsFromText(resolvedFormat, text, {
+        fileName,
+        existingHosts: deps.getHosts().map(toVaultImportExistingHostRef),
+      });
       const previewHosts = importResult.hosts.map((host) => sanitizeHostForAgent(host));
       const merged = applyVaultHostImport(
         deps.getHosts(),

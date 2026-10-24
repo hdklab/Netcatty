@@ -1,5 +1,6 @@
 import type { Host, SerialConfig } from "./models";
 import { prepareSerialConfigForSavedHost } from "./serialBackspace";
+import { isWindowsNamedPipePath } from "./serialEndpoint";
 
 /**
  * Serial ports are a first-class connection type on the host model
@@ -56,6 +57,8 @@ const isWin32SerialPath = (value: string): boolean =>
 export const isSerialPortPath = (path: string): boolean => {
   const trimmed = path.trim();
   if (trimmed.startsWith("/dev/")) return true;
+  // Windows VM consoles expose their serial line as a named pipe.
+  if (isWindowsNamedPipePath(trimmed)) return true;
   return isComPortName(trimmed) || isWin32SerialPath(trimmed);
 };
 
@@ -68,7 +71,13 @@ export const isValidSerialBaudRate = (baudRate: number | undefined): boolean =>
 
 export const isSerialHostDraftValid = (
   host: Pick<Host, "hostname" | "serialConfig">,
-): boolean => isSerialPortPath(resolveSerialPortPath(host)) && isValidSerialBaudRate(host.serialConfig?.baudRate);
+): boolean => {
+  const path = resolveSerialPortPath(host);
+  if (!isSerialPortPath(path)) return false;
+  // A named pipe is not a UART: baud rate and framing do not apply to it.
+  if (isWindowsNamedPipePath(path)) return true;
+  return isValidSerialBaudRate(host.serialConfig?.baudRate);
+};
 
 export const defaultSerialHostLabel = (path: string): string => {
   const portName = path.trim().split("/").pop()?.split(BACKSLASH).pop() || path.trim();

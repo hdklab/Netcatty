@@ -45,8 +45,16 @@ export const STORAGE_KEY_COMMAND_HISTORY = 'netcatty:commandHistory';
 /** Set once the user clears all command history; histfile seeding honors it. */
 export const STORAGE_KEY_COMMAND_HISTORY_CLEARED = 'netcatty:commandHistoryCleared';
 export const STORAGE_KEY_CONNECTION_LOGS = 'netcatty_connection_logs_v1';
-/** Side store for unsaved connection-log terminal replay buffers (main blob omits them for perf). */
+/**
+ * Legacy side store for unsaved connection-log terminal replay buffers.
+ * Read once to migrate into IndexedDB, then removed. Do not write it.
+ */
 export const STORAGE_KEY_CONNECTION_LOG_TERMINAL_DATA = 'netcatty_connection_log_terminal_data_v1';
+/**
+ * Tiny cross-window signal for the IndexedDB replay side store.
+ * Value shape: `{ rev: number, ids?: string[], nonce?: string }`.
+ */
+export const STORAGE_KEY_CONNECTION_LOG_TERMINAL_DATA_REV = 'netcatty_connection_log_terminal_data_rev_v1';
 export const STORAGE_KEY_SESSION_RESTORE = 'netcatty_session_restore_v1';
 export const STORAGE_KEY_RESTORE_PREVIOUS_SESSION = 'netcatty_restore_previous_session_v1';
 export const STORAGE_KEY_RESTORE_TERMINAL_CWD = 'netcatty_restore_terminal_cwd_v1';
@@ -249,6 +257,10 @@ export const STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES = 'netcatty_ai_session_
 export const STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS = 'netcatty_ai_external_mcp_silent_sessions_v1';
 /** External MCP confirm-mode approval alert: off, unfocused, or always. Default unfocused. */
 export const STORAGE_KEY_AI_EXTERNAL_MCP_APPROVAL_ALERT = 'netcatty_ai_external_mcp_approval_alert_v1';
+/** Shared AI privacy settings for Netcatty-managed context and tools. Device-local and off by default. */
+export const STORAGE_KEY_AI_PRIVACY = 'netcatty_ai_privacy_v1';
+/** Legacy External MCP privacy key, read only when no shared AI privacy preference exists. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION = 'netcatty_ai_external_mcp_redaction_v1';
 /** External MCP Streamable HTTP listener. Off unless the user enables it. */
 export const STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ENABLED = 'netcatty_ai_external_mcp_http_enabled_v1';
 /** Fixed Streamable HTTP port so client configs stay stable across restarts. */
@@ -356,3 +368,6 @@ export const STORAGE_KEY_MONITOR_PANELS = 'netcatty_monitor_panels_v1';
 export const STORAGE_KEY_MONITOR_TABLE_COLUMNS = 'netcatty_monitor_table_columns_v1';
 
 export const STORAGE_KEY_MONITOR_HIDDEN_COLUMNS = "netcatty_monitor_hidden_columns_v1";
+
+// Preferred application for saved terminal logs (independent of SFTP associations).
+export const STORAGE_KEY_SESSION_LOG_APPLICATION = "netcatty.sessionLogApplication";

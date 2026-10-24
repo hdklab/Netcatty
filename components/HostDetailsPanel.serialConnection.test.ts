@@ -34,6 +34,15 @@ test("the vault renders serial hosts in the standard editor", () => {
   assert.match(source, /onClick=\{handleNewSerialHost\}/);
 });
 
+test("the serial section supports Windows named-pipe consoles", () => {
+  const source = read("./host-details/HostSerialConnectionSection.tsx");
+
+  assert.match(source, /isWindowsNamedPipePath/);
+  assert.match(source, /serial\.field\.namedPipeHint/);
+  // A pipe has no baud rate or serial framing, so those controls stay hidden.
+  assert.match(source, /\{!isNamedPipe && \(/);
+});
+
 test("the work-surface host editor no longer branches on serial", () => {
   const source = read("../application/app/AppHostEditorLayer.tsx");
 

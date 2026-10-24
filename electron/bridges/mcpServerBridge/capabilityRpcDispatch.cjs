@@ -198,9 +198,14 @@ function createCapabilityRpcDispatcher(deps) {
     const hostOpenGeneration = capability.id === "vault.host.open"
       ? deps.captureHostOpenScope?.(params?.chatSessionId)
       : null;
-    const result = await handler(params);
+    approvalContext.beforeExecute?.();
+    const result = await handler(params, approvalContext);
     if (capability.id === "vault.host.open" && result?.ok !== false && result?.sessionId) {
-      await deps.onHostOpened?.(params?.chatSessionId, result.sessionId, hostOpenGeneration, result);
+      const bound = await deps.onHostOpened?.(params?.chatSessionId, result.sessionId, hostOpenGeneration, result);
+      if (bound === false) {
+        return { ok: false, code: "SESSION_SCOPE_BIND_FAILED", sessionId: result.sessionId, error: "Host opened but its session could not be bound to the requesting chat scope." };
+      }
+      if (bound === true) return { ...result, scopeBound: true };
     }
     return result;
   };

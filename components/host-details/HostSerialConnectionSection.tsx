@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTerminalBackend } from "../../application/state/useTerminalBackend";
 import type { SerialConfig, SerialFlowControl, SerialParity } from "../../domain/models";
 import { isSerialPortPath, SERIAL_BAUD_RATES } from "../../domain/serialHost";
+import { isWindowsNamedPipePath } from "../../domain/serialEndpoint";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
@@ -108,6 +109,7 @@ export const HostSerialConnectionSection: React.FC<HostSerialConnectionSectionPr
     [],
   );
 
+  const isNamedPipe = isWindowsNamedPipePath(value.path.trim());
   const pathInvalid = Boolean(value.path) && !isSerialPortPath(value.path);
   const isCustomBaudRate = value.baudRate > 0 && !SERIAL_BAUD_RATES.includes(value.baudRate as typeof SERIAL_BAUD_RATES[number]);
 
@@ -142,109 +144,115 @@ export const HostSerialConnectionSection: React.FC<HostSerialConnectionSectionPr
         {pathInvalid && (
           <p className="text-xs text-destructive">{t("serial.field.customPortPlaceholder")}</p>
         )}
+        <p className="text-xs text-muted-foreground">{t("serial.field.namedPipeHint")}</p>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="host-serial-baud-rate" className="text-xs text-muted-foreground">
-            {t("serial.field.baudRate")}
-          </Label>
-          <Combobox
-            options={baudRateOptions}
-            value={String(value.baudRate)}
-            onValueChange={(next) => {
-              const parsed = Number.parseInt(next, 10);
-              if (!Number.isNaN(parsed) && parsed > 0) onChange({ baudRate: parsed });
-            }}
-            placeholder={t("serial.field.baudRatePlaceholder")}
-            emptyText={t("serial.field.baudRateEmpty")}
-            allowCreate
-            createText={t("common.use")}
-          />
-          {isCustomBaudRate && (
-            <p className="text-xs text-muted-foreground">{t("serial.field.customBaudRate")}</p>
-          )}
-        </div>
-
-        <div className="grid grid-cols-2 gap-2">
+        {!isNamedPipe && (
           <div className="space-y-1.5">
-            <Label htmlFor="host-serial-data-bits" className="text-xs text-muted-foreground">
-              {t("serial.field.dataBits")}
+            <Label htmlFor="host-serial-baud-rate" className="text-xs text-muted-foreground">
+              {t("serial.field.baudRate")}
             </Label>
-            <Select
-              value={String(value.dataBits ?? 8)}
-              onValueChange={(next) => onChange({ dataBits: Number.parseInt(next, 10) as 5 | 6 | 7 | 8 })}
-            >
-              <SelectTrigger id="host-serial-data-bits" className="h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {DATA_BITS.map((bits) => (
-                  <SelectItem key={bits} value={String(bits)}>{bits}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="host-serial-stop-bits" className="text-xs text-muted-foreground">
-              {t("serial.field.stopBits")}
-            </Label>
-            <Select
-              value={String(value.stopBits ?? 1)}
-              onValueChange={(next) => onChange({ stopBits: Number.parseFloat(next) as 1 | 1.5 | 2 })}
-            >
-              <SelectTrigger id="host-serial-stop-bits" className="h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {STOP_BITS.map((bits) => (
-                  <SelectItem key={bits} value={String(bits)}>{bits}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {value.stopBits === 1.5 && (
-              <p className="text-xs text-yellow-500">{t("serial.field.stopBits15Warning")}</p>
+            <Combobox
+              options={baudRateOptions}
+              value={String(value.baudRate)}
+              onValueChange={(next) => {
+                const parsed = Number.parseInt(next, 10);
+                if (!Number.isNaN(parsed) && parsed > 0) onChange({ baudRate: parsed });
+              }}
+              placeholder={t("serial.field.baudRatePlaceholder")}
+              emptyText={t("serial.field.baudRateEmpty")}
+              allowCreate
+              createText={t("common.use")}
+            />
+            {isCustomBaudRate && (
+              <p className="text-xs text-muted-foreground">{t("serial.field.customBaudRate")}</p>
             )}
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="host-serial-parity" className="text-xs text-muted-foreground">
-              {t("serial.field.parity")}
-            </Label>
-            <Select
-              value={value.parity ?? "none"}
-              onValueChange={(next) => onChange({ parity: next as SerialParity })}
-            >
-              <SelectTrigger id="host-serial-parity" className="h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PARITY_OPTIONS.map((option) => (
-                  <SelectItem key={option} value={option} textValue={t(`serial.parity.${option}`)}>
-                    {t(`serial.parity.${option}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        )}
+
+        {/* Hardware-only serial framing does not apply to a named pipe. */}
+        {!isNamedPipe && (
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="host-serial-data-bits" className="text-xs text-muted-foreground">
+                {t("serial.field.dataBits")}
+              </Label>
+              <Select
+                value={String(value.dataBits ?? 8)}
+                onValueChange={(next) => onChange({ dataBits: Number.parseInt(next, 10) as 5 | 6 | 7 | 8 })}
+              >
+                <SelectTrigger id="host-serial-data-bits" className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DATA_BITS.map((bits) => (
+                    <SelectItem key={bits} value={String(bits)}>{bits}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="host-serial-stop-bits" className="text-xs text-muted-foreground">
+                {t("serial.field.stopBits")}
+              </Label>
+              <Select
+                value={String(value.stopBits ?? 1)}
+                onValueChange={(next) => onChange({ stopBits: Number.parseFloat(next) as 1 | 1.5 | 2 })}
+              >
+                <SelectTrigger id="host-serial-stop-bits" className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STOP_BITS.map((bits) => (
+                    <SelectItem key={bits} value={String(bits)}>{bits}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {value.stopBits === 1.5 && (
+                <p className="text-xs text-yellow-500">{t("serial.field.stopBits15Warning")}</p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="host-serial-parity" className="text-xs text-muted-foreground">
+                {t("serial.field.parity")}
+              </Label>
+              <Select
+                value={value.parity ?? "none"}
+                onValueChange={(next) => onChange({ parity: next as SerialParity })}
+              >
+                <SelectTrigger id="host-serial-parity" className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PARITY_OPTIONS.map((option) => (
+                    <SelectItem key={option} value={option} textValue={t(`serial.parity.${option}`)}>
+                      {t(`serial.parity.${option}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="host-serial-flow-control" className="text-xs text-muted-foreground">
+                {t("serial.field.flowControl")}
+              </Label>
+              <Select
+                value={value.flowControl ?? "none"}
+                onValueChange={(next) => onChange({ flowControl: next as SerialFlowControl })}
+              >
+                <SelectTrigger id="host-serial-flow-control" className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {FLOW_CONTROL_OPTIONS.map((option) => (
+                    <SelectItem key={option} value={option} textValue={t(`serial.flowControl.${option}`)}>
+                      {t(`serial.flowControl.${option}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="host-serial-flow-control" className="text-xs text-muted-foreground">
-              {t("serial.field.flowControl")}
-            </Label>
-            <Select
-              value={value.flowControl ?? "none"}
-              onValueChange={(next) => onChange({ flowControl: next as SerialFlowControl })}
-            >
-              <SelectTrigger id="host-serial-flow-control" className="h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {FLOW_CONTROL_OPTIONS.map((option) => (
-                  <SelectItem key={option} value={option} textValue={t(`serial.flowControl.${option}`)}>
-                    {t(`serial.flowControl.${option}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+        )}
 
         <div className="space-y-1.5">
           <Label htmlFor="host-serial-charset" className="text-xs text-muted-foreground">

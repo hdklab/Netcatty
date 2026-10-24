@@ -1,4 +1,5 @@
 /* eslint-disable no-undef */
+const { DISK_IO_ASSIGNMENT, parseDiskIo, diskIoRates } = require("./monitorDiskIo.cjs");
 const { sampleSharedStats } = require("./sharedStats.cjs");
 const { GPU_ASSIGNMENT, parseGpuStats, withCachedMonitorGpu, cacheFullGpuStats, startMonitorGpuProbe } = require("./monitorGpuStats.cjs");
 const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
@@ -105,7 +106,7 @@ function withRemoteWatchdog(command, timeoutMs) {
     // exec replaces the command-substitution shell: without it Bash may
     // report that intermediate PID instead of the watchdog subshell.
     `&& nc_self=$(exec sh -c 'echo $PPID' 2>/dev/null)`,
-    `&& nc_tree=$(ps -e -o pid=,ppid= 2>/dev/null | awk -v root="$$" -v self="$nc_self" '${descendantTreeAwk}')`,
+    `&& nc_tree=$(ps -e -o pid= -o ppid= 2>/dev/null | awk -v root="$$" -v self="$nc_self" '${descendantTreeAwk}')`,
     `&& kill -9 $nc_tree "$$" 2>/dev/null ) </dev/null >/dev/null 2>&1 & nc_watchdog_pid=$!`,
   ].join(' ');
   return [
@@ -115,7 +116,7 @@ function withRemoteWatchdog(command, timeoutMs) {
     // Reap the watchdog's pending `sleep` before killing the subshell: after
     // the subshell is SIGKILLed its children are reparented to init and a
     // PPID walk can no longer find them.
-    'nc_kids=$(ps -e -o pid=,ppid= 2>/dev/null | awk -v root="$nc_watchdog_pid" -v self="-1" \'' +
+    'nc_kids=$(ps -e -o pid= -o ppid= 2>/dev/null | awk -v root="$nc_watchdog_pid" -v self="-1" \'' +
       descendantTreeAwk +
       "')",
     'kill -9 $nc_kids "$nc_watchdog_pid" 2>/dev/null',
@@ -589,7 +590,7 @@ function createSessionOpsApi(ctx) {
     # different parent) of this exec session, so the sibling search misses it
     # entirely (#1123).
     find_login_shell() {
-      _shell=$(ps -e -o pid=,ppid=,tty=,comm= 2>/dev/null | awk -v pp="$1" -v self="$SELF" '
+      _shell=$(ps -e -o pid= -o ppid= -o tty= -o comm= 2>/dev/null | awk -v pp="$1" -v self="$SELF" '
         function isshell(c) { sub(/^.*\\//, "", c); sub(/^-/, "", c); return c ~ /^(ba|z|fi|k|da|a|c|tc)?sh$/ }
         $1 != self && $2 == pp && isshell($4) {
           if ($3 !~ /^\\?+$/) { print $1; found=1; exit }
@@ -638,7 +639,7 @@ function createSessionOpsApi(ctx) {
     # su'd / sudo'd shell instead of stopping at the login shell (#1065). Falls
     # back to the login shell when no foreground shell is found.
     find_active_shell() {
-      ps -e -o pid=,ppid=,stat=,comm= 2>/dev/null | awk -v start="$1" '
+      ps -e -o pid= -o ppid= -o stat= -o comm= 2>/dev/null | awk -v start="$1" '
         { pp[$1]=$2; st[$1]=$3; cm[$1]=$4; ord[NR]=$1 }
         function isshell(c) { sub(/^.*\\//, "", c); sub(/^-/, "", c); return c ~ /^(ba|z|fi|k|da|a|c|tc)?sh$/ }
         function depth(p,   d) { d=0; while (p != "" && d < 64) { if (p == start) return d; p=pp[p]; d++ } return -1 }
@@ -826,7 +827,7 @@ function createSessionOpsApi(ctx) {
         if (session.singleChannelSsh) return null;
         const script = `SELF=$$
     find_login_shell() {
-      ps -e -o pid=,ppid=,tty=,comm= 2>/dev/null | awk -v pp="$1" -v self="$SELF" '
+      ps -e -o pid= -o ppid= -o tty= -o comm= 2>/dev/null | awk -v pp="$1" -v self="$SELF" '
         $1 != self && $2 == pp && $4 ~ /^-?(ba|z|fi|k|da|a)?sh$/ {
           if ($3 != "?") { print $1; found=1; exit }
           if (any == "") any=$1
@@ -834,7 +835,7 @@ function createSessionOpsApi(ctx) {
         END { if (!found && any != "") print any }'
     }
     find_fg_leaf() {
-      ps -e -o pid=,ppid=,stat=,comm= 2>/dev/null | awk -v start="$1" '
+      ps -e -o pid= -o ppid= -o stat= -o comm= 2>/dev/null | awk -v start="$1" '
         { pp[$1]=$2; st[$1]=$3; ord[NR]=$1 }
         function depth(p,  d){ d=0; while(p!="" && d<64){ if(p==start) return d; p=pp[p]; d++ } return -1 }
         END { best=-1; bp=""; for(i=1;i<=NR;i++){ p=ord[i];
@@ -988,7 +989,7 @@ function createSessionOpsApi(ctx) {
         // so that relative paths like "." or "src" are resolved correctly.
         const needsCwdResolve = !dirPath.startsWith('/') && dirPath !== '~' && !dirPath.startsWith('~/');
         const cwdResolveCmd = needsCwdResolve
-          ? `_sc_p=$(ps --ppid $PPID -o pid=,comm= 2>/dev/null | awk -v self=$$ '$1!=self && $2~/^(ba|z|fi|k|da)?sh$/{pid=$1}END{print pid}'); [ -z "$_sc_p" ] && _sc_p=$(ps -e -o pid=,ppid=,comm= 2>/dev/null | awk -v pp=$PPID -v self=$$ '$1!=self && $2==pp && $3~/^(ba|z|fi|k|da)?sh$/{pid=$1}END{print pid}'); [ -n "$_sc_p" ] && { _sc_d=$(readlink /proc/$_sc_p/cwd 2>/dev/null); [ -n "$_sc_d" ] && cd "$_sc_d" 2>/dev/null; }; `
+          ? `_sc_p=$(ps --ppid $PPID -o pid= -o comm= 2>/dev/null | awk -v self=$$ '$1!=self && $2~/^(ba|z|fi|k|da)?sh$/{pid=$1}END{print pid}'); [ -z "$_sc_p" ] && _sc_p=$(ps -e -o pid= -o ppid= -o comm= 2>/dev/null | awk -v pp=$PPID -v self=$$ '$1!=self && $2==pp && $3~/^(ba|z|fi|k|da)?sh$/{pid=$1}END{print pid}'); [ -n "$_sc_p" ] && { _sc_d=$(readlink /proc/$_sc_p/cwd 2>/dev/null); [ -n "$_sc_d" ] && cd "$_sc_d" 2>/dev/null; }; `
           : '';
         const cmd = `${cwdResolveCmd}find ${pathExpr} -mindepth 1 -maxdepth 1 -exec sh -c '
           prefix="$1"
@@ -1210,7 +1211,7 @@ function createSessionOpsApi(ctx) {
         `swapused=$(echo "$swapraw" | awk '{for(i=1;i<=NF;i++){if($i=="used"&&$(i+1)=="="){v=$(i+2);m=1;if(v~/G/)m=1024;gsub(/[MmGg]/,"",v);su=v*m}};printf "%.0f",su+0}')`,
         `swapfree=$(echo "$swaptotal $swapused" | awk '{printf "%.0f",$1-$2}')`,
         // Top processes by memory%
-        `procs=$(ps -A -o pid=,%mem=,comm= 2>/dev/null | sort -k2 -rn | head -10 | awk '{gsub(/;/,"_",$3);printf "%s;%.1f;%s,",$1,$2,$3}' | sed 's/,$//')`,
+        `procs=$(ps -A -o pid= -o %mem= -o comm= 2>/dev/null | sort -k2 -rn | head -10 | awk '{gsub(/;/,"_",$3);printf "%s;%.1f;%s,",$1,$2,$3}' | sed 's/,$//')`,
         // Disk: -P keeps a stable six-column POSIX layout on macOS.
         `mounts=$(mount 2>/dev/null || true)`,
         `disks=$({ printf "%s\n" "$mounts"; printf "__NETCATTY_DF__\n"; df -kP 2>/dev/null; } | awk '$0=="__NETCATTY_DF__"{in_df=1;next} !in_df{if(index($1,"/dev/disk")==1&&(index($0,"(apfs,")||index($0,"(apfs)"))){key=$1;sub(/s[0-9].*$/,"",key);capacity[$1]="apfs:" key}next} $1=="Filesystem"{next} index($1,"/dev/")==1{m=$6;if(m=="/"||index(m,"/Volumes/")==1){t=$2/1048576;key=(($1 in capacity)?capacity[$1]:$1);if(key~/^apfs:/){u=($2-$4)/1048576;p=(t>0?int(u*100/t+0.5):0)}else{u=$3/1048576;p=$5;gsub(/%/,"",p)}printf "%s:%.6f:%.6f:%s:%s,",m,u,t,p,key}}' | sed 's/,$//')`,
@@ -1327,8 +1328,9 @@ function createSessionOpsApi(ctx) {
         // polling. Hosts without timeout also omit this optional metric.
         // macOS is skipped: powermetrics needs root, which stats must not.
         GPU_ASSIGNMENT,
+        DISK_IO_ASSIGNMENT,
         // Output all stats (using CPURAW and PERCORERAW instead of CPU and PERCORE)
-        `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|NET:$net|GPU:$gpustat|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`
+        `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|NET:$net|GPU:$gpustat|DISKIO:$diskio|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`
       ].filter(command => !session._monitorStats || (!command.startsWith('procs=') && !command.startsWith('gpustat='))).join('; ');
 
       // Client-side run bound shared by the stats and disk probes; the remote
@@ -1457,6 +1459,7 @@ function createSessionOpsApi(ctx) {
             let swapUsed = null;
             let topProcesses = [];  // Array of { pid, memPercent, command }
             let disks = [];  // Array of { mountPoint, used, total, percent }
+            let diskIo = null;
             let networkInterfaces = [];  // Array of { name, rxBytes, txBytes }
             let hostname = "";
             let osName = "";
@@ -1473,6 +1476,8 @@ function createSessionOpsApi(ctx) {
                 // macOS: command reports normalized CPU% directly (no delta needed)
                 const val = parseFloat(part.substring(4).trim());
                 if (!isNaN(val)) cpuDirect = Math.min(100, Math.max(0, Math.round(val)));
+              } else if (part.startsWith('DISKIO:')) {
+                diskIo = parseDiskIo(part.substring(7));
               } else if (part.startsWith('CPURAW:')) {
                 const rawParts = part.substring(7).trim().split(/\s+/);
                 if (rawParts.length >= 2) {
@@ -1619,6 +1624,9 @@ function createSessionOpsApi(ctx) {
               }
             }
     
+            const diskRates = diskIoRates(diskIo, session.prevDiskIo);
+            session.prevDiskIo = diskIo;
+
             // Calculate network speed based on previous reading
             const now = Date.now();
             const prevNet = session.prevNetStats || { interfaces: [], timestamp: 0 };
@@ -1761,6 +1769,7 @@ function createSessionOpsApi(ctx) {
                 diskUsed,      // Disk used in GB for root partition (backward compat)
                 diskTotal,     // Total disk in GB for root partition (backward compat)
                 disks,         // Array of all mounted disks
+                ...diskRates,  // Aggregate physical-device I/O; null until two valid Linux samples
                 networkReady: prevNet.timestamp > 0 && prevNet.interfaces.length > 0,
                 netRxSpeed,    // Total network receive speed (bytes/sec)
                 netTxSpeed,    // Total network transmit speed (bytes/sec)

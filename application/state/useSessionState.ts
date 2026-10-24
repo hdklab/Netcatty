@@ -1,4 +1,5 @@
 import { MouseEvent,useCallback,useEffect,useMemo,useRef,useState } from 'react';
+import { flushSync } from 'react-dom';
 import { ConnectionLog,Host,SerialConfig,Snippet,TerminalSession,Workspace,WorkspaceNode,WorkspaceViewMode } from '../../domain/models';
 import { addLogView, getLogViewTabId, removeLogView, type LogView } from './logViewState';
 import {
@@ -26,6 +27,10 @@ SplitHint,
 updateWorkspaceSplitSizes,
 } from '../../domain/workspace';
 import { clearSessionFontSizeOverride as clearSessionFontSizeOverrideFields } from '../../domain/terminalAppearance';
+import {
+  composeSendTargetAfterToolbarToggle,
+  flipComposeSendTarget,
+} from '../../domain/terminalBroadcast';
 import { buildOrderedWorkTabIds, reorderWorkTabIds } from '../app/workTabSurface';
 import { activeTabStore } from './activeTabStore';
 import {
@@ -236,8 +241,12 @@ export const useSessionState = ({
   const [tabOrder, setTabOrder] = useState<string[]>(initialRestoreState.tabOrder);
   // Broadcast mode: stores workspace IDs that have broadcast enabled
   const [broadcastWorkspaceIds, setBroadcastWorkspaceIds] = useState<Set<string>>(new Set());
+  // Compose-bar send target. Toolbar toggles reset it; the compose bar can
+  // then flip it without changing keystroke fan-out.
+  const [composeSendAllWorkspaceIds, setComposeSendAllWorkspaceIds] = useState<Set<string>>(new Set());
   // Global broadcast mode: enables broadcast for all orphan sessions (not in workspaces)
   const [globalBroadcastEnabled, setGlobalBroadcastEnabled] = useState<boolean>(false);
+  const [globalComposeSendToAll, setGlobalComposeSendToAll] = useState<boolean>(false);
   // Log views: stores open log replay tabs
   const [logViews, setLogViews] = useState<LogView[]>([]);
   const [restorePreviousSessionRevision, setRestorePreviousSessionRevision] = useState(0);
@@ -939,6 +948,25 @@ export const useSessionState = ({
     return newSessionId;
   }, [setActiveTabId]);
 
+  // Agent callers bind scope immediately, so they need committed insertion,
+  // not just the ID allocated by the ordinary batched UI append operation.
+  const appendHostToWorkspaceConfirmed = useCallback((
+    workspaceId: string,
+    host: Host,
+    direction: SplitDirection = 'vertical',
+  ): string | null => {
+    let sessionId: string | null = null;
+    flushSync(() => {
+      sessionId = appendHostToWorkspace(workspaceId, host, direction);
+    });
+    if (!sessionId) return null;
+    const committedWorkspace = workspacesRef.current.find(w => w.id === workspaceId);
+    const inserted = committedWorkspace
+      && collectSessionIds(committedWorkspace.root).includes(sessionId)
+      && sessionsRef.current.some(s => s.id === sessionId && s.workspaceId === workspaceId);
+    return inserted ? sessionId : null;
+  }, [appendHostToWorkspace]);
+
   // Atomic "append a local terminal pane" — mirror of appendHostToWorkspace
   // but constructs a local-protocol session instead of an SSH one.
   const appendLocalTerminalToWorkspace = useCallback((
@@ -1169,8 +1197,10 @@ export const useSessionState = ({
   const canUseGlobalBroadcast = orphanSessions.length >= 2;
 
   // Losing the group must disarm broadcast before another tab can join it.
-  if (!canUseGlobalBroadcast && globalBroadcastEnabled) {
-    setGlobalBroadcastEnabled(false);
+  // Compose-bar send target follows the toolbar switch back to active-only.
+  if (!canUseGlobalBroadcast && (globalBroadcastEnabled || globalComposeSendToAll)) {
+    if (globalBroadcastEnabled) setGlobalBroadcastEnabled(false);
+    if (globalComposeSendToAll) setGlobalComposeSendToAll(false);
   }
 
   const openLogView = useCallback((log: ConnectionLog) => {
@@ -1305,31 +1335,61 @@ export const useSessionState = ({
     return newSessionId;
   }, [setActiveTabId]);
 
-  // Toggle broadcast mode for a workspace
-  const toggleBroadcast = useCallback((workspaceId: string) => {
-    setBroadcastWorkspaceIds(prev => {
+  const setWorkspaceComposeSendTarget = useCallback((workspaceId: string, target: 'all' | 'active') => {
+    setComposeSendAllWorkspaceIds((prev) => {
+      const hasAll = prev.has(workspaceId);
+      if ((target === 'all') === hasAll) return prev;
       const next = new Set(prev);
-      if (next.has(workspaceId)) {
-        next.delete(workspaceId);
-      } else {
-        next.add(workspaceId);
-      }
+      if (target === 'all') next.add(workspaceId);
+      else next.delete(workspaceId);
       return next;
     });
   }, []);
+
+  // Toggle broadcast mode for a workspace. Compose-bar send target follows.
+  const toggleBroadcast = useCallback((workspaceId: string) => {
+    const enabling = !broadcastWorkspaceIds.has(workspaceId);
+    setBroadcastWorkspaceIds(prev => {
+      const next = new Set(prev);
+      if (prev.has(workspaceId)) next.delete(workspaceId);
+      else next.add(workspaceId);
+      return next;
+    });
+    setWorkspaceComposeSendTarget(workspaceId, composeSendTargetAfterToolbarToggle(enabling));
+  }, [broadcastWorkspaceIds, setWorkspaceComposeSendTarget]);
 
   // Check if a workspace has broadcast enabled
   const isBroadcastEnabled = useCallback((workspaceId: string) => {
     return broadcastWorkspaceIds.has(workspaceId);
   }, [broadcastWorkspaceIds]);
 
+  const toggleComposeSendTarget = useCallback((workspaceId: string) => {
+    setWorkspaceComposeSendTarget(
+      workspaceId,
+      flipComposeSendTarget(composeSendAllWorkspaceIds.has(workspaceId) ? 'all' : 'active'),
+    );
+  }, [composeSendAllWorkspaceIds, setWorkspaceComposeSendTarget]);
+
+  const isComposeSendToAll = useCallback((workspaceId: string) => {
+    return composeSendAllWorkspaceIds.has(workspaceId);
+  }, [composeSendAllWorkspaceIds]);
+
   // Toggle global broadcast mode for orphan sessions
   const toggleGlobalBroadcast = useCallback(() => {
-    setGlobalBroadcastEnabled(prev => !prev);
+    setGlobalBroadcastEnabled(prev => {
+      const next = !prev;
+      setGlobalComposeSendToAll(composeSendTargetAfterToolbarToggle(next) === 'all');
+      return next;
+    });
+  }, []);
+
+  const toggleGlobalComposeSendTarget = useCallback(() => {
+    setGlobalComposeSendToAll((prev) => flipComposeSendTarget(prev ? 'all' : 'active') === 'all');
   }, []);
 
   // Global broadcast enabled state - direct boolean value
   const isGlobalBroadcastEnabled = globalBroadcastEnabled;
+  const isGlobalComposeSendToAll = globalComposeSendToAll;
 
   const baseWorkTabIds = useMemo(() => [
     ...orphanSessions.map(s => s.id),
@@ -1446,6 +1506,7 @@ export const useSessionState = ({
     moveSessionInWorkspace,
     removeSessionFromWorkspace,
     appendHostToWorkspace,
+    appendHostToWorkspaceConfirmed,
     appendLocalTerminalToWorkspace,
     updateSplitSizes,
     splitSession,
@@ -1459,8 +1520,12 @@ export const useSessionState = ({
     // Broadcast mode
     toggleBroadcast,
     isBroadcastEnabled,
+    toggleComposeSendTarget,
+    isComposeSendToAll,
     toggleGlobalBroadcast,
     isGlobalBroadcastEnabled,
+    toggleGlobalComposeSendTarget,
+    isGlobalComposeSendToAll,
     orderedTabs,
     getOrderedWorkTabs,
     reorderTabs,

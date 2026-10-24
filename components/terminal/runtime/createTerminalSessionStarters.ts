@@ -1,3 +1,4 @@
+import { isWindowsNamedPipePath } from '../../../domain/serialEndpoint';
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { ProviderValidationIssue } from "@netcatty/plugin-contract";
 import { logger } from "../../../lib/logger";
@@ -1965,7 +1966,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
               sessionId: ctx.sessionId,
               dataLength: terminalData.length,
             });
-            ctx.onTerminalDataCapture(ctx.sessionId, terminalData);
+            const pendingCapture: unknown = ctx.onTerminalDataCapture(ctx.sessionId, terminalData);
+            if (
+              pendingCapture !== undefined
+              && pendingCapture !== null
+              && typeof (pendingCapture as Promise<void>).then === "function"
+            ) {
+              await (pendingCapture as Promise<void>);
+            }
           } catch (err) {
             logger.warn("Failed to serialize terminal data:", err);
           }
@@ -2165,7 +2173,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       autoLoginAttached = true;
       ctx.updateStatus("connected");
       ctx.setProgressValue(100);
-      writeTerminalLine(ctx, term, `[Connected to ${ctx.serialConfig.path} at ${ctx.serialConfig.baudRate} baud]`);
+      writeTerminalLine(ctx, term, isWindowsNamedPipePath(ctx.serialConfig.path)
+        ? `[Connected to ${ctx.serialConfig.path}]`
+        : `[Connected to ${ctx.serialConfig.path} at ${ctx.serialConfig.baudRate} baud]`);
 
       if (waitsForAutoLogin) {
         if (autoLoginCompletedBeforeAttach) {

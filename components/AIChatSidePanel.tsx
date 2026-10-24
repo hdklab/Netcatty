@@ -1200,6 +1200,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
           target.agentEnv,
           target.agentCommand,
           target.codexRuntime,
+          // Manual refresh (retry banner / picker button) must bypass the
+          // main-side LKG-first policy and go live.
+          options.force === true,
         );
         if (!result?.ok || !Array.isArray(result.models)) {
           throw new Error(result?.error || 'Failed to load SDK agent models');
