@@ -8,6 +8,7 @@ const {
   extractTrailingIdlePrompt,
   formatSyntheticEcho,
   getFreshIdlePrompt,
+  getVisibleIdlePrompt,
   isDefaultPowerShellPromptLine,
   isDefaultCmdPromptLine,
   isDefaultPosixPromptLine,
@@ -150,6 +151,47 @@ test("isDefaultPosixPromptLine matches classic user@host prompts", () => {
   assert.equal(isDefaultPosixPromptLine(""), false);
 });
 
+test("isDefaultPosixPromptLine matches Alpine host:path prompts without a username", () => {
+  for (const prompt of [
+    "localhost:~#",
+    "localhost:~# ",
+    "alpine:~$ ",
+    "alpine-host:~/projects$",
+    "alpine-host:/# ",
+    "alpine.example:/srv/My Project$ ",
+  ]) {
+    assert.equal(isDefaultPosixPromptLine(prompt), true, prompt);
+  }
+});
+
+test("Alpine prompt recognition rejects output and partially entered commands", () => {
+  for (const line of [
+    "#",
+    "$",
+    "status: ready#",
+    "progress:100%$",
+    ":~#",
+    "alpine:#",
+    "alpine:relative$",
+    "alpine:~user$",
+    "localhost:~# printf busy",
+    "localhost:/tmp# printf busy#",
+    "alpine:/tmp$ printf busy$",
+  ]) {
+    assert.equal(isDefaultPosixPromptLine(line), false, line);
+    assert.equal(extractTrailingIdlePrompt(`welcome\r\n${line}`), "", line);
+  }
+});
+
+test("extracts an Alpine idle prompt while preserving its trailing whitespace", () => {
+  assert.equal(
+    extractTrailingIdlePrompt("Welcome to Alpine!\r\n\x1b[32mlocalhost:~# \x1b[0m"),
+    "localhost:~# ",
+  );
+  assert.equal(extractTrailingIdlePrompt("alpine:/srv$ "), "alpine:/srv$ ");
+  assert.equal(extractTrailingIdlePrompt("localhost:~# \r\n"), "");
+});
+
 test("extracts a trailing RHEL-family bracketed idle prompt", () => {
   // Oracle Linux / RHEL / CentOS / Fedora default PS1 is `[\u@\h \W]\$ `.
   // Trailing space must round-trip, same as the PowerShell prompt capture.
@@ -175,6 +217,97 @@ test("extracts a trailing RHEL-family bracketed idle prompt", () => {
   );
   // Unbracketed space form is still not a recognized default prompt.
   assert.equal(extractTrailingIdlePrompt("welcome\r\nroot@host ~#"), "");
+});
+
+test("extractTrailingIdlePrompt recognizes a two-line user@host then bare $/# PS1", () => {
+  // export PS1="\u@\h: \w\n$ " paints the host line, then a lone "$ ".
+  // The cached prompt must keep both lines so a lone "$" cannot satisfy endsWith.
+  assert.equal(
+    extractTrailingIdlePrompt("welcome\r\nuser@host: /home/foo\n$ "),
+    "user@host: /home/foo\n$ ",
+  );
+  assert.equal(
+    extractTrailingIdlePrompt("welcome\r\nroot@host: /root\n# "),
+    "root@host: /root\n# ",
+  );
+  // Live bash PTY: prompt CR plus ONLCR is `\r\r\n`, which this normalizer
+  // stores as blank lines. The cache must keep them so endsWith still matches.
+  assert.equal(
+    extractTrailingIdlePrompt("\x1b[?2004huser@host: /home/foo\r\r\n$ "),
+    "user@host: /home/foo\n\n\n$ ",
+  );
+  assert.equal(
+    extractTrailingIdlePrompt("\x1b[?2004hroot@host: /root\r\r\n# "),
+    "root@host: /root\n\n\n# ",
+  );
+  assert.equal(extractTrailingIdlePrompt("$ "), "");
+  assert.equal(extractTrailingIdlePrompt("# "), "");
+  assert.equal(extractTrailingIdlePrompt("welcome\r\n$ "), "");
+  assert.equal(extractTrailingIdlePrompt("not a host line\n$ "), "");
+  assert.equal(extractTrailingIdlePrompt("copied output\n# "), "");
+  assert.equal(isDefaultPosixPromptLine("$"), false);
+  assert.equal(isDefaultPosixPromptLine("#"), false);
+  assert.equal(isDefaultPosixPromptLine("$ "), false);
+  assert.equal(isDefaultPosixPromptLine("# "), false);
+});
+
+test("trackSessionIdlePrompt and getFreshIdlePrompt accept a two-line user@host PS1", () => {
+  const session = {};
+  const prompt = "user@host: /home/foo\n$ ";
+  trackSessionIdlePrompt(session, `welcome\r\n${prompt}`);
+  assert.equal(getFreshIdlePrompt(session), prompt);
+
+  const ptySession = {};
+  trackSessionIdlePrompt(ptySession, "\x1b[?2004huser@host: /home/foo\r\r\n$ ");
+  assert.equal(getFreshIdlePrompt(ptySession), "user@host: /home/foo\n\n\n$ ");
+});
+
+test("extractTrailingIdlePrompt still recognizes a classic single-line POSIX prompt", () => {
+  assert.equal(extractTrailingIdlePrompt("welcome\r\nuser@host:~$ "), "user@host:~$ ");
+});
+
+test("isDefaultPosixPromptLine accepts virtualenv, conda, and BT-panel env prefixes", () => {
+  // Python venv / conda / BT-panel prepend "(name) " before the real prompt.
+  // Recognition strips that prefix; a missing space after ")" is already
+  // accepted because the username class absorbs the parens (#3947).
+  for (const prompt of [
+    "(3.12.12) root@example:~# ",
+    "(3.12.12) root@example:~#",
+    "(venv) alice@host:~$ ",
+    "(base) [opc@host ~]$ ",
+    "(my-env) localhost:~# ",
+    "(3.12.12)root@example:~# ",
+  ]) {
+    assert.equal(isDefaultPosixPromptLine(prompt), true, prompt);
+  }
+});
+
+test("extractTrailingIdlePrompt keeps the full env-prefixed POSIX prompt", () => {
+  // Suffix matching compares the visible PTY line, so the captured prompt
+  // must still include the "(name) " prefix rather than the stripped form.
+  for (const prompt of [
+    "(3.12.12) root@example:~# ",
+    "(3.12.12) root@example:~#",
+    "(venv) alice@host:~$ ",
+    "(base) [opc@host ~]$ ",
+    "(my-env) localhost:~# ",
+  ]) {
+    assert.equal(extractTrailingIdlePrompt(`Last login\r\n${prompt}`), prompt, prompt);
+  }
+});
+
+test("env-prefixed POSIX recognition rejects incomplete prefixes and non-prompts", () => {
+  for (const line of [
+    "(3.12.12 root@example:~# ",
+    "(3.12.12) root@example:~# printf busy",
+    "(venv) not a prompt",
+    "root@host ~#",
+    "(base) [opc@host ~]$ printf busy",
+    "(my-env) localhost:~# printf busy",
+  ]) {
+    assert.equal(isDefaultPosixPromptLine(line), false, line);
+    assert.equal(extractTrailingIdlePrompt(`welcome\r\n${line}`), "", line);
+  }
 });
 
 test("isPlausibleCliVersionOutput rejects stack traces and file URLs", () => {
@@ -710,6 +843,21 @@ test("getFreshIdlePrompt returns empty string when the session has no cached pro
   );
 });
 
+test("tracks split Alpine prompts and expires them while the shell is busy", () => {
+  const session = {};
+  assert.equal(trackSessionIdlePrompt(session, "Welcome to Alpine!\r\nlocalhost:"), "");
+  assert.equal(trackSessionIdlePrompt(session, "~# "), "localhost:~# ");
+  assert.equal(getFreshIdlePrompt(session), "localhost:~# ");
+
+  assert.equal(trackSessionIdlePrompt(session, "printf busy"), "");
+  assert.equal(getFreshIdlePrompt(session), "");
+
+  trackSessionIdlePrompt(session, "\r\nbusy\r\nlocalhost:/srv# ");
+  assert.equal(getFreshIdlePrompt(session), "localhost:/srv# ");
+  trackSessionIdlePrompt(session, "printf working\r\nworking...");
+  assert.equal(getFreshIdlePrompt(session), "");
+});
+
 test("trackSessionIdlePrompt and getFreshIdlePrompt accept an Oracle/RHEL bracketed bash prompt", () => {
   const session = {};
   trackSessionIdlePrompt(session, "Last login...\r\n[opc@instance-20260905-1821 ~]$ ");
@@ -737,6 +885,51 @@ test("trackSessionIdlePrompt and getFreshIdlePrompt accept an Oracle/RHEL bracke
   trackSessionIdlePrompt(bracketedPath, "Last login...\r\n[user@host My [Project]]$ ");
   assert.equal(bracketedPath.lastIdlePrompt, "[user@host My [Project]]$ ");
   assert.equal(getFreshIdlePrompt(bracketedPath), "[user@host My [Project]]$ ");
+});
+
+test("visible idle prompt survives a PSReadLine erase that leaves the raw tail dirty", () => {
+  // PSReadLine echoes the pending-input clear prefix (`ggd2147483647d` / `i`),
+  // then homes the cursor and erases those keys with CSI. stripAnsi drops the
+  // erase but keeps the keys, so the cached prompt no longer matches the tail.
+  // The screen is still an idle default PowerShell prompt (#3927).
+  const session = {};
+  const prompt = "PS C:\\Users\\alice> ";
+  trackSessionIdlePrompt(session, `Windows PowerShell\r\n${prompt}ggd2147483647d\x1b[20G\x1b[0J`);
+  assert.equal(getFreshIdlePrompt(session), "");
+  assert.equal(extractTrailingIdlePrompt(session._promptTrackTail), "");
+  assert.equal(getVisibleIdlePrompt(session), prompt);
+
+  const backspaced = {};
+  trackSessionIdlePrompt(backspaced, `${prompt}\x08`);
+  assert.equal(getFreshIdlePrompt(backspaced), "");
+  assert.equal(getVisibleIdlePrompt(backspaced), prompt);
+
+  const crHomed = {};
+  trackSessionIdlePrompt(crHomed, `${prompt}\r`);
+  assert.equal(getFreshIdlePrompt(crHomed), "");
+  assert.equal(getVisibleIdlePrompt(crHomed), prompt);
+});
+
+test("visible idle prompt stays empty for pending input, a following line, and an unrecognized prompt", () => {
+  const pending = {};
+  trackSessionIdlePrompt(pending, "PS C:\\Users\\alice> Write-Output ok");
+  assert.equal(getFreshIdlePrompt(pending), "");
+  assert.equal(getVisibleIdlePrompt(pending), "");
+
+  const movedOn = {};
+  trackSessionIdlePrompt(movedOn, "PS C:\\Users\\alice> \r\n");
+  assert.equal(getVisibleIdlePrompt(movedOn), "");
+
+  const custom = {};
+  trackSessionIdlePrompt(custom, "PS C:\\Users\\alice>\r\nexit\r\n❯ ");
+  assert.equal(getVisibleIdlePrompt(custom), "");
+
+  const fullscreen = {};
+  trackSessionIdlePrompt(fullscreen, "PS C:\\Users\\alice> \x1b[?1049h\x1b[Hvim");
+  assert.equal(getVisibleIdlePrompt(fullscreen), "");
+
+  assert.equal(getVisibleIdlePrompt({ _promptTrackTail: "" }), "");
+  assert.equal(getVisibleIdlePrompt(null), "");
 });
 
 test("getFreshIdlePrompt and trackSessionIdlePrompt round-trip through a real PTY-like flow", () => {

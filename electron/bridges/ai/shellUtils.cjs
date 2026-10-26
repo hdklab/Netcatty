@@ -69,6 +69,16 @@ const CMD_PROMPT_PATTERN = /^[A-Za-z]:(?:\\[^<>"|]*)?>$/;
 //     the final `]` before `$`/`#` is the delimiter.
 const POSIX_PROMPT_PATTERN = /^(?:[^\s@]+@[^\s:]+(?::[^\n\r]*)?|\[[^\s@\]]+@[^\s\]:]+(?:\s+[^\n\r]+)?\])[#$]$/;
 
+// Host line of a two-line bash PS1 (`\u@\h: \w` then a following `$` or `#`).
+// Same user@host[:path] class as POSIX_PROMPT_PATTERN's first alternative,
+// without a prompt marker on this line. A bare `$`/`#` alone is not a prompt.
+const POSIX_PROMPT_HOST_LINE_PATTERN = /^[^\s@]+@[^\s:]+(?::[^\n\r]*)?$/;
+
+// Alpine's default ash PS1 omits the username: `\h:\w\$ ` -> `localhost:~# `.
+// Require a hostname and a home/absolute path, excluding prompt delimiters
+// within the path so partially entered commands do not count as idle prompts.
+const ALPINE_PROMPT_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]*:(?:~(?:\/[^#$\n\r]*)?|\/[^#$\n\r]*)[#$]$/;
+
 function isDefaultPowerShellPromptLine(line) {
   return POWERSHELL_PROMPT_PATTERN.test(String(line || ""));
 }
@@ -78,7 +88,15 @@ function isDefaultCmdPromptLine(line) {
 }
 
 function isDefaultPosixPromptLine(line) {
-  return POSIX_PROMPT_PATTERN.test(String(line || "").replace(/\s+$/, ""));
+  const normalized = String(line || "").replace(/\s+$/, "");
+  // Optional virtualenv / conda / BT-panel style env name prefix: "(name) "
+  // before the shell prompt. Recognition only; callers still return the full
+  // prompt line so suffix matching sees the visible prefix (#3947).
+  const withoutEnvPrefix = normalized.replace(/^\([^()\n\r]+\)\s+/, "");
+  return (
+    POSIX_PROMPT_PATTERN.test(withoutEnvPrefix) ||
+    ALPINE_PROMPT_PATTERN.test(withoutEnvPrefix)
+  );
 }
 
 function extractTrailingIdlePrompt(output) {
@@ -89,7 +107,8 @@ function extractTrailingIdlePrompt(output) {
   const normalized = stripAnsi(output).replace(/\r/g, "\n");
   if (!normalized || normalized.endsWith("\n")) return "";
 
-  const lastLine = normalized.split("\n").pop() || "";
+  const lines = normalized.split("\n");
+  const lastLine = lines.pop() || "";
   const rightTrimmed = lastLine.replace(/\s+$/, "");
   if (!rightTrimmed) return "";
 
@@ -103,6 +122,24 @@ function extractTrailingIdlePrompt(output) {
 
   if (isDefaultCmdPromptLine(rightTrimmed)) {
     return lastLine;
+  }
+
+  // Two-line PS1 (`export PS1="\u@\h: \w\n$ "`). Bash emits the newline as
+  // CR and the PTY's ONLCR adds another, so the bytes are `\r\r\n`. The
+  // CR-to-LF normalize above turns that into blank lines between the host
+  // line and `$`/`#`. Keep those blanks in the cache: getFreshIdlePrompt
+  // uses the same normalize, and hasExpectedPromptSuffix compares this
+  // CR-as-LF form against live PTY bytes. A lone `$` must not satisfy endsWith.
+  if (rightTrimmed === "$" || rightTrimmed === "#") {
+    let hostIndex = lines.length - 1;
+    while (hostIndex >= 0 && lines[hostIndex].replace(/\s+$/, "") === "") {
+      hostIndex -= 1;
+    }
+    const previousLine = hostIndex >= 0 ? lines[hostIndex] : "";
+    const previousRightTrimmed = previousLine.replace(/\s+$/, "");
+    if (POSIX_PROMPT_HOST_LINE_PATTERN.test(previousRightTrimmed)) {
+      return `${lines.slice(hostIndex).join("\n")}\n${lastLine}`;
+    }
   }
 
   return "";
@@ -137,7 +174,20 @@ function looksLikeIdleAutoLogout(outputTail) {
 function trackSessionIdlePrompt(session, chunk) {
   if (!session || typeof chunk !== "string" || !chunk) return "";
 
-  const nextTail = `${session._promptTrackTail || ""}${chunk}`.slice(-MAX_PROMPT_TRACK_TAIL);
+  const previousTail = session._promptTrackTail || "";
+  const combined = `${previousTail}${chunk}`;
+  const overflow = combined.length - MAX_PROMPT_TRACK_TAIL;
+  if (overflow > 0) {
+    // The kept tail no longer starts where the previous tail started. Replay
+    // the dropped prefix so an alternate-screen enter or leave that scrolls
+    // off is still the mode at the first kept byte.
+    const { alternateScreenActiveAfter } = require("../terminalLogSanitizer.cjs");
+    session._promptTrackAltScreenAtTailStart = alternateScreenActiveAfter(
+      combined.slice(0, overflow),
+      session._promptTrackAltScreenAtTailStart === true,
+    );
+  }
+  const nextTail = overflow > 0 ? combined.slice(overflow) : combined;
   session._promptTrackTail = nextTail;
 
   const prompt = extractTrailingIdlePrompt(nextTail);
@@ -152,8 +202,10 @@ function trackSessionIdlePrompt(session, chunk) {
 // Return `session.lastIdlePrompt` only if the PTY's recent rolling tail
 // still ends with it. The cached prompt is updated only when
 // extractTrailingIdlePrompt recognizes a known shape (PowerShell, cmd.exe,
-// `user@host[:path][#$]`, or RHEL `[user@host path][#$]`); a remote shell switch into another shell, an
-// oh-my-posh / starship / custom PS1, or any unrecognized prompt would
+// `user@host[:path][#$]`, two-line `user@host[:path]` + `$`/`#`,
+// RHEL `[user@host path][#$]`, or Alpine `host:path[#$]`);
+// a remote shell switch into another shell, an oh-my-posh / starship / custom
+// PS1, or any unrecognized prompt would
 // otherwise leave a stale value behind, which `resolveEffectiveShellKind`
 // would then keep using to coerce future commands into a PowerShell
 // wrapper. By re-checking the live tail we self-correct: if the visible
@@ -173,6 +225,34 @@ function getFreshIdlePrompt(session) {
   if (!normalizedCached) return "";
 
   return normalizedTail.endsWith(normalizedCached) ? cached : "";
+}
+
+// Readiness companion to getFreshIdlePrompt. PSReadLine echoes keys (including
+// the pending-input clear prefix) and then erases them with cursor-column +
+// ED/EL without appending a fresh copy of the prompt. stripAnsi removes the
+// erase, so the raw tail no longer ends with the cached prompt while the
+// screen is still an idle default prompt (#3927). Collapse those cursor and
+// erase operations, then accept only the line the cursor is actually on.
+function getVisibleIdlePrompt(session) {
+  const tail = session?._promptTrackTail;
+  if (typeof tail !== "string" || !tail) return "";
+
+  const { terminalCursorLine } = require("../terminalLogSanitizer.cjs");
+  const cursorLine = terminalCursorLine(tail, {
+    alternateScreenActive: session._promptTrackAltScreenAtTailStart === true,
+  });
+  const rightTrimmed = cursorLine.replace(/\s+$/, "");
+  if (!rightTrimmed) return "";
+  if (
+    !isDefaultPowerShellPromptLine(rightTrimmed)
+    && !isDefaultPosixPromptLine(rightTrimmed)
+    && !isDefaultCmdPromptLine(rightTrimmed)
+  ) {
+    return "";
+  }
+  // Keep one trailing space when the visible prompt has one. Erase-to-end
+  // padding must not become part of the expected prompt.
+  return /\s$/.test(cursorLine) ? `${rightTrimmed} ` : rightTrimmed;
 }
 
 // ── URL helpers ──
@@ -1115,6 +1195,7 @@ module.exports = {
   formatSyntheticEcho,
   extractTrailingIdlePrompt,
   getFreshIdlePrompt,
+  getVisibleIdlePrompt,
   isDefaultPowerShellPromptLine,
   isDefaultCmdPromptLine,
   isDefaultPosixPromptLine,

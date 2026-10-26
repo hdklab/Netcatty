@@ -36,7 +36,9 @@ test('X11 forwarding display follows the effective host after group defaults', (
   assert.match(source, /!effectiveConnectionHost\.moshEnabled/);
   assert.match(source, /!effectiveConnectionHost\.etEnabled/);
   assert.match(source, /const effectiveX11Forwarding = !!effectiveConnectionHost\.x11Forwarding/);
-  assert.match(source, /\{showX11Forwarding && \(/);
+  // The fork's host-creation flow hides SSH-only rows via `hideSshOnly`, so the
+  // X11 row is gated by both flags.
+  assert.match(source, /\{showX11Forwarding && (?:!hideSshOnly && )?\(/);
   assert.match(source, /enabled=\{effectiveX11Forwarding\}/);
   assert.doesNotMatch(source, /effectiveGroupDefaults\?\.x11Forwarding/);
 });
