@@ -699,7 +699,7 @@ export const esAiMessages: Messages = {
   'ai.voice.minLen': 'Longitud del primer segmento',
   'ai.voice.minLen.description': 'Longitud mínima en caracteres del primer segmento leído. Las frases en chino son cortas, así que un valor pequeño empieza antes (Hermes usa 6).',
   'ai.voice.python': 'Entorno de Python',
-  'ai.voice.python.description': 'Un intérprete que tenga instalados faster-whisper y edge-tts. Vacío para detección automática (se prefiere el entorno de Hermes).',
+  'ai.voice.python.description': 'Un intérprete con faster-whisper y edge-tts instalados. Vacío para detección automática; si no hay ninguno, se instala uno en el directorio de datos de Netcatty.',
   'ai.voice.python.placeholder': 'Detección automática',
   'ai.voice.python.hint': 'Aún no comprobado.',
   'ai.voice.check': 'Comprobar',
@@ -717,6 +717,10 @@ export const esAiMessages: Messages = {
   'ai.voice.errorNoDevice': 'No se encontró ningún micrófono.',
   'ai.voice.errorEmpty': 'No se reconoció voz.',
   'ai.voice.errorTranscribe': 'La transcripción falló.',
+  'ai.voice.preparing': 'Preparando el motor de voz…',
+  'ai.voice.install': 'Instalar motor de voz',
+  'ai.voice.installing': 'Instalando…',
+  'ai.voice.install.failed': 'La instalación falló.',
 
   // AI Safety Settings
   'ai.safety.title': 'Seguridad',

@@ -532,6 +532,7 @@ function createBridgeRegistrar(context) {
     tempDirBridge.registerHandlers(ipcMain, shell, electronModule);
     getVoiceBridge().registerHandlers(ipcMain, {
       getTempDir: () => tempDirBridge.getTempDir(),
+      getDataDir: () => electronModule.app.getPath("userData"),
     });
     sessionLogsBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     compressUploadBridge.registerHandlers(ipcMain, { terminalWorkerManager });

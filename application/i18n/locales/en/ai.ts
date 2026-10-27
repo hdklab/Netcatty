@@ -699,7 +699,7 @@ export const enAiMessages: Messages = {
   'ai.voice.minLen': 'First segment length',
   'ai.voice.minLen.description': 'Shortest first spoken segment in characters. Chinese sentences are short, so a small value starts speech sooner (6 matches the Hermes setup).',
   'ai.voice.python': 'Python environment',
-  'ai.voice.python.description': 'One interpreter that has both faster-whisper and edge-tts installed. Leave empty to auto-detect (the Hermes environment is preferred).',
+  'ai.voice.python.description': 'One interpreter that has both faster-whisper and edge-tts installed. Leave empty to auto-detect; if nothing has them, one is installed into the Netcatty data directory.',
   'ai.voice.python.placeholder': 'Auto-detect',
   'ai.voice.python.hint': 'Not checked yet.',
   'ai.voice.check': 'Check',
@@ -717,6 +717,10 @@ export const enAiMessages: Messages = {
   'ai.voice.errorNoDevice': 'No microphone was found.',
   'ai.voice.errorEmpty': 'No speech was recognised.',
   'ai.voice.errorTranscribe': 'Transcription failed.',
+  'ai.voice.preparing': 'Preparing the voice engine…',
+  'ai.voice.install': 'Install voice engine',
+  'ai.voice.installing': 'Installing…',
+  'ai.voice.install.failed': 'Install failed.',
 
   // AI Safety Settings
   'ai.safety.title': 'Safety',

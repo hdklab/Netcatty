@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { CheckCircle2, Download, Loader2, XCircle } from "lucide-react";
 import { useI18n } from "../../../../application/i18n/I18nProvider";
 import { useAIVoiceSettings } from "../../../../application/state/useAIVoiceSettings";
 import {
@@ -7,7 +7,12 @@ import {
   VOICE_TTS_VOICE_OPTIONS,
   type AIVoiceSttModel,
 } from "../../../../infrastructure/ai/voiceSettings";
-import { probeVoiceEngine, type VoiceProbeReport } from "../../../../infrastructure/services/voiceService";
+import {
+  installVoiceEngine,
+  onVoiceInstallProgress,
+  probeVoiceEngine,
+  type VoiceProbeReport,
+} from "../../../../infrastructure/services/voiceService";
 import { Select, SettingCard, SettingRow, SettingsSection, Toggle } from "../../settings-ui";
 
 const INPUT_CLASS =
@@ -18,6 +23,12 @@ type ProbeState =
   | { status: "checking" }
   | { status: "done"; report: VoiceProbeReport };
 
+type InstallState =
+  | { status: "idle" }
+  | { status: "installing"; message?: string }
+  | { status: "done" }
+  | { status: "failed"; error?: string };
+
 /**
  * Settings → AI → Voice: the in-app agent's speech input and spoken replies.
  * The knobs mirror the Hermes voice stack (local faster-whisper STT, Edge TTS
@@ -27,6 +38,7 @@ export const VoiceSettings: React.FC = () => {
   const { t } = useI18n();
   const { voiceConfig, updateVoiceConfig } = useAIVoiceSettings();
   const [probe, setProbe] = useState<ProbeState>({ status: "idle" });
+  const [install, setInstall] = useState<InstallState>({ status: "idle" });
   const probeSeqRef = useRef(0);
 
   const runProbe = useCallback(async (pythonPath: string) => {
@@ -36,6 +48,26 @@ export const VoiceSettings: React.FC = () => {
     if (probeSeqRef.current !== seq) return;
     setProbe({ status: "done", report });
   }, []);
+
+  /** One-click engine install for machines that have no Python with faster-whisper. */
+  const runInstall = useCallback(async () => {
+    setInstall({ status: "installing" });
+    const result = await installVoiceEngine();
+    if (!result.ok) {
+      setInstall({ status: "failed", error: result.error });
+      return;
+    }
+    setInstall({ status: "done" });
+    // Pin the managed interpreter so later clips skip discovery entirely.
+    if (result.python) updateVoiceConfig({ stt: { pythonPath: result.python } });
+    void runProbe(result.python || "");
+  }, [runProbe, updateVoiceConfig]);
+
+  useEffect(() => onVoiceInstallProgress((progress) => {
+    setInstall((current) => (
+      current.status === "installing" ? { status: "installing", message: progress.message } : current
+    ));
+  }), []);
 
   useEffect(() => {
     void runProbe(voiceConfig.stt.pythonPath);
@@ -167,6 +199,22 @@ export const VoiceSettings: React.FC = () => {
               >
                 {probe.status === "checking" ? t("ai.voice.checking") : t("ai.voice.check")}
               </button>
+              {probe.status === "done" && !probe.report.ok && (
+                <button
+                  type="button"
+                  onClick={() => void runInstall()}
+                  disabled={install.status === "installing"}
+                  data-voice-install={install.status}
+                  className="flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-sm text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+                >
+                  {install.status === "installing" ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Download size={12} />
+                  )}
+                  {install.status === "installing" ? t("ai.voice.installing") : t("ai.voice.install")}
+                </button>
+              )}
             </div>
             <div
               data-voice-probe-status={probe.status === "done" ? (probe.report.ok ? "ok" : "missing") : probe.status}
@@ -190,6 +238,16 @@ export const VoiceSettings: React.FC = () => {
                   : t("ai.voice.python.hint")}
               </span>
             </div>
+            {install.status === "installing" && (
+              <div className="max-w-[360px] truncate text-xs text-muted-foreground" data-voice-install-progress>
+                {install.message || t("ai.voice.installing")}
+              </div>
+            )}
+            {install.status === "failed" && (
+              <div className="max-w-[360px] break-words text-xs text-destructive">
+                {t("ai.voice.install.failed")} {install.error}
+              </div>
+            )}
           </div>
         </SettingRow>
       </SettingCard>

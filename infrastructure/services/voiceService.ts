@@ -117,3 +117,39 @@ export async function cancelVoiceRequest(requestId: string): Promise<boolean> {
     return false;
   }
 }
+
+export interface VoiceInstallProgress {
+  stage: 'venv' | 'install' | 'verify';
+  message?: string;
+}
+
+export interface VoiceInstallResult {
+  ok: boolean;
+  python: string | null;
+  stt: string | null;
+  tts: string | null;
+  error?: string;
+}
+
+/**
+ * Install the managed voice engine (a Netcatty-owned venv with faster-whisper and
+ * edge-tts). Safe to call twice: the main process joins the running install.
+ */
+export async function installVoiceEngine(): Promise<VoiceInstallResult> {
+  const bridge = netcattyBridge.get();
+  if (!bridge?.voiceInstall) {
+    return { ok: false, python: null, stt: null, tts: null, error: 'Voice bridge unavailable' };
+  }
+  try {
+    return await bridge.voiceInstall({});
+  } catch (err) {
+    return { ok: false, python: null, stt: null, tts: null, error: String((err as Error)?.message || err) };
+  }
+}
+
+/** Subscribe to install progress so a multi-minute first run is not a dead spinner. */
+export function onVoiceInstallProgress(callback: (progress: VoiceInstallProgress) => void): () => void {
+  const bridge = netcattyBridge.get();
+  if (!bridge?.onVoiceInstallProgress) return () => {};
+  return bridge.onVoiceInstallProgress(callback);
+}

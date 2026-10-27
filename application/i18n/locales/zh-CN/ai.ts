@@ -699,7 +699,7 @@ export const zhCNAiMessages: Messages = {
   'ai.voice.minLen': '首段最小长度',
   'ai.voice.minLen.description': '第一段被朗读前需要达到的最少字数。中文句子短，数值小一些开口更快（Hermes 用 6）。',
   'ai.voice.python': 'Python 环境',
-  'ai.voice.python.description': '一个同时装了 faster-whisper 和 edge-tts 的解释器。留空则自动探测（优先使用 Hermes 的环境）。',
+  'ai.voice.python.description': '一个同时装了 faster-whisper 和 edge-tts 的解释器。留空则自动探测；哪里都没有时会自动安装一份到 Netcatty 的数据目录。',
   'ai.voice.python.placeholder': '自动探测',
   'ai.voice.python.hint': '尚未检测。',
   'ai.voice.check': '检测',
@@ -717,6 +717,10 @@ export const zhCNAiMessages: Messages = {
   'ai.voice.errorNoDevice': '没有找到麦克风。',
   'ai.voice.errorEmpty': '没有识别到语音。',
   'ai.voice.errorTranscribe': '转写失败。',
+  'ai.voice.preparing': '首次准备语音引擎…',
+  'ai.voice.install': '安装语音引擎',
+  'ai.voice.installing': '正在安装…',
+  'ai.voice.install.failed': '安装失败。',
 
   // AI Safety Settings
   'ai.safety.title': '安全',

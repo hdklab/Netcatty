@@ -9,9 +9,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AIVoiceSttConfig } from '../../infrastructure/ai/voiceSettings';
-import { cancelVoiceRequest, transcribeVoiceClip } from '../../infrastructure/services/voiceService';
+import {
+  cancelVoiceRequest,
+  onVoiceInstallProgress,
+  transcribeVoiceClip,
+} from '../../infrastructure/services/voiceService';
 
-export type AIVoiceInputStatus = 'idle' | 'requesting' | 'recording' | 'transcribing';
+export type AIVoiceInputStatus = 'idle' | 'requesting' | 'recording' | 'transcribing' | 'installing';
 
 export interface AIVoiceInputError {
   code: 'permission' | 'unsupported' | 'no-device' | 'empty' | 'transcribe';
@@ -209,8 +213,17 @@ export function useAIVoiceInput({ stt, enabled, onTranscript }: UseAIVoiceInputO
   const toggle = useCallback(() => {
     if (statusRef.current === 'recording') stop();
     else if (statusRef.current === 'idle') void start();
-    else if (statusRef.current === 'transcribing') cancel();
+    else if (statusRef.current === 'transcribing' || statusRef.current === 'installing') cancel();
   }, [cancel, start, stop]);
+
+  // The first clip on a machine without a voice engine installs one inside the
+  // same transcribe call; progress events turn the spinner into a named status.
+  useEffect(() => {
+    const unsubscribe = onVoiceInstallProgress(() => {
+      if (statusRef.current === 'transcribing') setStatus('installing');
+    });
+    return unsubscribe;
+  }, []);
 
   const clearError = useCallback(() => setError(null), []);
 

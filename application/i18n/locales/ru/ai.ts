@@ -638,7 +638,7 @@ export const ruAiMessages: Messages = {
   'ai.voice.minLen': 'Длина первого фрагмента',
   'ai.voice.minLen.description': 'Минимальная длина первого озвучиваемого фрагмента в символах. Китайские фразы короткие, поэтому небольшое значение начинает речь быстрее (в Hermes — 6).',
   'ai.voice.python': 'Окружение Python',
-  'ai.voice.python.description': 'Интерпретатор, в котором установлены и faster-whisper, и edge-tts. Пусто — автопоиск (сначала окружение Hermes).',
+  'ai.voice.python.description': 'Интерпретатор с установленными faster-whisper и edge-tts. Пусто — автопоиск; если нигде нет, движок ставится в каталог данных Netcatty.',
   'ai.voice.python.placeholder': 'Автопоиск',
   'ai.voice.python.hint': 'Ещё не проверено.',
   'ai.voice.check': 'Проверить',
@@ -656,6 +656,10 @@ export const ruAiMessages: Messages = {
   'ai.voice.errorNoDevice': 'Микрофон не найден.',
   'ai.voice.errorEmpty': 'Речь не распознана.',
   'ai.voice.errorTranscribe': 'Не удалось расшифровать.',
+  'ai.voice.preparing': 'Готовим движок распознавания…',
+  'ai.voice.install': 'Установить движок',
+  'ai.voice.installing': 'Установка…',
+  'ai.voice.install.failed': 'Установка не удалась.',
 
   // AI Safety Settings
   'ai.safety.title': 'Безопасность',

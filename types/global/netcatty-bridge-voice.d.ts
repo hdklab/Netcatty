@@ -33,6 +33,21 @@ declare global {
       error?: string;
     }>;
     voiceCancel?(requestId: string): Promise<boolean>;
+    voiceInstall?(options?: { requestId?: string }): Promise<VoiceInstallResult>;
+    onVoiceInstallProgress?(callback: (progress: VoiceInstallProgress) => void): () => void;
+  }
+
+  interface VoiceInstallProgress {
+    stage: 'venv' | 'install' | 'verify';
+    message?: string;
+  }
+
+  interface VoiceInstallResult {
+    ok: boolean;
+    python: string | null;
+    stt: string | null;
+    tts: string | null;
+    error?: string;
   }
 
   interface VoiceProbeCandidate {

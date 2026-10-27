@@ -1695,6 +1695,13 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:voice:synthesize", request ?? {}),
   voiceCancel: (requestId) =>
     ipcRenderer.invoke("netcatty:voice:cancel", { requestId }),
+  voiceInstall: (options) =>
+    ipcRenderer.invoke("netcatty:voice:install", options ?? {}),
+  onVoiceInstallProgress: (cb) => {
+    const listener = (_event, progress) => cb(progress);
+    ipcRenderer.on("netcatty:voice:install-progress", listener);
+    return () => ipcRenderer.removeListener("netcatty:voice:install-progress", listener);
+  },
 
   // Temp directory management
   getTempDirInfo: () =>

@@ -195,7 +195,7 @@ const ComposerSendUi = React.memo(function ComposerSendUi({
 export interface ChatInputVoiceControl {
   /** Mic button is offered at all (Settings → AI → Voice). */
   enabled: boolean;
-  status: 'idle' | 'requesting' | 'recording' | 'transcribing';
+  status: 'idle' | 'requesting' | 'recording' | 'transcribing' | 'installing';
   onToggle: () => void;
 }
 
@@ -1584,14 +1584,16 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     aria-label={
                       voiceInput.status === 'recording'
                         ? t('ai.voice.stopRecording')
-                        : voiceInput.status === 'transcribing'
-                          ? t('ai.voice.transcribing')
-                          : t('ai.voice.startRecording')
+                        : voiceInput.status === 'installing'
+                          ? t('ai.voice.preparing')
+                          : voiceInput.status === 'transcribing'
+                            ? t('ai.voice.transcribing')
+                            : t('ai.voice.startRecording')
                     }
                     aria-pressed={voiceInput.status === 'recording'}
                     data-voice-state={voiceInput.status}
                   >
-                    {voiceInput.status === 'transcribing' ? (
+                    {voiceInput.status === 'transcribing' || voiceInput.status === 'installing' ? (
                       <Loader2 size={13} className="animate-spin" />
                     ) : (
                       <Mic size={13} />
@@ -1601,7 +1603,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 <TooltipContent>
                   {voiceInput.status === 'recording'
                     ? t('ai.voice.stopRecording')
-                    : t('ai.voice.startRecording')}
+                    : voiceInput.status === 'installing'
+                      ? t('ai.voice.preparing')
+                      : t('ai.voice.startRecording')}
                 </TooltipContent>
               </Tooltip>
             )}
