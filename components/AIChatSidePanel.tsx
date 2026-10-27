@@ -4,6 +4,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useWindowControls } from '../application/state/useWindowControls';
+import { useAIVoiceSettings } from '../application/state/useAIVoiceSettings';
+import { useAIVoiceInput } from '../application/state/useAIVoiceInput';
+import { useAIReadAloud } from '../application/state/useAIReadAloud';
 import type {
   AIDraft,
   AIPanelView,
@@ -450,6 +453,59 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   const agentTodo = useAgentTodo(activeSessionId);
   const isStreaming = activeSessionId ? streamingSessionIds.has(activeSessionId) : false;
 
+  // ── Voice (Hermes parity: local whisper in, Edge TTS out) ──
+  const { voiceConfig, updateVoiceConfig } = useAIVoiceSettings();
+  const [voiceTranscript, setVoiceTranscript] = useState<{ id: string; text: string } | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const readAloudErrorRef = useRef<string | null>(null);
+  const handleVoiceTranscript = useCallback((transcript: string) => {
+    setVoiceError(null);
+    setVoiceTranscript({
+      id: `vt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      text: transcript,
+    });
+  }, []);
+  const voiceInput = useAIVoiceInput({
+    stt: voiceConfig.stt,
+    enabled: voiceConfig.inputEnabled,
+    onTranscript: handleVoiceTranscript,
+  });
+  const readAloud = useAIReadAloud({
+    voiceConfig,
+    onError: (message) => {
+      readAloudErrorRef.current = message;
+      setVoiceError(message);
+    },
+  });
+  const readAloudRef = useRef(readAloud);
+  readAloudRef.current = readAloud;
+
+  const { status: voiceInputStatus, toggle: toggleVoiceInput } = voiceInput;
+  const voiceInputControl = useMemo(() => ({
+    enabled: voiceConfig.inputEnabled,
+    status: voiceInputStatus,
+    onToggle: () => {
+      setVoiceError(null);
+      toggleVoiceInput();
+    },
+  }), [voiceConfig.inputEnabled, voiceInputStatus, toggleVoiceInput]);
+
+  const voiceErrorText = useMemo(() => {
+    if (voiceError) return voiceError;
+    const failure = voiceInput.error;
+    if (!failure) return null;
+    const keyByCode: Record<string, string> = {
+      permission: 'ai.voice.errorPermission',
+      unsupported: 'ai.voice.errorUnsupported',
+      'no-device': 'ai.voice.errorNoDevice',
+      empty: 'ai.voice.errorEmpty',
+      transcribe: 'ai.voice.errorTranscribe',
+    };
+    const label = t(keyByCode[failure.code] || 'ai.voice.errorTranscribe');
+    return failure.message ? `${label} ${failure.message}` : label;
+  }, [t, voiceError, voiceInput.error]);
+
+
   // Composer safety net: the Send/Stop button reads the shared streaming set,
   // which an external agent turn can leave behind when its completion
   // notification never lands (the message arrives, the composer stays on Stop).
@@ -891,6 +947,35 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   }, [agentMcpPrompt, t]);
 
   const messages = activeSession?.messages ?? [];
+
+  // Spoken replies (Hermes `voice.auto_tts`): speak once a turn finishes, and cut
+  // any speech as soon as a new turn starts (barge-in by typing/sending).
+  const wasStreamingRef = useRef(false);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  useEffect(() => {
+    const wasStreaming = wasStreamingRef.current;
+    wasStreamingRef.current = isStreaming;
+    if (isStreaming) {
+      if (!wasStreaming) readAloudRef.current.stop();
+      return;
+    }
+    // Only the visible panel speaks: the retained per-tab copy would otherwise
+    // read the same answer a second time.
+    if (!isVisible) return;
+    if (!wasStreaming || !voiceConfig.autoSpeak) return;
+    const lastAssistant = [...messagesRef.current]
+      .reverse()
+      .find((message) => message.role === 'assistant' && typeof message.content === 'string' && message.content.trim());
+    if (!lastAssistant) return;
+    readAloudRef.current.speak(lastAssistant.content, lastAssistant.id);
+  }, [isStreaming, isVisible, voiceConfig.autoSpeak]);
+
+  // Switching chats must never leave the previous answer playing.
+  useEffect(() => {
+    readAloudRef.current.stop();
+  }, [activeSessionId]);
+
   const selectedUserSkillSlugs = useMemo(
     () => currentDraft?.selectedUserSkillSlugs ?? [],
     [currentDraft],
@@ -2172,6 +2257,19 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         onForkFromMessage={handleForkFromMessage}
         messages={messages}
         isStreaming={isStreaming}
+        voiceInput={voiceInputControl}
+        voiceTranscript={voiceTranscript ?? undefined}
+        readAloud={{
+          speaking: readAloud.speaking,
+          enabled: voiceConfig.autoSpeak,
+          onStop: readAloud.stop,
+          onToggleEnabled: () => updateVoiceConfig({ autoSpeak: !voiceConfig.autoSpeak }),
+        }}
+        voiceError={voiceErrorText}
+        onDismissVoiceError={() => {
+          setVoiceError(null);
+          voiceInput.clearError();
+        }}
         activeCompaction={
           activeCompaction?.sessionId === activeSessionId ? activeCompaction : null
         }

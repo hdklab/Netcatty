@@ -1686,6 +1686,16 @@ function createPreloadApi(ctx) {
   deleteTempFile: (filePath) =>
     ipcRenderer.invoke("netcatty:deleteTempFile", { filePath }),
   
+  // Voice (local STT via faster-whisper, TTS via edge-tts)
+  voiceProbe: (options) =>
+    ipcRenderer.invoke("netcatty:voice:probe", options ?? {}),
+  voiceTranscribe: (request) =>
+    ipcRenderer.invoke("netcatty:voice:transcribe", request ?? {}),
+  voiceSynthesize: (request) =>
+    ipcRenderer.invoke("netcatty:voice:synthesize", request ?? {}),
+  voiceCancel: (requestId) =>
+    ipcRenderer.invoke("netcatty:voice:cancel", { requestId }),
+
   // Temp directory management
   getTempDirInfo: () =>
     ipcRenderer.invoke("netcatty:tempdir:getInfo"),

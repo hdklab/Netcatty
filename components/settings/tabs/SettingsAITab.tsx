@@ -56,6 +56,7 @@ import { ToolAccessGuidance } from "./ai/ToolAccessGuidance";
 import { PermissionGrantsSettings } from "./ai/PermissionGrantsSettings";
 import { useAIPermissionGrantsState } from "../../../application/state/useAIPermissionGrantsState";
 import { WebSearchSettings } from "./ai/WebSearchSettings";
+import { VoiceSettings } from "./ai/VoiceSettings";
 import { QuickMessagesSettings } from "./ai/QuickMessagesSettings";
 import type { AIQuickMessage } from "../../../infrastructure/ai/quickMessages";
 import { encryptField } from "../../../infrastructure/persistence/secureFieldAdapter";
@@ -99,7 +100,7 @@ function scheduleAfterFirstPaint(callback: () => void, delayMs = 0): () => void 
   };
 }
 
-type AISettingsSubTab = "providers" | "agents" | "tools" | "search" | "safety";
+type AISettingsSubTab = "providers" | "agents" | "tools" | "search" | "voice" | "safety";
 
 /** Per-agent path inputs/outputs, keyed by managed agent. */
 type AgentPathControls = {
@@ -999,6 +1000,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
           <TabsTrigger value="agents">{t('ai.agents')}</TabsTrigger>
           <TabsTrigger value="tools">{t('ai.toolAccess.title')}</TabsTrigger>
           <TabsTrigger value="search">{t("ai.webSearch.title")}</TabsTrigger>
+          <TabsTrigger value="voice">{t("ai.voice.title")}</TabsTrigger>
           <TabsTrigger value="safety">{t('ai.safety.title')}</TabsTrigger>
         </TabsList>
 
@@ -1417,6 +1419,10 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             webSearchConfig={webSearchConfig}
             setWebSearchConfig={setWebSearchConfig}
           />
+        </TabsContent>
+
+        <TabsContent value="voice" className="m-0 space-y-6">
+          <VoiceSettings />
         </TabsContent>
 
         <TabsContent value="safety" className="m-0 space-y-6">

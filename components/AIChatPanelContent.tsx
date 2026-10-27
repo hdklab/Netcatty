@@ -1,5 +1,5 @@
 import React, { type Dispatch, type SetStateAction } from 'react';
-import { History, Plus, Undo2 } from 'lucide-react';
+import { History, Plus, Undo2, Volume2, VolumeX } from 'lucide-react';
 import type { AIPermissionMode, AISession, ChatMessage, DiscoveredAgent, ExternalAgentConfig, AgentModelPreset, ProviderConfig, UploadedFile } from '../infrastructure/ai/types';
 import type { Host, VaultNote } from '../types';
 import type { UserSkillOption } from './ai/userSkillsState';
@@ -7,7 +7,7 @@ import type { AIQuickMessage } from '../infrastructure/ai/quickMessages';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import AgentSelector from './ai/AgentSelector';
-import ChatInput from './ai/ChatInput';
+import ChatInput, { type ChatInputVoiceControl } from './ai/ChatInput';
 import ChatMessageList from './ai/ChatMessageList';
 import ConversationExport from './ai/ConversationExport';
 import { SessionHistoryDrawer, formatRelativeTime } from './AIChatSessionHistoryDrawer';
@@ -114,6 +114,20 @@ interface AIChatPanelContentProps {
   sending?: boolean;
   /** Optional slot rendered directly above the composer (agent todo panel). */
   todoPanel?: React.ReactNode;
+  /** Mic button control for the composer (local whisper transcription). */
+  voiceInput?: ChatInputVoiceControl;
+  /** One-shot speech transcript to append to the composer. */
+  voiceTranscript?: { id: string; text: string };
+  /** Spoken replies: whether the current answer is being read and the read-aloud switch. */
+  readAloud?: {
+    speaking: boolean;
+    enabled: boolean;
+    onStop: () => void;
+    onToggleEnabled: () => void;
+  };
+  /** Voice input / synthesis failure, shown as a dismissible row above the composer. */
+  voiceError?: string | null;
+  onDismissVoiceError?: () => void;
 }
 
 export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
@@ -191,6 +205,11 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   parked = false,
   sending = false,
   todoPanel,
+  voiceInput,
+  voiceTranscript,
+  readAloud,
+  voiceError,
+  onDismissVoiceError,
 }) => {
   const mentionHosts = React.useMemo(
     () => terminalSessions.map((session) => ({
@@ -249,6 +268,37 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
               onManageAgents={handleOpenSettings}
             />
             <div className="flex items-center gap-0.5">
+              {readAloud && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={
+                        readAloud.speaking
+                          ? 'h-6 w-6 rounded-md text-primary/82 hover:bg-primary/[0.10] hover:text-primary'
+                          : 'h-6 w-6 rounded-md text-muted-foreground/62 hover:bg-white/[0.05] hover:text-foreground'
+                      }
+                      aria-label={
+                        readAloud.speaking
+                          ? t('ai.voice.stopSpeaking')
+                          : t('ai.voice.readAloud')
+                      }
+                      aria-pressed={readAloud.enabled}
+                      data-read-aloud={readAloud.speaking ? 'speaking' : readAloud.enabled ? 'on' : 'off'}
+                      onClick={() => {
+                        if (readAloud.speaking) readAloud.onStop();
+                        else readAloud.onToggleEnabled();
+                      }}
+                    >
+                      {readAloud.enabled || readAloud.speaking ? <Volume2 size={12} /> : <VolumeX size={12} />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {readAloud.speaking ? t('ai.voice.stopSpeaking') : t('ai.voice.readAloud')}
+                  </TooltipContent>
+                </Tooltip>
+              )}
               {handleUndoLastTurn && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -393,6 +443,25 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                     {t('ai.chat.loadingModels')}
                   </div>
                 ) : null}
+                {voiceError && (
+                  <div
+                    role="status"
+                    data-voice-error
+                    className="mx-3 mb-1.5 flex items-start gap-2 rounded-md border border-destructive/25 bg-destructive/10 px-2.5 py-1.5 text-[11px] leading-4 text-destructive"
+                  >
+                    <span className="min-w-0 flex-1 break-words">{voiceError}</span>
+                    {onDismissVoiceError && (
+                      <button
+                        type="button"
+                        onClick={onDismissVoiceError}
+                        className="shrink-0 rounded px-1 text-[11px] text-destructive/80 transition-colors hover:bg-destructive/10 hover:text-destructive cursor-pointer"
+                        aria-label={t('ai.voice.dismissError')}
+                      >
+                        {t('ai.voice.dismissError')}
+                      </button>
+                    )}
+                  </div>
+                )}
                 {todoPanel}
                 <ChatInput
                   parked={parked}
@@ -438,6 +507,8 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   permissionMode={globalPermissionMode}
                   onPermissionModeChange={setGlobalPermissionMode}
                   contextUsage={contextUsage}
+                  voiceInput={voiceInput}
+                  voiceTranscript={voiceTranscript}
                 />
               </div>
             </React.Profiler>

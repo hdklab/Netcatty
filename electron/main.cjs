@@ -177,6 +177,7 @@ const getOnedriveAuthBridge = createLazyModule("./bridges/onedriveAuthBridge.cjs
 const getCloudSyncBridge = createLazyModule("./bridges/cloudSyncBridge.cjs");
 const getFileWatcherBridge = createLazyModule("./bridges/fileWatcherBridge.cjs");
 const getTempDirBridge = createLazyModule("./bridges/tempDirBridge.cjs");
+const getVoiceBridge = createLazyModule("./bridges/voiceBridge.cjs");
 const getSessionLogsBridge = createLazyModule("./bridges/sessionLogsBridge.cjs");
 const getCompressUploadBridge = createLazyModule("./bridges/compressUploadBridge.cjs");
 const getGlobalShortcutBridge = createLazyModule("./bridges/globalShortcutBridge.cjs");
@@ -575,6 +576,7 @@ const registerBridges = createBridgeRegistrar({
   getCloudSyncBridge,
   getFileWatcherBridge,
   getTempDirBridge,
+  getVoiceBridge,
   getSessionLogsBridge,
   getCompressUploadBridge,
   getGlobalShortcutBridge,
@@ -1456,10 +1458,12 @@ if (!gotLock) {
         //   - local-fonts: terminal font picker enumeration (this PR)
         //   - clipboard-read / clipboard-sanitized-write: terminal & SFTP
         //     copy-paste flows (navigator.clipboard.{read,write}Text)
+        //   - media: microphone capture for the AI panel's voice input
         const APP_ALLOWED_PERMISSIONS = new Set([
           "local-fonts",
           "clipboard-read",
           "clipboard-sanitized-write",
+          "media",
         ]);
 
         defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {

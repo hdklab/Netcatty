@@ -6,7 +6,7 @@
  * and a bottom toolbar with muted controls + subtle send button.
  */
 
-import { ArrowUp, AtSign, BookOpen, Check, ChevronDown, ChevronRight, Cpu, Eye, FileText, ImageIcon, Loader2, MessageSquare, Package, Play, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
+import { ArrowUp, AtSign, BookOpen, Check, ChevronDown, ChevronRight, Cpu, Eye, FileText, ImageIcon, Loader2, MessageSquare, Mic, Package, Play, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
 import {
   resolveModelSelectionWithThinking,
   resolveThinkingSelection,
@@ -192,6 +192,13 @@ const ComposerSendUi = React.memo(function ComposerSendUi({
   );
 });
 
+export interface ChatInputVoiceControl {
+  /** Mic button is offered at all (Settings → AI → Voice). */
+  enabled: boolean;
+  status: 'idle' | 'requesting' | 'recording' | 'transcribing';
+  onToggle: () => void;
+}
+
 interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
@@ -273,6 +280,13 @@ interface ChatInputProps {
   onThinkingLevelChange?: (level: string) => void;
   /** Hidden retained panels must not leave body-portaled menus open. */
   parked?: boolean;
+  /** Voice input control: mic recording + local transcription. */
+  voiceInput?: ChatInputVoiceControl;
+  /**
+   * Transcript to append to the composer. The `id` makes it a one-shot: the
+   * same payload never gets inserted twice across re-renders.
+   */
+  voiceTranscript?: { id: string; text: string };
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -320,6 +334,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
   thinkingLevel,
   onThinkingLevelChange,
   parked = false,
+  voiceInput,
+  voiceTranscript,
 }) => {
   const { t } = useI18n();
   const hasTerminalSelectionAttachment = files.some((file) => file.terminalSelection || file.vaultNoteId);
@@ -537,6 +553,19 @@ const ChatInput: React.FC<ChatInputProps> = ({
     syncHasComposerText(next);
     onChange(next);
   }, [onChange, syncHasComposerText]);
+
+  // Append a fresh speech transcript to whatever the composer already holds.
+  // Goes through commitComposerText so the DOM textarea, the refs and the
+  // parent draft all move together (the draft alone does not repaint it).
+  const appliedTranscriptIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!voiceTranscript?.text) return;
+    if (appliedTranscriptIdRef.current === voiceTranscript.id) return;
+    appliedTranscriptIdRef.current = voiceTranscript.id;
+    const current = readComposerText();
+    const separator = current && !/\s$/.test(current) ? ' ' : '';
+    commitComposerText(`${current}${separator}${voiceTranscript.text}`);
+  }, [commitComposerText, readComposerText, voiceTranscript]);
 
   const parkedRef = useRef(parked);
   useEffect(() => {
@@ -1540,6 +1569,42 @@ const ChatInput: React.FC<ChatInputProps> = ({
               </TooltipTrigger>
               <TooltipContent>{t('ai.chat.attach')}</TooltipContent>
             </Tooltip>
+            {voiceInput?.enabled && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={composerDisabled || voiceInput.status === 'requesting'}
+                    onClick={voiceInput.onToggle}
+                    className={`${iconButtonClassName}${
+                      voiceInput.status === 'recording'
+                        ? ' bg-destructive/15 text-destructive hover:bg-destructive/20 hover:text-destructive'
+                        : ''
+                    }`}
+                    aria-label={
+                      voiceInput.status === 'recording'
+                        ? t('ai.voice.stopRecording')
+                        : voiceInput.status === 'transcribing'
+                          ? t('ai.voice.transcribing')
+                          : t('ai.voice.startRecording')
+                    }
+                    aria-pressed={voiceInput.status === 'recording'}
+                    data-voice-state={voiceInput.status}
+                  >
+                    {voiceInput.status === 'transcribing' ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Mic size={13} />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {voiceInput.status === 'recording'
+                    ? t('ai.voice.stopRecording')
+                    : t('ai.voice.startRecording')}
+                </TooltipContent>
+              </Tooltip>
+            )}
             {showAttachMenu && menuPos && createPortal(
               <>
                 <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
@@ -1958,6 +2023,8 @@ function chatInputPropsAreEqual(prev: ChatInputProps, next: ChatInputProps): boo
     && prev.thinkingLevel === next.thinkingLevel
     && prev.onThinkingLevelChange === next.onThinkingLevelChange
     && prev.parked === next.parked
+    && prev.voiceInput === next.voiceInput
+    && prev.voiceTranscript === next.voiceTranscript
   );
 }
 

@@ -221,6 +221,9 @@ module.exports = {
     ],
     asarUnpack: [
         'node_modules/node-pty/**/*',
+        // Voice workers are Python scripts; Python cannot read them from an
+        // archive, so they ship unpacked (voiceBridge resolves app.asar.unpacked).
+        'electron/voice/**/*',
         // afterPack removes prebuilds for other platforms/architectures. Keep
         // these outside ASAR so removing them also removes their payload.
         'node_modules/@serialport/bindings-cpp/prebuilds/**/*',
