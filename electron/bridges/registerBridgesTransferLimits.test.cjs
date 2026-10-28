@@ -98,6 +98,7 @@ function createBridgeRegistrarForTest({
     getCloudSyncBridge: () => noopBridge,
     getFileWatcherBridge: () => noopBridge,
     getTempDirBridge: () => tempDirBridge,
+    getVoiceBridge: () => noopBridge,
     getSessionLogsBridge: () => noopBridge,
     getCompressUploadBridge: () => noopBridge,
     getGlobalShortcutBridge: () => noopBridge,

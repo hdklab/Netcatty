@@ -149,14 +149,11 @@ function createBridgeRegistrar(context) {
     } = require("../plugins/pluginBridge.cjs");
     let terminalWorkerManager = null;
     const { toElectronAccelerator } = require("../plugins/keybindings.cjs");
-    const { startDevelopmentPluginHost } = require("../plugins/hostBootstrap.cjs");
-    const pluginHostService = startDevelopmentPluginHost({
+    const { startPluginHost } = require("../plugins/hostBootstrap.cjs");
+    const pluginHostService = startPluginHost({
       env: process.env,
       createService: () => {
         const { createPluginHostService } = require("../plugins/hostService.cjs");
-        const {
-          createNativePermissionDecisionProvider,
-        } = require("../plugins/nativePermissionDecision.cjs");
         const {
           terminalInterceptorChoiceLabel,
           terminalInterceptorIdentifier,
@@ -166,10 +163,11 @@ function createBridgeRegistrar(context) {
           app,
           electron: electronModule,
           safeStorage,
-          requestPermissionDecision: createNativePermissionDecisionProvider({
-            dialog: electronModule.dialog,
-            window: win,
-          }),
+          getInteractionWindow: () => win,
+          getPermissionWindows: () => getWindowManager().getManagedAppWindows(),
+          getTerminalWorkerManager: () => terminalWorkerManager,
+          isAppLocked: () => getAppLockController?.()?.getRuntimeState?.()?.locked !== false,
+          subscribeAppLock: (listener) => getAppLockController?.()?.subscribe?.(listener),
           getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
           requestTerminalInterceptorSelection: async ({ direction, providers }) => {
             const messages = terminalInterceptorMessages(getWindowManager().getCurrentLanguage?.() ?? "en");
@@ -211,6 +209,12 @@ function createBridgeRegistrar(context) {
     });
     registerPluginBridge(ipcMain, {
       manager: pluginHostService?.manager,
+      interactionService: pluginHostService?.interactionService,
+      permissionEngine: pluginHostService?.permissionEngine,
+      permissionDecisionHost: pluginHostService?.permissionDecisionHost,
+      runtimeSupervisor: pluginHostService?.runtimeSupervisor,
+      database: pluginHostService?.database,
+      catalogService: pluginHostService?.catalogService,
       contributionService: pluginHostService?.contributionService,
       terminalProviderService: pluginHostService?.terminalProviderService,
       terminalDataPipelineService: pluginHostService?.terminalDataPipelineService,
@@ -228,13 +232,16 @@ function createBridgeRegistrar(context) {
         });
         return result.canceled ? null : result.filePaths[0] ?? null;
       },
+      resolveBrandIcon: (pluginId) => pluginHostService?.contributionIconService?.resolveBrand(pluginId),
       resolveContributionIcon: (payload) => pluginHostService?.contributionIconService?.resolve(payload),
+      themeService: pluginHostService?.themeService,
+      logService: pluginHostService?.logService,
       viewHost: pluginHostService?.viewHost,
       env: process.env,
       isTrustedSender: createTrustedPluginBridgeSender({ devServerUrl: effectiveDevServerUrl }),
       broadcast: (channel, payload) => {
         for (const window of electronModule.BrowserWindow.getAllWindows()) {
-          if (!window.isDestroyed()) window.webContents.send(channel, payload);
+          if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(channel, payload);
         }
       },
     });
@@ -545,6 +552,9 @@ function createBridgeRegistrar(context) {
     aiBridge.registerHandlers(ipcMain);
     httpNetworkProxyBridge.registerHandlers(ipcMain, electronModule);
     crashLogBridge.registerHandlers(ipcMain);
+    const aiSessionsBackupBridge = require("../bridges/aiSessionsBackupBridge.cjs");
+    aiSessionsBackupBridge.init({ electronModule });
+    aiSessionsBackupBridge.registerHandlers(ipcMain);
     vaultBackupBridge.registerHandlers(ipcMain, electronModule);
     appLockController?.registerHandlers?.(ipcMain);
   

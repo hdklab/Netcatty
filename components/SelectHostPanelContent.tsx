@@ -51,6 +51,7 @@ export interface SelectHostPanelContentProps {
   /** Preferred multi-select path for host/group toggles (selection resolves to host ids). */
   onSelectionChange?: (selectedHostIds: string[]) => void;
   onConfirm: () => void;
+  confirmDisabled?: boolean;
   onNewHost?: () => void;
   availableKeys?: SSHKey[];
   identities?: import('../domain/models').Identity[];
@@ -80,6 +81,7 @@ export const SelectHostPanelContent: React.FC<SelectHostPanelContentProps> = ({
   onSelect,
   onSelectionChange,
   onConfirm,
+  confirmDisabled = false,
   onNewHost,
   availableKeys = [],
   identities = [],
@@ -644,7 +646,7 @@ export const SelectHostPanelContent: React.FC<SelectHostPanelContentProps> = ({
         <div className="px-4 py-3 border-t border-border/60 shrink-0">
           <Button
             className="w-full"
-            disabled={selectedHostIds.length === 0}
+            disabled={confirmDisabled || selectedHostIds.length === 0}
             onClick={onConfirm}
           >
             {multiSelect

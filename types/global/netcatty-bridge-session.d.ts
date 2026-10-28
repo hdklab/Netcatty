@@ -329,6 +329,8 @@ declare global {
         diskUsed: number | null;      // Disk used in GB
         diskTotal: number | null;     // Total disk in GB
         disks: Array<{                // All mounted disks
+          diskReadSpeed?: number | null; // Mounted block-device I/O, bytes/sec
+          diskWriteSpeed?: number | null;
           capacityKey?: string;       // Filesystem or shared-pool identity
           mountPoint: string;
           used: number;               // Used in GB
@@ -430,6 +432,8 @@ declare global {
     requestTerminalSessionSnapshot?(sessionId: string, authorization: string): Promise<{
       success: boolean;
       snapshot?: string;
+      /** Captured input policy for the existing backend connection. */
+      perCharacterInput?: boolean;
       kittyKeyboardModeState?: NetcattyKittyKeyboardModeState;
       kittyKeyboardProtocolEnabled?: boolean;
       passwordPromptActive?: boolean;
@@ -450,6 +454,7 @@ declare global {
       passwordPromptActive?: boolean,
       cwd?: string | null,
       title?: string | null,
+      perCharacterInput?: boolean,
     ): void;
     /** Observe popup: push current state back to the home renderer before restore. */
     applyTerminalSessionSnapshot?(
@@ -460,6 +465,7 @@ declare global {
         contextViewportSnapshot: string;
         contextScrollbackSnapshot: string;
         alternateScreen: boolean;
+        perCharacterInput?: boolean;
         kittyKeyboardModeState?: NetcattyKittyKeyboardModeState;
         kittyKeyboardProtocolEnabled?: boolean;
         passwordPromptActive?: boolean;
@@ -482,6 +488,7 @@ declare global {
         contextViewportSnapshot: string;
         contextScrollbackSnapshot: string;
         alternateScreen: boolean;
+        perCharacterInput?: boolean;
         kittyKeyboardModeState?: NetcattyKittyKeyboardModeState;
         kittyKeyboardProtocolEnabled?: boolean;
         passwordPromptActive?: boolean;

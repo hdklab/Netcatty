@@ -20,10 +20,11 @@ import {
 } from './aiDraftState';
 import {
   pruneInactiveScopedSessions,
-  pruneInactiveScopedTransientState,
+  pruneInactiveScopedState,
 } from './aiScopeCleanup';
 import { emitAIStateChanged } from './aiStateEvents';
 import { getAgentRuntime } from '../../infrastructure/ai/harness/globalAgentRuntime';
+import { DebouncedBackupMirror, readLiveSessionsArray } from './aiSessionsBackup';
 
 /** Typed accessor for the Electron IPC bridge exposed on `window.netcatty`. */
 export interface AIBridge {
@@ -35,6 +36,11 @@ export interface AIBridge {
   aiMcpSetCommandBlocklist?: (blocklist: string[]) => Promise<unknown> | unknown;
   aiMcpSetCommandTimeout?: (timeout: number) => Promise<unknown> | unknown;
   aiMcpSetMaxIterations?: (maxIterations: number) => Promise<unknown> | unknown;
+  /** Durability mirror: write one timestamped backup generation to disk. */
+  aiSessionsBackupWrite?: (payload: { json: string }) => Promise<{ ok: boolean }>;
+  aiSessionsBackupReadLatest?: () => Promise<{ ok: boolean; json?: string }>;
+  aiSessionsBackupExport?: (payload: { json: string }) => Promise<{ success: boolean; filePath?: string }>;
+  aiSessionsBackupImport?: () => Promise<{ success: boolean; json?: string }>;
 }
 
 export function getAIBridge() {
@@ -88,10 +94,13 @@ function isScopeKeyActive(scopeKey: string, activeTargetIds: Set<string>) {
   return activeTargetIds.has(targetId);
 }
 
+/** Last live terminal/workspace target ids observed by orphan cleanup. */
+export let latestAIActiveTargetIdsSnapshot: Set<string> = new Set();
+
 export function cleanupOrphanedAISessions(activeTargetIds: Set<string>) {
+  latestAIActiveTargetIdsSnapshot = activeTargetIds;
   const currentSessions = latestAISessionsSnapshot
-    ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS)
-    ?? [];
+    ?? readLiveSessionsArray(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS));
 
   // Sessions shown by a still-live scope must be protected from cleanup
   // even when their own `scope.targetId` points at a closed terminal —
@@ -136,65 +145,62 @@ export function cleanupOrphanedAISessions(activeTargetIds: Set<string>) {
     cleanupSdkAgentSessions(nextSessionCleanup.orphanedSessionIds);
   }
 
-  if (nextSessionCleanup.sessions !== currentSessions) {
-    setLatestAISessionsSnapshot(nextSessionCleanup.sessions);
-    writeSessionsForStorage(nextSessionCleanup.sessions);
+  // Issue #4015 R2: a dropped chat is recoverable now, so mark it dangling
+  // instead of stripping its record or pointer. `/chats` lists dangling chats
+  // with a rebind affordance; the flag clears when the chat is rebound or its
+  // scope target becomes live again.
+  const orphanedIds = new Set(nextSessionCleanup.orphanedSessionIds);
+  let sessionsMarked = false;
+  const markedSessions = currentSessions.map((session) => {
+    if (orphanedIds.has(session.id)) {
+      if (session.scopeDangling) return session;
+      sessionsMarked = true;
+      return { ...session, scopeDangling: true };
+    }
+    if (
+      session.scopeDangling
+      && (!session.scope.targetId || activeTargetIds.has(session.scope.targetId))
+    ) {
+      sessionsMarked = true;
+      const { scopeDangling: _cleared, ...rest } = session;
+      return rest as AISession;
+    }
+    return session;
+  });
+
+  if (sessionsMarked) {
+    setLatestAISessionsSnapshot(markedSessions);
+    writeSessionsForStorage(markedSessions);
     emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
   }
 
-  const activeSessionIdMap = preCleanupActiveSessionMap;
-  let activeSessionMapChanged = false;
-  const nextActiveSessionIdMap = { ...activeSessionIdMap };
-
-  for (const scopeKey of Object.keys(activeSessionIdMap)) {
-    if (isScopeKeyActive(scopeKey, activeTargetIds)) continue;
-    delete nextActiveSessionIdMap[scopeKey];
-    activeSessionMapChanged = true;
-  }
-
-  if (activeSessionMapChanged) {
-    setLatestAIActiveSessionMapSnapshot(nextActiveSessionIdMap);
-    localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextActiveSessionIdMap);
-    emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
-  }
-
-  const currentActiveSessionIdMap = activeSessionMapChanged
-    ? nextActiveSessionIdMap
-    : activeSessionIdMap;
+  // Issue #4015 R2: keep active-pointer entries for scopes whose target
+  // closed. Clearing them used to make dangling chats invisible (rank 0) and
+  // unrecoverable from the UI; the pointer is rewritten on rebind instead.
   const currentDraftsByScope = latestAIDraftsByScopeSnapshot ?? {};
   const currentPanelViewByScope = latestAIPanelViewByScopeSnapshot ?? {};
-  const prunedScopedTransientState = pruneInactiveScopedTransientState(
-    currentActiveSessionIdMap,
+  const prunedScopedState = pruneInactiveScopedState(
     currentDraftsByScope,
     currentPanelViewByScope,
     activeTargetIds,
   );
 
-  if (prunedScopedTransientState.activeSessionIdMap !== currentActiveSessionIdMap) {
-    setLatestAIActiveSessionMapSnapshot(prunedScopedTransientState.activeSessionIdMap);
-    localStorageAdapter.write(
-      STORAGE_KEY_AI_ACTIVE_SESSION_MAP,
-      prunedScopedTransientState.activeSessionIdMap,
-    );
-    emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
-  }
-
-  if (prunedScopedTransientState.draftsByScope !== currentDraftsByScope) {
+  if (prunedScopedState.draftsByScope !== currentDraftsByScope) {
     for (const scopeKey of Object.keys(currentDraftsByScope)) {
-      if (scopeKey in prunedScopedTransientState.draftsByScope) continue;
+      if (scopeKey in prunedScopedState.draftsByScope) continue;
       bumpDraftMutationVersion(scopeKey);
       bumpDraftUploadGeneration(scopeKey);
     }
-    setLatestAIDraftsByScopeSnapshot(prunedScopedTransientState.draftsByScope);
+    setLatestAIDraftsByScopeSnapshot(prunedScopedState.draftsByScope);
     emitAIStateChanged(AI_STATE_CHANGED_DRAFTS_BY_SCOPE);
   }
 
-  if (prunedScopedTransientState.panelViewByScope !== currentPanelViewByScope) {
+  if (prunedScopedState.panelViewByScope !== currentPanelViewByScope) {
     for (const scopeKey of Object.keys(currentPanelViewByScope)) {
-      if (scopeKey in prunedScopedTransientState.panelViewByScope) continue;
+      if (scopeKey in prunedScopedState.panelViewByScope) continue;
       bumpDraftMutationVersion(scopeKey);
     }
-    setLatestAIPanelViewByScopeSnapshot(prunedScopedTransientState.panelViewByScope);
+    setLatestAIPanelViewByScopeSnapshot(prunedScopedState.panelViewByScope);
     emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
   }
 }
@@ -374,6 +380,10 @@ export function pruneSessionsForStorage(sessions: AISession[]): AISession[] {
   });
 }
 
+export function prepareRestoredSessions(sessions: AISession[], syncEnabled: boolean): AISession[] {
+  return syncEnabled ? sessions : pruneSessionsForStorage(sessions);
+}
+
 /**
  * Serialize sessions for localStorage under a byte budget, escalating pruning
  * as needed. Returns the JSON to persist plus the (possibly) further-pruned
@@ -511,11 +521,47 @@ export function serializeSessionsForStorage(
  * Returns true when the write succeeded; a false result means the payload
  * could not be persisted even after escalation (it stays memory-only).
  */
+
+// Durability mirror (issue #4015 follow-up): every successful store write
+// also schedules a debounced disk backup so a wiped/recreated profile does
+// not take the chat history with it. The exact JSON that landed in
+// localStorage is mirrored (already byte-budgeted), throttled to at most one
+// write per mutation batch.
+const backupMirror = new DebouncedBackupMirror((json) => {
+  try {
+    void getAIBridge()?.aiSessionsBackupWrite?.({ json })?.catch(() => {});
+  } catch {
+    // Backup failures must never break chat persistence.
+  }
+});
+
+export function flushBackupMirror() {
+  try {
+    backupMirror.flushNow();
+  } catch {
+    // Unload and persistence must remain fail-safe.
+  }
+}
+
+export function __resetBackupMirrorForTests() {
+  backupMirror.reset();
+}
+
+export function scheduleBackupMirror(json: string) {
+  try {
+    backupMirror.schedule(json);
+  } catch {
+    // ignore
+  }
+}
+
 export function writeSessionsForStorage(sessions: AISession[]): boolean {
   // Synced records are authoritative after restart: silently evicting a
   // session or turn here would turn local retention into cloud deletion.
   if (localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled) {
-    return localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, sessions);
+    const syncedOk = localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, sessions);
+    if (syncedOk) scheduleBackupMirror(JSON.stringify(sessions));
+    return syncedOk;
   }
   let previousLength = Number.POSITIVE_INFINITY;
   for (const configuredBudget of [MAX_SESSIONS_JSON_BYTES, ...RETRY_SESSIONS_JSON_BYTES]) {
@@ -530,7 +576,10 @@ export function writeSessionsForStorage(sessions: AISession[]): boolean {
     if (budget < 2) break;
     const candidate = serializeSessionsForStorage(sessions, budget);
     if (candidate.json.length >= previousLength) continue;
-    if (localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, candidate.json)) return true;
+    if (localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, candidate.json)) {
+      scheduleBackupMirror(candidate.json);
+      return true;
+    }
     previousLength = candidate.json.length;
   }
   // Last resort: attempt the smallest representation this serializer can
@@ -541,6 +590,7 @@ export function writeSessionsForStorage(sessions: AISession[]): boolean {
     minimalCandidate.json.length < previousLength
     && localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, minimalCandidate.json)
   ) {
+    scheduleBackupMirror(minimalCandidate.json);
     return true;
   }
   console.warn(
@@ -555,6 +605,28 @@ export let latestAIDraftsByScopeSnapshot: DraftsByScope | null = null;
 export let latestAIPanelViewByScopeSnapshot: PanelViewByScope | null = null;
 let latestAIDraftMutationVersionByScopeSnapshot: Record<string, number> = {};
 let latestAIDraftUploadGenerationByScopeSnapshot: Record<string, number> = {};
+
+
+/**
+ * Issue #4015 R2: rewrite the active-session map when rebinding a dangling
+ * chat. Drops every pointer that still names `sessionId` under a different
+ * scope key, then sets the new scope as active. Callers must persist and
+ * publish the returned map (do not rebuild from a stale snapshot).
+ */
+export function rebindActiveSessionMap(
+  activeSessionIdMap: Record<string, string | null>,
+  sessionId: string,
+  scopeKey: string,
+): Record<string, string | null> {
+  let next = activeSessionIdMap;
+  for (const [key, id] of Object.entries(activeSessionIdMap)) {
+    if (id !== sessionId || key === scopeKey) continue;
+    if (next === activeSessionIdMap) next = { ...activeSessionIdMap };
+    delete next[key];
+  }
+  if (next[scopeKey] === sessionId) return next;
+  return { ...next, [scopeKey]: sessionId };
+}
 
 export function setLatestAISessionsSnapshot(sessions: AISession[]) {
   latestAISessionsSnapshot = sessions;

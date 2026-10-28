@@ -27,6 +27,8 @@ import { openQuickConnectFromInput } from '../quickConnectBridge';
 import { AppHostTreeLayer } from './AppHostTreeLayer';
 import { AppHostEditorLayer } from './AppHostEditorLayer';
 import { AppPluginKeybindingHost } from './AppPluginKeybindingHost';
+import { PluginAIContextHost } from '../../components/plugins/PluginAIContextHost';
+import { PluginAgentHost } from '../../components/plugins/PluginAgentHost';
 import { shouldOpenHostEditOnWorkSurface } from './workTabSurface';
 import { useConnectionLogsStore } from '../state/connectionLogsStore';
 import {
@@ -169,7 +171,8 @@ function AppPluginKeybindingThemeHost({
   sessions: any[];
   workspaces: any[];
 }) {
-  const appThemeStyle = useAppThemeStyle();
+  // View environment is global in the current host: publish committed colors only.
+  const appThemeStyle = useAppThemeStyle(false);
   const { resolvedTheme, uiLanguage } = useSettingsChromeStore();
   const pluginThemeTokens = useMemo(
     () => selectPluginThemeTokens(appThemeStyle as Record<string, unknown>),
@@ -884,6 +887,8 @@ function AppViewInner({ domains }: AppViewProps) {
           id={AI_SIDEBAR_HOST_ID}
           className="pointer-events-none relative z-30 flex h-full shrink-0"
         />
+        <PluginAIContextHost sessions={sessions} workspaces={workspaces} />
+        <PluginAgentHost sessions={sessions} />
       </div>
 
       {/* Global "quick add / edit snippet" modal, triggered by the
