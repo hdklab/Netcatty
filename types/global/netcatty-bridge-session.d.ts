@@ -52,6 +52,8 @@ declare global {
       charset?: string;
       env?: Record<string, string>;
       sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
+      /** RFC 2217: negotiate these line settings with a serial server. */
+      telnetSerial?: import("../../domain/models").TelnetSerialConfig;
     }): Promise<string>;
     startMoshSession?(options: {
       sessionId?: string;
@@ -601,6 +603,23 @@ declare global {
     onTelnetEchoMode?(
       sessionId: string,
       cb: (evt: { sessionId: string; remoteEcho: boolean; localEcho: boolean }) => void
+    ): () => void;
+    /**
+     * RFC 2217 line-settings progress for a telnet session started with
+     * `telnetSerial`: `negotiated` = subnegotiation sent, `applied` = the
+     * server acknowledged one field, `rejected` = it refused one field,
+     * `unsupported` = the endpoint does not offer COM-PORT-OPTION.
+     */
+    onTelnetSerialStatus?(
+      sessionId: string,
+      cb: (evt: {
+        sessionId: string;
+        state: "negotiated" | "applied" | "rejected" | "unsupported";
+        field?: string;
+        value?: number;
+        code?: number;
+        config?: import("../../domain/models").TelnetSerialConfig;
+      }) => void
     ): () => void;
     getTelnetEchoMode?(sessionId: string): Promise<{
       success: boolean;

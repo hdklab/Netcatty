@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
+import type { TelnetSerialConfig } from "../../domain/models";
 import type { TerminalSessionExitEvent } from "./resolveTerminalSessionExitIntent";
 
 type PluginConnectionStartOptions = NetcattyPluginConnectionStartRequest & {
@@ -384,6 +385,18 @@ export const useTerminalBackend = () => {
     return bridge?.onMoshSessionReady?.(sessionId, cb);
   }, []);
 
+  const onTelnetSerialStatus = useCallback((sessionId: string, cb: (evt: {
+    sessionId: string;
+    state: "negotiated" | "applied" | "rejected" | "unsupported";
+    field?: string;
+    value?: number;
+    code?: number;
+    config?: TelnetSerialConfig;
+  }) => void) => {
+    const bridge = netcattyBridge.get();
+    return bridge?.onTelnetSerialStatus?.(sessionId, cb);
+  }, []);
+
   const onTelnetEchoMode = useCallback((sessionId: string, cb: (evt: { sessionId: string; remoteEcho: boolean; localEcho: boolean }) => void) => {
     const bridge = netcattyBridge.get();
     return bridge?.onTelnetEchoMode?.(sessionId, cb);
@@ -661,6 +674,7 @@ export const useTerminalBackend = () => {
         onTelnetAutoLoginCancelled,
         onTelnetEchoMode,
         getTelnetEchoMode,
+        onTelnetSerialStatus,
         onChainProgress,
         onConnectionReuseFallback,
         onWindowFullScreenChanged,
@@ -750,6 +764,7 @@ export const useTerminalBackend = () => {
       onMoshSessionReady,
       onTelnetEchoMode,
       getTelnetEchoMode,
+      onTelnetSerialStatus,
       onChainProgress,
       onConnectionReuseFallback,
       onWindowFullScreenChanged,

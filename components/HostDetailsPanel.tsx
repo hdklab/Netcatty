@@ -33,7 +33,7 @@ import {
   resolveHostTerminalFontSize,
   resolveHostTerminalThemeId,
 } from "../domain/terminalAppearance";
-import { EnvVar, GroupConfig, Host, Identity, KnownHost, ManagedSource, ProxyConfig, ProxyProfile, SerialConfig, Snippet, SSHKey, TerminalSettings } from "../types";
+import { EnvVar, GroupConfig, Host, Identity, KnownHost, ManagedSource, ProxyConfig, ProxyProfile, SerialConfig, Snippet, SSHKey, TelnetSerialConfig, TerminalSettings } from "../types";
 import { DISTRO_COLORS, DISTRO_LOGOS } from "./DistroAvatar";
 import ThemeSelectPanel from "./ThemeSelectPanel";
 import {
@@ -85,6 +85,8 @@ import { PluginConnectionSection } from "./PluginConnectionSection";
 import { HostFileTransferSection } from "./host-details/HostFileTransferSection";
 import { HostConnectionTypeSelect } from "./host-details/HostConnectionTypeSelect";
 import { HostSerialConnectionSection } from "./host-details/HostSerialConnectionSection";
+import { HostTelnetSerialSection } from "./host-details/HostTelnetSerialSection";
+import { mergeTelnetSerialConfig, normalizeTelnetSerialConfig } from "../domain/telnetSerial";
 import {
   applyHostConnectionType,
   buildSerialHostForSave,
@@ -593,6 +595,18 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           : autoLabel,
       };
     });
+  }, []);
+  const telnetSerialConfig = useMemo(
+    () => normalizeTelnetSerialConfig(form.telnetSerialConfig),
+    [form.telnetSerialConfig],
+  );
+  const updateTelnetSerialConfig = useCallback((patch: Partial<TelnetSerialConfig>) => {
+    setForm((prev) => ({
+      ...prev,
+      // Keep the block when the option is switched off: a stray click must not
+      // lose the baud/framing the user picked.
+      telnetSerialConfig: mergeTelnetSerialConfig(prev.telnetSerialConfig, patch),
+    }));
   }, []);
   const selectConnectionType = useCallback((next: HostConnectionType) => {
     setForm((prev) => {
@@ -1400,6 +1414,13 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
               value={form.charset}
               inheritedValue={effectiveGroupDefaults?.charset}
               onValueChange={(value) => update("charset", value)}
+            />
+
+            {/* RFC 2217: the endpoint may be a serial server rather than a login service. */}
+            <HostTelnetSerialSection
+              value={telnetSerialConfig}
+              onChange={updateTelnetSerialConfig}
+              t={t}
             />
 
             <button

@@ -40,6 +40,11 @@ function createTelnetSessionApi(ctx) {
       const port = options.port || 23;
       const cols = options.cols || 80;
       const rows = options.rows || 24;
+      // RFC 2217 serial server mode: the endpoint fronts a serial device, so
+      // the line settings are negotiated on connect instead of being local.
+      const telnetSerial = options.telnetSerial && options.telnetSerial.enabled
+        ? options.telnetSerial
+        : null;
     
       console.log(`[Telnet] Starting connection to ${hostname}:${port}`);
     
@@ -147,6 +152,24 @@ function createTelnetSessionApi(ctx) {
         const negotiator = telnetProtocol.createTelnetNegotiator({
           writeCommand: writeRawTelnetCommand,
           writeSubnegotiation: writeRawSubnegotiation,
+          comPort: telnetSerial,
+          onComPortStatus: (status) => {
+            const { state } = status || {};
+            const cfg = status?.config || {};
+            if (state === "negotiated") {
+              console.log(`[Telnet] RFC2217 serial: negotiating ${telnetProtocol.describeComPortConfig(cfg)} on ${hostname}:${port}`);
+            } else if (state === "applied") {
+              console.log(`[Telnet] RFC2217 serial: ${status.field} acknowledged${status.value !== undefined ? ` (${status.value})` : ""}`);
+            } else if (state === "rejected") {
+              console.warn(`[Telnet] RFC2217 serial: ${status.field} rejected (code ${status.code})`);
+            } else if (state === "unsupported") {
+              console.warn(`[Telnet] RFC2217 serial: ${hostname}:${port} does not offer COM-PORT-OPTION`);
+            }
+            const contents = electronModule.webContents.fromId(
+              sessions.get(sessionId)?.webContentsId ?? event.sender.id,
+            );
+            contents?.send("netcatty:telnet:serial-status", { sessionId, ...status });
+          },
           getWindowSize: () => {
             const session = sessions.get(sessionId);
             return { cols: session?.cols ?? cols, rows: session?.rows ?? rows };
@@ -205,6 +228,13 @@ function createTelnetSessionApi(ctx) {
             return;
           }
           console.log(`[Telnet] Connected to ${hostname}:${port}`);
+
+          // A serial server speaks telnet from the first byte, so do not wait
+          // for the peer to send an IAC before offering COM-PORT-OPTION.
+          if (telnetSerial && !telnetProtocolActive) {
+            telnetProtocolActive = true;
+            negotiator.start();
+          }
     
           const session = {
             socket,

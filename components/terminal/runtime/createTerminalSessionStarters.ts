@@ -1,4 +1,5 @@
 import { isWindowsNamedPipePath } from '../../../domain/serialEndpoint';
+import { formatTelnetSerialConfig, resolveTelnetSerialConfig } from '../../../domain/telnetSerial';
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { ProviderValidationIssue } from "@netcatty/plugin-contract";
 import { logger } from "../../../lib/logger";
@@ -970,6 +971,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
     let disposeAutoLoginComplete: (() => void) | undefined;
     let disposeAutoLoginCancelled: (() => void) | undefined;
+    let disposeTelnetSerialStatus: (() => void) | undefined;
     let cancelPendingStartupCommand: (() => void) | undefined;
     const disposeAutoLoginListener = () => {
       disposeAutoLoginComplete?.();
@@ -988,6 +990,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     const cleanupTelnetSession = () => {
       cleanupTelnetStartupWait();
       clearTelnetEchoMode();
+      disposeTelnetSerialStatus?.();
+      disposeTelnetSerialStatus = undefined;
     };
     try {
       const telnetEnv = buildTermEnv(ctx.host, ctx.terminalSettings);
@@ -1068,6 +1072,50 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         );
       }
       attachTelnetEchoMode(ctx.sessionId);
+      const telnetSerial = resolveTelnetSerialConfig(ctx.host);
+      if (telnetSerial && ctx.terminalBackend.onTelnetSerialStatus) {
+        const serialLabel = formatTelnetSerialConfig(telnetSerial);
+        let serialReported = false;
+        disposeTelnetSerialStatus = ctx.terminalBackend.onTelnetSerialStatus(
+          ctx.sessionId,
+          (evt) => {
+            if (evt.state === "negotiated") {
+              writeTerminalLine(ctx, term, `\r\n[RFC2217 serial: requesting ${serialLabel}]`);
+              return;
+            }
+            if (evt.state === "applied") {
+              // The server acks each SET-* field; one confirmation is enough.
+              if (serialReported) return;
+              serialReported = true;
+              writeTerminalLine(
+                ctx,
+                term,
+                `\r\n[RFC2217 serial: ${serialLabel} applied by the server]`,
+              );
+              return;
+            }
+            if (evt.state === "rejected") {
+              serialReported = true;
+              writeTerminalLine(
+                ctx,
+                term,
+                `\r\n[RFC2217 serial: server rejected ${evt.field ?? "setting"}` +
+                  ` (code ${evt.code ?? "?"})]`,
+              );
+              return;
+            }
+            if (evt.state === "unsupported") {
+              serialReported = true;
+              writeTerminalLine(
+                ctx,
+                term,
+                "\r\n[RFC2217 serial: endpoint does not support COM-PORT-OPTION; " +
+                  "line settings left unchanged]",
+              );
+            }
+          },
+        );
+      }
       const id = await ctx.terminalBackend.startTelnetSession({
         sessionId: ctx.sessionId,
         protocol: ctx.host.protocol,
@@ -1080,6 +1128,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         charset: ctx.host.charset,
         env: telnetEnv,
         sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
+        telnetSerial: telnetSerial ?? undefined,
         bootEpoch,
       });
       telnetSessionId = id;

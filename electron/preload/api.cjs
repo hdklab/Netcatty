@@ -809,6 +809,13 @@ function createPreloadApi(ctx) {
   },
   getTelnetEchoMode: (sessionId) =>
     ipcRenderer.invoke("netcatty:telnet:getEchoMode", { sessionId }),
+  onTelnetSerialStatus: (sessionId, cb) => {
+    if (!telnetSerialStatusListeners.has(sessionId)) {
+      telnetSerialStatusListeners.set(sessionId, new Set());
+    }
+    telnetSerialStatusListeners.get(sessionId).add(cb);
+    return () => removeSessionListener(telnetSerialStatusListeners, sessionId, cb);
+  },
   onAuthFailed: (sessionId, cb) => {
     if (!authFailedListeners.has(sessionId)) authFailedListeners.set(sessionId, new Set());
     authFailedListeners.get(sessionId).add(cb);

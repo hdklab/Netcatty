@@ -135,6 +135,22 @@ export interface SerialConfig {
   byteOrientedBackspace?: boolean;
 }
 
+/**
+ * RFC 2217 serial server settings: a telnet endpoint that fronts a serial
+ * device (ser2net, a router's console server, ...) and accepts COM-PORT
+ * subnegotiation, so the client can pick the baud rate at connect time.
+ * Only the fields RFC 2217 can negotiate are here — no local echo, line mode
+ * or backspace behaviour, because the bytes travel to the device as-is.
+ */
+export interface TelnetSerialConfig {
+  enabled: boolean; // Treat the telnet endpoint as an RFC 2217 serial server
+  baudRate: number; // 300..4000000; negotiated on connect
+  dataBits: 5 | 6 | 7 | 8;
+  stopBits: 1 | 2;
+  parity: SerialParity;
+  flowControl: SerialFlowControl;
+}
+
 // Per-protocol configuration
 interface ProtocolConfig {
   protocol: HostProtocol;
@@ -288,6 +304,8 @@ export interface Host {
   fileTransferOnly?: boolean;
   // Serial-specific configuration (for protocol='serial' hosts)
   serialConfig?: SerialConfig;
+  // RFC 2217 serial server in front of a telnet host (protocol='telnet')
+  telnetSerialConfig?: TelnetSerialConfig;
   // SFTP specific configuration
   sftpSudo?: boolean; // Use sudo for SFTP operations (requires password)
   // Remote file browser protocol: Auto tries SFTP then falls back to SCP-mode

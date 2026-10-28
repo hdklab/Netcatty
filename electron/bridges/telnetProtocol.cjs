@@ -37,7 +37,177 @@ const OPT = {
   TERMINAL_SPEED: 32,
   LINEMODE: 34,
   NEW_ENVIRON: 39,
+  COM_PORT: 44,            // RFC 2217 — Com Port Control Option
 };
+
+/**
+ * RFC 2217 COM-PORT-OPTION sub-command bytes. Requests are 1..12; the server
+ * answers `100 + request` on success and `200 + request` on failure.
+ */
+const COM_PORT = {
+  SIGNATURE: 0,
+  SET_BAUDRATE: 1,
+  SET_DATASIZE: 2,
+  SET_PARITY: 3,
+  SET_STOPBITS: 4,
+  SET_CONTROL: 5,
+  NOTIFY_LINESTATE: 6,
+  NOTIFY_MODEMSTATE: 7,
+  FLOWCONTROL_SUSPEND: 8,
+  FLOWCONTROL_RESUME: 9,
+  SET_LINESTATE_MASK: 10,
+  SET_MODEMSTATE_MASK: 11,
+  PURGE_DATA: 12,
+};
+
+const COM_PORT_REQUEST_NAMES = {
+  [COM_PORT.SIGNATURE]: "signature",
+  [COM_PORT.SET_BAUDRATE]: "baudRate",
+  [COM_PORT.SET_DATASIZE]: "dataBits",
+  [COM_PORT.SET_PARITY]: "parity",
+  [COM_PORT.SET_STOPBITS]: "stopBits",
+  [COM_PORT.SET_CONTROL]: "flowControl",
+  [COM_PORT.NOTIFY_LINESTATE]: "lineState",
+  [COM_PORT.NOTIFY_MODEMSTATE]: "modemState",
+  [COM_PORT.FLOWCONTROL_SUSPEND]: "flowSuspend",
+  [COM_PORT.FLOWCONTROL_RESUME]: "flowResume",
+  [COM_PORT.SET_LINESTATE_MASK]: "lineStateMask",
+  [COM_PORT.SET_MODEMSTATE_MASK]: "modemStateMask",
+  [COM_PORT.PURGE_DATA]: "purgeData",
+};
+
+// RFC 2217 §3 enumerations.
+const COM_PORT_PARITY = { none: 1, odd: 2, even: 3, mark: 4, space: 5 };
+const COM_PORT_DATASIZE = { 5: 5, 6: 6, 7: 7, 8: 8 };
+const COM_PORT_STOPBITS = { 1: 1, 1.5: 3, 2: 2 };
+// RFC 2217 §SET-CONTROL: 0 = none, 1 = XON/XOFF, 2 = RTS/CTS.
+const COM_PORT_CONTROL = { none: 0, "xon/xoff": 1, "rts/cts": 2 };
+// ser2net 3.x ignores the RFC values here and uses its own numbering
+// (devcfg_control: 1 = none, 2 = XON/XOFF, 3 = RTS/CTS, 0 = leave alone), so a
+// spec-correct "2" would turn into XON/XOFF there. Ask for the server
+// signature first and encode accordingly instead of guessing.
+const COM_PORT_CONTROL_SER2NET = { none: 1, "xon/xoff": 2, "rts/cts": 3 };
+const COM_PORT_SIGNATURE_PROBE_MS = 300;
+
+/**
+ * Turn a line-settings object into the ordered list of COM-PORT-OPTION
+ * subnegotiation payloads (each already starts with its command byte, ready
+ * for `IAC SB 44 <payload> IAC SE`). Field order mirrors what a serial server
+ * expects: baud first (it decides character timing), then framing, then flow
+ * control.
+ */
+function buildComPortSetup(config, options = {}) {
+  const cfg = config || {};
+  const controlEncoding = options.controlEncoding || "rfc";
+  const payloads = [];
+  const baud = Number(cfg.baudRate);
+  if (Number.isFinite(baud) && baud > 0) {
+    const value = Math.min(Math.round(baud), 0xffffffff);
+    payloads.push(Buffer.from([
+      COM_PORT.SET_BAUDRATE,
+      (value >>> 24) & 0xff,
+      (value >>> 16) & 0xff,
+      (value >>> 8) & 0xff,
+      value & 0xff,
+    ]));
+  }
+  const dataBits = COM_PORT_DATASIZE[cfg.dataBits];
+  if (dataBits !== undefined) {
+    payloads.push(Buffer.from([COM_PORT.SET_DATASIZE, dataBits]));
+  }
+  const parity = COM_PORT_PARITY[cfg.parity];
+  if (parity !== undefined) {
+    payloads.push(Buffer.from([COM_PORT.SET_PARITY, parity]));
+  }
+  const stopBits = COM_PORT_STOPBITS[cfg.stopBits];
+  if (stopBits !== undefined) {
+    payloads.push(Buffer.from([COM_PORT.SET_STOPBITS, stopBits]));
+  }
+  if (controlEncoding !== "none") {
+    const table = controlEncoding === "ser2net" ? COM_PORT_CONTROL_SER2NET : COM_PORT_CONTROL;
+    const control = table[cfg.flowControl];
+    if (control !== undefined) {
+      payloads.push(Buffer.from([COM_PORT.SET_CONTROL, control]));
+    }
+  }
+  return payloads;
+}
+
+/** The SET-CONTROL payload alone, for the post-signature path. */
+function buildComPortControlPayload(config, controlEncoding = "rfc") {
+  const table = controlEncoding === "ser2net" ? COM_PORT_CONTROL_SER2NET : COM_PORT_CONTROL;
+  const value = table[config?.flowControl];
+  return value === undefined ? null : Buffer.from([COM_PORT.SET_CONTROL, value]);
+}
+
+// Server -> client reply codes. 100..112 is NOT a straight `request + 100`:
+// RFC 2217 puts the two NOTIFY-* messages (106/107) and the flow-control
+// suspend/resume pair (108/109) in the same range as the acknowledgements, so
+// the table has to be explicit or a modem-state notification reads as an ack.
+const COM_PORT_REPLY_KIND = {
+  100: { kind: "ack", field: "signature" },
+  101: { kind: "ack", field: "baudRate" },
+  102: { kind: "ack", field: "dataBits" },
+  103: { kind: "ack", field: "parity" },
+  104: { kind: "ack", field: "stopBits" },
+  105: { kind: "ack", field: "flowControl" },
+  106: { kind: "notify", field: "lineState" },
+  107: { kind: "notify", field: "modemState" },
+  108: { kind: "notify", field: "flowSuspend" },
+  109: { kind: "notify", field: "flowResume" },
+  110: { kind: "ack", field: "lineStateMask" },
+  111: { kind: "ack", field: "modemStateMask" },
+  112: { kind: "ack", field: "purgeData" },
+};
+
+/** Compact 8N1-style label for logs and user-visible notices. */
+function describeComPortConfig(config) {
+  const cfg = config || {};
+  const parity = { none: "N", odd: "O", even: "E", mark: "M", space: "S" }[cfg.parity] || "?";
+  return `${cfg.baudRate} ${cfg.dataBits}${parity}${cfg.stopBits}`;
+}
+
+/**
+ * Decode a COM-PORT-OPTION subnegotiation coming from the server.
+ *
+ *   unsigned char   client requests (a server never sends these)
+ *   100..112        acknowledgements / notifications
+ *   200..212        failures, one per request byte
+ *
+ * Returns `{ kind: 'ack' | 'error' | 'notify', field, code, request, value? }`
+ * so the session can tell the user which setting the remote rejected.
+ */
+function decodeComPortPayload(payload) {
+  if (!payload || payload.length === 0) return null;
+  const code = payload[0];
+
+  // Errors are 200 + the request byte (201 SET-BAUDRATE ... 212 PURGE-DATA).
+  if (code >= 200 && code < 300) {
+    const request = code - 200;
+    return {
+      kind: "error",
+      code,
+      request,
+      field: COM_PORT_REQUEST_NAMES[request] || `request-${request}`,
+    };
+  }
+
+  const reply = COM_PORT_REPLY_KIND[code];
+  if (!reply) return { kind: "notify", code, request: code, field: `code-${code}` };
+
+  if (reply.kind === "ack") {
+    let value;
+    if (code === 100) {
+      value = payload.subarray(1).toString("latin1"); // server signature string
+    } else if (code === 101 && payload.length >= 5) {
+      value = ((payload[1] << 24) | (payload[2] << 16) | (payload[3] << 8) | payload[4]) >>> 0;
+    } else if (payload.length >= 2) {
+      value = payload[1];
+    }
+    return { kind: "ack", code, request: code - 100, field: reply.field, value };
+  }
+  return { kind: reply.kind, code, request: code - 100, field: reply.field };
+}
 
 const SUBOPTION_IS = 0;
 const SUBOPTION_SEND = 1;
@@ -270,6 +440,8 @@ function createTelnetNegotiator({
   termType = "XTERM-256COLOR",
   onRemoteEchoChange,
   onLocalEchoChange,
+  comPort = null,
+  onComPortStatus,
 } = {}) {
   const pendingDoRequests = new Set();
   const pendingWillRequests = new Set();
@@ -284,6 +456,46 @@ function createTelnetNegotiator({
     : () => ({ cols: 80, rows: 24 });
   const echoSink = typeof onRemoteEchoChange === "function" ? onRemoteEchoChange : () => {};
   const localEchoSink = typeof onLocalEchoChange === "function" ? onLocalEchoChange : () => {};
+  const comPortSink = typeof onComPortStatus === "function" ? onComPortStatus : () => {};
+  // RFC 2217 mode: the peer is a serial server, not a login service. Window
+  // size and terminal type are irrelevant there — negotiate the COM port only.
+  const comPortConfig = comPort && comPort.enabled !== false ? comPort : null;
+  // Line settings go out immediately; SET-CONTROL waits for the signature
+  // because ser2net numbers its flow-control values differently from RFC 2217.
+  const comPortBasePayloads = comPortConfig
+    ? buildComPortSetup(comPortConfig, { controlEncoding: "none" })
+    : [];
+  let comPortSent = false;
+  let comPortControlSent = false;
+  let comPortControlTimer = null;
+
+  const sendComPortControl = (encoding) => {
+    if (!comPortConfig || comPortControlSent) return;
+    comPortControlSent = true;
+    if (comPortControlTimer) {
+      clearTimeout(comPortControlTimer);
+      comPortControlTimer = null;
+    }
+    const payload = buildComPortControlPayload(comPortConfig, encoding);
+    if (payload) sbSink(OPT.COM_PORT, payload);
+  };
+
+  const enableComPort = () => {
+    if (!comPortConfig || comPortSent) return;
+    comPortSent = true;
+    for (const payload of comPortBasePayloads) sbSink(OPT.COM_PORT, payload);
+    comPortSink({ state: "negotiated", config: { ...comPortConfig } });
+    // Ask who owns the port so SET-CONTROL uses its native numbering; if the
+    // answer never comes, fall back to the RFC values.
+    sbSink(OPT.COM_PORT, Buffer.from([COM_PORT.SIGNATURE]));
+    comPortControlTimer = setTimeout(
+      () => sendComPortControl("rfc"),
+      COM_PORT_SIGNATURE_PROBE_MS,
+    );
+    if (comPortControlTimer && typeof comPortControlTimer.unref === "function") {
+      comPortControlTimer.unref();
+    }
+  };
 
   const naws = () => {
     if (!enabledLocalOptions.has(OPT.NAWS)) return false;
@@ -319,6 +531,13 @@ function createTelnetNegotiator({
     // servers will not advance past their banner until the client commits
     // to a basic option set.
     requestOption(DO, OPT.SUPPRESS_GO_AHEAD);
+    if (comPortConfig) {
+      // RFC 2217 in practice (ser2net, pyserial): the *client* offers WILL
+      // COM-PORT-OPTION and waits for the server's DO before sending the
+      // SET-* subnegotiations.
+      requestOption(WILL, OPT.COM_PORT);
+      return;
+    }
     requestOption(WILL, OPT.TERMINAL_TYPE);
     requestOption(WILL, OPT.NAWS);
   };
@@ -356,6 +575,12 @@ function createTelnetNegotiator({
 
     if (cmd === DO) {
       const wasEnabled = enabledLocalOptions.has(opt);
+      if (opt === OPT.COM_PORT) {
+        enabledLocalOptions.add(opt);
+        if (!acknowledgesOurRequest && !wasEnabled) cmdSink(WILL, opt);
+        enableComPort();
+        return;
+      }
       if (opt === OPT.NAWS) {
         enabledLocalOptions.add(opt);
         if (!acknowledgesOurRequest && !wasEnabled) cmdSink(WILL, opt);
@@ -387,6 +612,11 @@ function createTelnetNegotiator({
     if (cmd === WONT) {
       const wasEnabled = enabledRemoteOptions.delete(opt);
       if (opt === OPT.ECHO) echoSink(false);
+      if (opt === OPT.COM_PORT && comPortConfig) {
+        // The endpoint is not an RFC 2217 serial server: the session still
+        // works as a plain telnet login, the line settings simply stay put.
+        comPortSink({ state: "unsupported", config: { ...comPortConfig } });
+      }
       if (!acknowledgesOurRequest && wasEnabled) cmdSink(DONT, opt);
       return;
     }
@@ -397,6 +627,34 @@ function createTelnetNegotiator({
       && payload && payload.length > 0
       && payload[0] === SUBOPTION_SEND) {
       sendTerminalType();
+      return;
+    }
+    if (opt === OPT.COM_PORT && comPortConfig) {
+      const decoded = decodeComPortPayload(payload);
+      if (!decoded) return;
+      if (decoded.kind === "error") {
+        comPortSink({
+          state: "rejected",
+          field: decoded.field,
+          code: decoded.code,
+          config: { ...comPortConfig },
+        });
+        return;
+      }
+      if (decoded.kind === "ack") {
+        if (decoded.code === 100) {
+          // Signature reply: pick the SET-CONTROL numbering and send it now.
+          const isSer2net = /ser2net/i.test(String(decoded.value || ""));
+          sendComPortControl(isSer2net ? "ser2net" : "rfc");
+          return;
+        }
+        comPortSink({
+          state: "applied",
+          field: decoded.field,
+          value: decoded.value,
+          config: { ...comPortConfig },
+        });
+      }
     }
   };
 
@@ -435,6 +693,8 @@ module.exports = {
   DONT,
   // Options
   OPT,
+  // RFC 2217 COM-PORT-OPTION
+  COM_PORT,
   SUBOPTION_IS,
   SUBOPTION_SEND,
   // Helpers
@@ -443,4 +703,8 @@ module.exports = {
   normalizeNvtNewlines,
   createTelnetParser,
   createTelnetNegotiator,
+  buildComPortSetup,
+  buildComPortControlPayload,
+  decodeComPortPayload,
+  describeComPortConfig,
 };

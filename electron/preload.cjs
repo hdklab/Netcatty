@@ -37,6 +37,7 @@ const authFailedListeners = new Map();
 const telnetAutoLoginCompleteListeners = new Map();
 const telnetAutoLoginCancelledListeners = new Map();
 const telnetEchoModeListeners = new Map();
+const telnetSerialStatusListeners = new Map();
 const moshSessionReadyListeners = new Map();
 const languageChangeListeners = new Set();
 const fullscreenChangeListeners = new Set();
@@ -487,6 +488,7 @@ ipcRenderer.on("netcatty:exit", (_event, payload) => {
   telnetAutoLoginCompleteListeners.delete(sessionId);
   telnetAutoLoginCancelledListeners.delete(sessionId);
   telnetEchoModeListeners.delete(sessionId);
+  telnetSerialStatusListeners.delete(sessionId);
   moshSessionReadyListeners.delete(sessionId);
   authFailedListeners.delete(sessionId);
   clearMcpSessionState(sessionId);
@@ -624,6 +626,18 @@ ipcRenderer.on("netcatty:mosh:ready", (_event, payload) => {
       cb(payload);
     } catch (err) {
       console.error("Mosh session ready callback failed", err);
+    }
+  });
+});
+
+ipcRenderer.on("netcatty:telnet:serial-status", (_event, payload) => {
+  const set = telnetSerialStatusListeners.get(payload.sessionId);
+  if (!set) return;
+  set.forEach((cb) => {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("Telnet serial status callback failed", err);
     }
   });
 });
@@ -918,6 +932,7 @@ const api = createPreloadApi({
   telnetAutoLoginCompleteListeners,
   telnetAutoLoginCancelledListeners,
   telnetEchoModeListeners,
+  telnetSerialStatusListeners,
   moshSessionReadyListeners,
   terminalDataBacklog,
   terminalOutputPorts,

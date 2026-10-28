@@ -17,6 +17,9 @@ const {
   normalizeNvtNewlines,
   createTelnetParser,
   createTelnetNegotiator,
+  buildComPortSetup,
+  decodeComPortPayload,
+  COM_PORT,
 } = require("./telnetProtocol.cjs");
 
 const collect = () => {
@@ -501,5 +504,143 @@ test("data emitted before a command is delivered before that command's callback"
     "data:hi",
     `cmd:${WONT}:${OPT.LINEMODE}`,
     "data:bye",
+  ]);
+});
+
+test("RFC 2217 setup encodes baud/framing in order", () => {
+  const payloads = buildComPortSetup({
+    baudRate: 19200,
+    dataBits: 7,
+    parity: "even",
+    stopBits: 2,
+    flowControl: "rts/cts",
+  });
+  assert.deepEqual(payloads.map((payload) => payload[0]), [
+    COM_PORT.SET_BAUDRATE,
+    COM_PORT.SET_DATASIZE,
+    COM_PORT.SET_PARITY,
+    COM_PORT.SET_STOPBITS,
+    COM_PORT.SET_CONTROL,
+  ]);
+  // 19200 = 0x00004B00, big-endian per RFC 2217.
+  assert.deepEqual([...payloads[0]], [1, 0x00, 0x00, 0x4b, 0x00]);
+  assert.deepEqual([...payloads[1]], [2, 7]);
+  assert.deepEqual([...payloads[2]], [3, 3]); // even
+  assert.deepEqual([...payloads[3]], [4, 2]);
+  assert.deepEqual([...payloads[4]], [5, 2]); // rts/cts
+});
+
+test("RFC 2217 setup keeps custom baud rates and skips unknown framing", () => {
+  const payloads = buildComPortSetup({ baudRate: 250000, dataBits: 9, parity: "weird" });
+  assert.equal(payloads.length, 1);
+  assert.deepEqual([...payloads[0]], [1, 0x00, 0x03, 0xd0, 0x90]);
+});
+
+test("RFC 2217 server answers decode as ack/error per request", () => {
+  assert.deepEqual(decodeComPortPayload(Buffer.from([101, 0x00, 0x00, 0x25, 0x80])), {
+    kind: "ack",
+    code: 101,
+    request: 1,
+    field: "baudRate",
+    value: 9600,
+  });
+  assert.deepEqual(decodeComPortPayload(Buffer.from([201])), {
+    kind: "error",
+    code: 201,
+    request: 1,
+    field: "baudRate",
+  });
+  assert.equal(decodeComPortPayload(Buffer.from([103, 3])).field, "parity");
+  assert.equal(decodeComPortPayload(Buffer.from([107, 0])).kind, "notify");
+});
+
+test("RFC 2217 negotiator offers COM-PORT-OPTION and applies it on DO", () => {
+  const commands = [];
+  const subnegs = [];
+  const statuses = [];
+  const negotiator = createTelnetNegotiator({
+    writeCommand: (cmd, opt) => commands.push([cmd, opt]),
+    writeSubnegotiation: (opt, payload) => subnegs.push({ opt, payload: [...payload] }),
+    comPort: { enabled: true, baudRate: 9600, dataBits: 8, parity: "none", stopBits: 1, flowControl: "none" },
+    onComPortStatus: (status) => statuses.push(status),
+  });
+
+  negotiator.start();
+  // SGA first (as for every telnet session), then the COM-PORT offer.
+  assert.deepEqual(commands, [[DO, OPT.SUPPRESS_GO_AHEAD], [WILL, OPT.COM_PORT]]);
+  assert.equal(subnegs.length, 0, "nothing is sent before the server agrees");
+
+  negotiator.handleCommand(DO, OPT.COM_PORT);
+  // Line settings immediately, then a signature probe; SET-CONTROL is held
+  // back until we know whose numbering the server uses.
+  assert.deepEqual(subnegs.map((entry) => entry.payload), [
+    [1, 0x00, 0x00, 0x25, 0x80],
+    [2, 8],
+    [3, 1],
+    [4, 1],
+    [0], // SIGNATURE request
+  ]);
+  assert.ok(subnegs.every((entry) => entry.opt === OPT.COM_PORT));
+  assert.equal(statuses[0].state, "negotiated");
+
+  negotiator.handleSubnegotiation(OPT.COM_PORT, Buffer.from([101, 0x00, 0x00, 0x25, 0x80]));
+  assert.equal(statuses[1].state, "applied");
+  assert.equal(statuses[1].field, "baudRate");
+  assert.equal(statuses[1].value, 9600);
+
+  negotiator.handleSubnegotiation(OPT.COM_PORT, Buffer.from([204]));
+  assert.equal(statuses[2].state, "rejected");
+  assert.equal(statuses[2].field, "stopBits");
+});
+
+test("SET-CONTROL follows the server signature (ser2net uses 1/2/3)", () => {
+  const run = (signature) => {
+    const subnegs = [];
+    const negotiator = createTelnetNegotiator({
+      writeCommand: () => {},
+      writeSubnegotiation: (opt, payload) => subnegs.push([...payload]),
+      comPort: { enabled: true, baudRate: 9600, dataBits: 8, parity: "none", stopBits: 1, flowControl: "rts/cts" },
+    });
+    negotiator.start();
+    negotiator.handleCommand(DO, OPT.COM_PORT);
+    assert.deepEqual(subnegs.at(-1), [0], "asks for the signature before SET-CONTROL");
+    negotiator.handleSubnegotiation(
+      OPT.COM_PORT,
+      Buffer.from([100, ...Buffer.from(signature, "latin1")]),
+    );
+    return subnegs.at(-1);
+  };
+
+  // ser2net 3.x numbers flow control 1/2/3, RFC 2217 numbers it 0/1/2.
+  assert.deepEqual(run("ser2net"), [5, 3]);
+  assert.deepEqual(run("hwvsp"), [5, 2]);
+});
+
+test("RFC 2217 negotiator reports an endpoint that refuses the option", () => {
+  const statuses = [];
+  const commands = [];
+  const negotiator = createTelnetNegotiator({
+    writeCommand: (cmd, opt) => commands.push([cmd, opt]),
+    writeSubnegotiation: () => {},
+    comPort: { enabled: true, baudRate: 115200, dataBits: 8, parity: "none", stopBits: 1, flowControl: "none" },
+    onComPortStatus: (status) => statuses.push(status),
+  });
+  negotiator.start();
+  negotiator.handleCommand(WONT, OPT.COM_PORT);
+  assert.equal(statuses.at(-1).state, "unsupported");
+});
+
+test("a plain telnet session never offers COM-PORT-OPTION", () => {
+  const commands = [];
+  const negotiator = createTelnetNegotiator({
+    writeCommand: (cmd, opt) => commands.push([cmd, opt]),
+    writeSubnegotiation: () => {},
+  });
+  negotiator.start();
+  assert.equal(commands.some(([, opt]) => opt === OPT.COM_PORT), false);
+  assert.deepEqual(commands.map(([cmd, opt]) => [cmd, opt]), [
+    [DO, OPT.SUPPRESS_GO_AHEAD],
+    [WILL, OPT.TERMINAL_TYPE],
+    [WILL, OPT.NAWS],
   ]);
 });
