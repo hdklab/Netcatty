@@ -1,4 +1,5 @@
 import { compareHostAddresses } from "../domain/hostAddressSort";
+import { resolveHostAddressPort } from "../domain/host";
 import {
   Check,
   CheckSquare,
@@ -475,7 +476,7 @@ export const SelectHostPanelContent: React.FC<SelectHostPanelContentProps> = ({
 
     const host = row.host;
     const isSelected = selectedHostIdSet.has(host.id);
-    const connectionStr = `${host.username}@${host.hostname}:${host.port || 22}`;
+    const connectionStr = `${host.username}@${host.hostname}:${resolveHostAddressPort(host) ?? 22}`;
 
     return (
       <div

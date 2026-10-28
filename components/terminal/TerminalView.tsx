@@ -6,8 +6,8 @@ import { isTerminalSensitiveInputActive } from './runtime/terminalSensitiveInput
 import { isSessionReconnectDisabled } from '../top-tabs/SessionTabContextMenuContent';
 
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
-import { classifyDistroId } from '../../domain/host';
-import type { HostInfoBarTitleMode } from '../../domain/models';
+import { classifyDistroId, resolveHostAddressPort } from '../../domain/host';
+import type { Host, HostInfoBarTitleMode } from '../../domain/models';
 import { terminalReconnectRegistry } from '../../application/state/terminalReconnectRegistry';
 import { useNetworkDeviceModeSuggestion } from '../../application/state/useNetworkDeviceModeSuggestion';
 import { isPluginHostProtocol } from '../../domain/pluginConnection';
@@ -361,6 +361,7 @@ type TerminalTitleAddressHost = {
   username?: string;
   hostname?: string;
   port?: number;
+  telnetPort?: number;
 };
 
 export function formatTerminalTitleConnectionAddress(host?: TerminalTitleAddressHost): string | null {
@@ -370,7 +371,16 @@ export function formatTerminalTitleConnectionAddress(host?: TerminalTitleAddress
   }
   const isSerial = host.protocol === 'serial' || host.id?.startsWith('serial-');
   const username = !isSerial && host.username ? `${host.username}@` : '';
-  const port = !isSerial && host.port ? `:${host.port}` : '';
+  // Telnet sessions dial telnetPort; the saved `port` is the SSH port they
+  // were created with, so printing it here advertises the wrong endpoint.
+  const addressPort = isSerial
+    ? undefined
+    : resolveHostAddressPort({
+      protocol: host.protocol as Host['protocol'],
+      port: host.port,
+      telnetPort: host.telnetPort,
+    });
+  const port = addressPort ? `:${addressPort}` : '';
   return `${username}${host.hostname}${port}`;
 }
 

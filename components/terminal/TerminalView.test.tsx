@@ -426,6 +426,27 @@ test("terminal title formats the connection address for remote sessions", () => 
     hostname: "com.example.transport.connection",
     port: 22,
   }), null);
+  // A telnet host dials telnetPort; printing the leftover SSH `port` here told
+  // the user their port edit never applied while the session was on 4001.
+  assert.equal(
+    formatTerminalTitleConnectionAddress({
+      protocol: "telnet",
+      username: "root",
+      hostname: "zu2cg.local",
+      port: 23,
+      telnetPort: 4001,
+    }),
+    "root@zu2cg.local:4001",
+  );
+  assert.equal(
+    formatTerminalTitleConnectionAddress({
+      protocol: "telnet",
+      username: "root",
+      hostname: "10.1.2.34",
+      port: 23,
+    }),
+    "root@10.1.2.34:23",
+  );
 });
 
 test("host info bar title follows address or label mode", () => {

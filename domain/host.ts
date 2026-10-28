@@ -309,6 +309,18 @@ export const resolveTelnetPort = (
   return 23;
 };
 
+/**
+ * Port to print wherever a host address is shown (terminal info bar, host
+ * hover card, host pickers). A telnet host dials `telnetPort` while `port`
+ * keeps the SSH value it was created with, so showing `host.port` there
+ * advertises a port the session never connects to (`zu2cg.local:23` for a
+ * session dialed on 4001).
+ */
+export const resolveHostAddressPort = (
+  host: Pick<Host, 'protocol' | 'telnetPort' | 'port'>,
+): number | undefined =>
+  host.protocol === 'telnet' ? resolveTelnetPort(host) : (host.port ?? undefined);
+
 export const normalizePrimaryTelnetState = (host: Host): Host =>
   host.protocol === 'telnet' && !host.telnetEnabled
     ? { ...host, telnetEnabled: true }

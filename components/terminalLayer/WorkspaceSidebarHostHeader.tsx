@@ -1,6 +1,6 @@
 import React, { memo } from 'react';
 
-import { formatHostPort } from '../../domain/host';
+import { formatHostPort, resolveHostAddressPort } from '../../domain/host';
 import type { Host } from '../../types';
 import { DistroAvatar } from '../DistroAvatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
@@ -15,7 +15,8 @@ export const WorkspaceSidebarHostHeader = memo(function WorkspaceSidebarHostHead
   section = 'terminal-sidebar-host-header',
 }: WorkspaceSidebarHostHeaderProps) {
   const username = host.username || 'root';
-  const port = host.port || 22;
+  // Telnet hosts connect on telnetPort; host.port stays at the SSH value.
+  const port = resolveHostAddressPort(host) ?? 22;
 
   return (
     <div

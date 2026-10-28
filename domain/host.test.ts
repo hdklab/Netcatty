@@ -12,6 +12,7 @@ import {
   normalizePrimaryTelnetState,
   preserveConcurrentHostLineTimestampUpdate,
   resolveHostKeepalive,
+  resolveHostAddressPort,
   resolveTelnetPort,
   resolveTelnetPassword,
   resolveTelnetUsername,
@@ -530,6 +531,35 @@ test("resolveTelnetPort uses primary telnet port fallback", () => {
     port: 2325,
     telnetPort: undefined,
   })), 2325);
+});
+
+test("resolveHostAddressPort shows the telnet port a session actually dials", () => {
+  // A telnet host keeps port 23/22 for its SSH side; the address it prints must
+  // be the one the session connects to, not that leftover SSH port.
+  assert.equal(resolveHostAddressPort(makeHost({
+    protocol: "telnet",
+    port: 23,
+    telnetPort: 4001,
+  })), 4001);
+  assert.equal(resolveHostAddressPort(makeHost({
+    protocol: "telnet",
+    port: 2325,
+    telnetPort: undefined,
+  })), 2325);
+  assert.equal(resolveHostAddressPort(makeHost({
+    protocol: "telnet",
+    port: undefined,
+    telnetPort: undefined,
+  })), 23);
+  assert.equal(resolveHostAddressPort(makeHost({
+    protocol: "ssh",
+    port: 2222,
+    telnetPort: 4001,
+  })), 2222);
+  assert.equal(resolveHostAddressPort(makeHost({
+    protocol: "ssh",
+    port: undefined,
+  })), undefined);
 });
 
 test("sanitizeHost migrates a deprecated fontFamily and clears the override flag", () => {

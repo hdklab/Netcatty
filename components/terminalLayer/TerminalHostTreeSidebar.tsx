@@ -23,7 +23,7 @@ import { scheduleChromeLayoutAnimation } from '../../application/state/useActive
 import { terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
 import { useStoredNumber } from '../../application/state/useStoredNumber';
 import { useTreeExpandedState } from '../../application/state/useTreeExpandedState';
-import { applyHostLabelRename } from '../../domain/host';
+import { applyHostLabelRename, resolveHostAddressPort } from '../../domain/host';
 import { ensureAncestorPathsExpanded } from '../../domain/hostGroupPathMutations';
 import { buildHostGroupTree, collectGroupTreePaths } from '../../domain/hostGroupTree';
 import {
@@ -265,7 +265,8 @@ function pruneEmptyGroupNode(
 const TerminalHostTreeHostHoverCard: React.FC<{ host: Host }> = ({ host }) => {
   const { t } = useI18n();
   const protocol = host.protocol || 'ssh';
-  const port = host.port ?? 22;
+  // Telnet hosts connect on telnetPort; host.port stays at the SSH value.
+  const port = resolveHostAddressPort(host) ?? 22;
   const username = host.username?.trim();
   const notes = host.notes?.trim();
 
