@@ -83,7 +83,13 @@ function buildAtomicRemoteExtractionCommand({
     "    cp -Rp -- \"$final\" \"$staged_final\"",
     "  fi",
     "fi",
-    "tar -xzf \"$archive\" -C \"$stage\" --exclude='._*' --exclude='.DS_Store'",
+    // No `--exclude` here: the archive was produced by our own local tar, which
+    // already dropped ._* / .DS_Store / .Spotlight-V100 / .Trashes, so there is
+    // nothing to filter on extraction - and BusyBox tar (the tar most embedded
+    // boards ship) only understands `-X FILE`, not GNU's `--exclude`. Passing it
+    // made every folder upload to such a host fail with
+    // "tar: unrecognized option '--exclude=._*'".
+    "tar -xzf \"$archive\" -C \"$stage\"",
     "if [ ! -d \"$staged_final\" ]; then echo 'Compressed archive did not contain the expected folder' >&2; exit 1; fi",
     "if [ -e \"$final\" ]; then mv -- \"$final\" \"$backup\"; fi",
     "mv -- \"$staged_final\" \"$final\"",
@@ -112,6 +118,76 @@ const LOCAL_TAR_PROBE_TIMEOUT_MS = 10_000;
 const LOCAL_TAR_KILL_GRACE_MS = 750;
 const MAX_REMOTE_EXEC_STDERR_BYTES = 64 * 1024;
 const MAX_LOCAL_TAR_STDERR_BYTES = 64 * 1024;
+// A host can have a `tar` binary that exists but cannot handle the archive we
+// produce (BusyBox tar without the gzip applet, a tar built without `-z`, an
+// implementation without `--exclude`, ...). Those failures are a capability
+// mismatch, not a transfer error: the renderer must retry the folder with the
+// plain file-by-file uploader instead of reporting a failed transfer.
+const COMPRESSED_UPLOAD_FALLBACK_REASON =
+  "Folder compression is not supported on this host";
+const COMPRESSED_UPLOAD_UNSUPPORTED_CODE = "NETCATTY_COMPRESS_UNSUPPORTED";
+const REMOTE_TAR_PROBE_MARKER = "netcatty-tar-probe-ok";
+// Signatures of "the tar command is present but this archive format/flags are
+// not supported". Kept narrow on purpose: destination errors (permission
+// denied, disk full) must stay hard failures instead of silently degrading.
+const UNSUPPORTED_TAR_FORMAT_PATTERNS = [
+  /\b(?:invalid|illegal|unknown|unrecognized|unrecognised) (?:option|argument|flag|function modifier)\b/i,
+  /\b(?:option|argument|flag)\b[^\n]{0,40}\b(?:not supported|unsupported|not recognized|not recognised)\b/i,
+  /(?:not supported|unsupported|not implemented|not available)\b[^\n]{0,40}\b(?:by|in|on)\b[^\n]{0,20}\btar\b/i,
+  /\btar\b[^\n]{0,60}\b(?:gzip|gunzip|gz)\b[^\n]{0,60}\b(?:not found|no such file|command not found|cannot exec|can't exec|cannot run|can't run|unsupported)\b/i,
+  /\b(?:gzip|gunzip)\b[^\n]{0,60}\b(?:not found|no such file|command not found|cannot exec|can't exec|unsupported)\b/i,
+  /\b(?:cannot|can't|failed to|unable to) (?:run|exec|execute|find|open) \bgzip\b/i,
+  /\binvalid tar magic\b/i,
+  /\bdoes not look like a tar archive\b/i,
+  /\bunrecognized (?:archive )?format\b/i,
+  /\b(?:unsupported|unknown) (?:archive )?format\b/i,
+  /\bnot in gzip format\b/i,
+  /\btar\b[^\n]{0,60}\bNot supported\b/i,
+  /ENOENT/,
+];
+
+/**
+ * True when a compression/extraction error means the host cannot handle the
+ * archive we produce, so the folder should be uploaded the regular way.
+ */
+function isUnsupportedTarFormatError(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return UNSUPPORTED_TAR_FORMAT_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+/**
+ * Remote capability probe.
+ *
+ * `tar --version` only proves that a binary exists: a BusyBox tar without the
+ * gzip applet (or any tar built without `-z`) answers the version check and then
+ * fails every `.tar.gz` we create. Probe the exact round trip we rely on
+ * instead - create a tiny gzip archive, extract it into a fresh directory with
+ * the same `tar -xzf -C` shape the real upload uses, and verify the payload
+ * survived.
+ */
+function buildRemoteTarProbeCommand() {
+  return [
+    'probe_root=$(mktemp -d 2>/dev/null)',
+    'if [ -z "$probe_root" ] || [ ! -d "$probe_root" ]; then',
+    '  probe_root="${TMPDIR:-/tmp}/.netcatty-tar-probe-$$"',
+    '  mkdir -p "$probe_root" 2>/dev/null || {',
+    '    probe_root="$HOME/.netcatty-tar-probe-$$"',
+    '    mkdir -p "$probe_root" 2>/dev/null || exit 1',
+    '  }',
+    'fi',
+    'mkdir -p "$probe_root/src/netcatty-probe" 2>/dev/null || { rm -rf "$probe_root"; exit 1; }',
+    'printf x > "$probe_root/src/netcatty-probe/payload" 2>/dev/null || { rm -rf "$probe_root"; exit 1; }',
+    // Mirror the real extraction exactly: plain `tar -xzf` without GNU-only
+    // flags, so a BusyBox tar that can extract our archive passes instead of
+    // being mistaken for an unsupported host.
+    'tar -czf "$probe_root/probe.tar.gz" -C "$probe_root/src" netcatty-probe || { rm -rf "$probe_root"; exit 1; }',
+    'mkdir -p "$probe_root/out" 2>/dev/null || { rm -rf "$probe_root"; exit 1; }',
+    'tar -xzf "$probe_root/probe.tar.gz" -C "$probe_root/out" || { rm -rf "$probe_root"; exit 1; }',
+    '[ -f "$probe_root/out/netcatty-probe/payload" ] || { rm -rf "$probe_root"; exit 1; }',
+    'rm -rf "$probe_root"',
+    `echo ${REMOTE_TAR_PROBE_MARKER}`,
+  ].join("\n");
+}
 
 async function runWithCompressionTargetLock(targetKey, signal, operation) {
   const predecessor = compressionTargetLocks.get(targetKey) || Promise.resolve();
@@ -326,14 +402,19 @@ function cacheCompressionSupport(sftpId, value) {
 async function resolveCompressedUploadSupport(sftpId, signal) {
   const cached = getCachedCompressionSupport(sftpId);
   if (cached) return cached;
-  const localTar = await checkTarAvailable(signal);
+  const local = await checkTarAvailable(signal);
   if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('Upload cancelled');
-  const remoteTar = localTar ? await checkRemoteTarAvailable(sftpId, signal) : false;
+  const remote = local.available
+    ? await checkRemoteTarAvailable(sftpId, signal)
+    : { available: false, reason: undefined };
   if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('Upload cancelled');
   return cacheCompressionSupport(sftpId, {
-    supported: localTar && remoteTar,
-    localTar,
-    remoteTar,
+    supported: local.available && remote.available,
+    localTar: local.available,
+    remoteTar: remote.available,
+    reason: !local.available
+      ? (local.reason || "tar command not available on local system. Please install tar.")
+      : (!remote.available ? (remote.reason || "tar command not available on the remote server") : undefined),
   });
 }
 
@@ -409,7 +490,12 @@ async function checkTarAvailable(signal) {
       settled = true;
       clearTimeout(timeout);
       signal?.removeEventListener?.('abort', onAbort);
-      resolve(available);
+      resolve({
+        available,
+        reason: available
+          ? undefined
+          : "tar command not available on local system. Please install tar.",
+      });
     };
     const stop = () => {
       try { tar.kill('SIGTERM'); } catch { /* ignore */ }
@@ -446,7 +532,8 @@ async function checkTarAvailable(signal) {
 
 
 /**
- * Check if tar command is available on remote server
+ * Check whether the remote host can actually produce and read the archive we
+ * build. A present `tar` binary is not enough - see buildRemoteTarProbeCommand.
  */
 async function checkRemoteTarAvailable(sftpId, signal) {
   try {
@@ -455,20 +542,32 @@ async function checkRemoteTarAvailable(sftpId, signal) {
     // Probing tar would open a second channel and drop this SFTP login.
     // The renderer then uploads the folder file by file.
     if (client.__netcattySingleChannelSsh || client.client?.__netcattySingleChannelSsh) {
-      return false;
+      return {
+        available: false,
+        reason: "This host uses single-channel SSH, so folder compression is unavailable.",
+      };
     }
 
-    // Try to execute tar --version via SSH
     const sshClient = client.client; // Get underlying SSH2 client
     if (!sshClient) throw new Error("SSH client not available");
-    
-    const result = await runRemoteExec(sshClient, 'tar --version', {
+
+    const result = await runRemoteExec(sshClient, buildRemoteTarProbeCommand(), {
       timeoutMs: REMOTE_TAR_PROBE_TIMEOUT_MS,
       signal,
     });
-    return result.code === 0 && result.hasOutput;
-  } catch {
-    return false;
+    if (result.code === 0 && result.hasOutput) return { available: true };
+    const detail = String(result.stderr || "").trim().split("\n").filter(Boolean).slice(-1)[0];
+    return {
+      available: false,
+      reason: detail
+        ? `Folder compression is not supported by the tar command on this host (${detail}).`
+        : "Folder compression is not supported by the tar command on this host.",
+    };
+  } catch (error) {
+    return {
+      available: false,
+      reason: `Folder compression is not supported on this host (${error?.message || String(error)}).`,
+    };
   }
 }
 
@@ -642,6 +741,7 @@ async function startCompressedUpload(event, payload) {
     terminalState: null,
     resumeWaiters: [],
     remoteExecAbortController: new AbortController(),
+    support: null,
   };
   activeCompressions.set(compressionId, compression);
 
@@ -745,11 +845,15 @@ async function startCompressedUpload(event, payload) {
       sftpId,
       compression.remoteExecAbortController.signal,
     );
-    if (!support.localTar) {
-      throw new Error("tar command not available on local system. Please install tar.");
-    }
-    if (!support.remoteTar) {
-      throw new Error("tar command not available on remote server. Please install tar on the remote system.");
+    compression.support = support;
+    if (!support.supported) {
+      // Capability mismatch (no tar, or a tar that cannot handle .tar.gz):
+      // report it as a fallback so the renderer repeats this folder with the
+      // regular file-by-file upload instead of failing the transfer.
+      throw Object.assign(
+        new Error(support.reason || COMPRESSED_UPLOAD_FALLBACK_REASON),
+        { code: COMPRESSED_UPLOAD_UNSUPPORTED_CODE },
+      );
     }
 
     // Phase 1: Compression (0-30%)
@@ -891,6 +995,29 @@ async function startCompressedUpload(event, payload) {
 
     if (err.message === 'Upload cancelled' || err.message === 'Compression cancelled' || err.message === 'Transfer cancelled') {
       sendCancelled();
+    } else if (
+      err?.code === COMPRESSED_UPLOAD_UNSUPPORTED_CODE
+      || isUnsupportedTarFormatError(err)
+    ) {
+      // The host answered the version probe but cannot handle our archive (or
+      // advertise support at all). Settle the compressed row so the transfer
+      // center does not keep a stuck "transferring" entry, remember the verdict
+      // so the rest of this batch skips compression, and let the renderer retry
+      // the folder with the regular uploader.
+      const reason = `${err?.message || COMPRESSED_UPLOAD_FALLBACK_REASON}. Uploading the folder without compression instead.`;
+      try {
+        cacheCompressionSupport(sftpId, {
+          localTar: true,
+          remoteTar: true,
+          ...(compression.support || {}),
+          supported: false,
+          reason,
+        });
+      } catch {
+        // Caching is an optimization only.
+      }
+      settleCompressionTerminal(compression, 'failed', { error: reason });
+      return { compressionId, error: reason, fallback: true };
     } else {
       sendError(err.message || 'Unknown error occurred');
     }
@@ -1168,6 +1295,9 @@ module.exports = {
   _runRemoteExecForTests: runRemoteExec,
   _buildAtomicRemoteExtractionCommandForTests: buildAtomicRemoteExtractionCommand,
   _buildRemoteArchivePathForTests: buildRemoteArchivePath,
+  _buildRemoteTarProbeCommandForTests: buildRemoteTarProbeCommand,
+  _isUnsupportedTarFormatErrorForTests: isUnsupportedTarFormatError,
+  _checkRemoteTarAvailableForTests: checkRemoteTarAvailable,
   _createBoundedUtf8CollectorForTests: createBoundedUtf8Collector,
   _getActiveCompressionCountForTests: () => activeCompressions.size,
   _getWorkerCompressionLifecycleEpochCountForTests: () => workerCompressionLifecycleEpochs.size,

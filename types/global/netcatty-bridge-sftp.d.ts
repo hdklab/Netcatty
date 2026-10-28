@@ -46,7 +46,7 @@ declare global {
         folderName: string;
         totalBytes: number;
       }
-    ): Promise<{ compressionId: string; success?: boolean; error?: string }>;
+    ): Promise<{ compressionId: string; success?: boolean; error?: string; fallback?: boolean }>;
     cancelCompressedUpload?(compressionId: string): Promise<{ success: boolean; inactive?: boolean }>;
     pauseCompressedUpload?(compressionId: string): Promise<{ success: boolean; deferred?: boolean; lifecycleEpoch?: number; reason?: string }>;
     resumeCompressedUpload?(compressionId: string): Promise<{ success: boolean; lifecycleEpoch?: number; reason?: string }>;
@@ -54,6 +54,7 @@ declare global {
       supported: boolean;
       localTar: boolean;
       remoteTar: boolean;
+      reason?: string;
       error?: string;
     }>;
 

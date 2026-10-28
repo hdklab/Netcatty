@@ -14,8 +14,14 @@ import {
   handleVaultHostDropToGroup,
   handleVaultRootDrop,
   markVaultDropIndicator,
+  markVaultInsideDropIndicator,
   useVaultGridLayoutAnimation,
 } from "./vaultReorderDrag";
+import {
+  isVaultOrderedSectionKey,
+  resolveVaultHostDropPlan,
+  type VaultDropPayload,
+} from "../../domain/vaultHostDropPlan";
 import {
   hostCardFocusClassName,
   isHostClickFocusSelected,
@@ -27,7 +33,11 @@ import {
 import type { GroupNode, Host } from "../../domain/models";
 import { isPluginHostProtocol } from "../../domain/pluginConnection";
 import { OpenDualPaneSftpMenuItem, OpenHostBrowserMenuItem } from "../host/HostTreeContextMenus";
-import { VAULT_HOST_DRAG_IDS, isVaultHostDraggable } from "../../domain/vaultHostDrag";
+import {
+  VAULT_HOST_DRAG_IDS,
+  readVaultDraggedHostIds,
+  isVaultHostDraggable,
+} from "../../domain/vaultHostDrag";
 import { getVaultHostRowSubtitle } from "../../domain/localShellHost";
 import { beginVaultHostCardDrag } from "./vaultHostDragImage";
 import { useVaultHostMarquee } from "./useVaultHostMarquee";
@@ -67,6 +77,10 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
   const multiSelectedGroupPaths: Set<string> = selectedGroupPaths ?? EMPTY_GROUP_PATH_SET;
   const [draggingHostIds, setDraggingHostIds] = React.useState<ReadonlySet<string> | null>(null);
   const draggingHostIdRef = React.useRef<string | null>(null);
+  // True when the drag started on a derived section (pinned / recently connected):
+  // those lists are sorted by label / lastConnectedAt, so reordering them by drag
+  // rewrites order values without ever moving a card.
+  const draggingOrderedSectionRef = React.useRef(false);
   const lastPreviewReorderRef = React.useRef<string | null>(null);
   const prepareGridLayoutAnimation = useVaultGridLayoutAnimation(hostListScrollRef);
   const [focusedHostId, setFocusedHostId] = React.useState<string | null>(null);
@@ -301,8 +315,74 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
   }, [hostClickBehavior, isMultiSelectMode]);
 
 
+  // Drag plans need the group of the host under the cursor / being dragged, and
+  // that is not on the row element. `treeViewHosts` holds every filtered host
+  // regardless of the root "ungrouped only" filter, so it backs the lookup.
+  const hostGroupById = React.useMemo(() => {
+    const map = new Map<string, string>();
+    const sections: Array<Host[] | undefined> = [treeViewHosts, displayedHosts];
+    for (const section of sections) {
+      if (!Array.isArray(section)) continue;
+      for (const host of section) {
+        if (!map.has(host.id)) map.set(host.id, host.group ?? "");
+      }
+    }
+    return map;
+  }, [displayedHosts, treeViewHosts]);
+
+  const moveHostsIntoGroup = React.useCallback(
+    (ids: readonly string[], groupPath: string | null) => {
+      const unique = new Set(ids.filter((id) => id.length > 0));
+      if (unique.size === 0) return;
+      if (moveHostsToGroup) {
+        moveHostsToGroup(unique, groupPath);
+        return;
+      }
+      if (unique.size === 1 && moveHostToGroup) moveHostToGroup([...unique][0], groupPath);
+    },
+    [moveHostToGroup, moveHostsToGroup],
+  );
+
+  // The tree rows start their own drag (they live in HostTreeView), so the drop
+  // planner cannot rely on handleHostDragStart alone. A document-level capture
+  // listener records which host the drag came from and whether it started in a
+  // derived section, for every source inside this list.
+  React.useEffect(() => {
+    if (typeof document === "undefined") return;
+    const handleDragStartCapture = (event: DragEvent) => {
+      const container = hostListScrollRef.current;
+      const source = event.target instanceof Element
+        ? event.target.closest("[data-host-id]")
+        : null;
+      if (!container || !(source instanceof HTMLElement) || !container.contains(source)) return;
+      const hostId = source.dataset.hostId ?? "";
+      if (!hostId) return;
+      draggingHostIdRef.current = hostId;
+      draggingOrderedSectionRef.current = isVaultOrderedSectionKey(source.dataset.vaultGridItem);
+    };
+    document.addEventListener("dragstart", handleDragStartCapture, true);
+    return () => document.removeEventListener("dragstart", handleDragStartCapture, true);
+  }, [hostListScrollRef]);
+
+  const buildHostDragPayload = React.useCallback((dataTransfer: DataTransfer): VaultDropPayload => {
+    const ids = draggingHostIds && draggingHostIds.size > 0
+      ? [...draggingHostIds]
+      : draggingHostIdRef.current
+        ? [draggingHostIdRef.current]
+        : [];
+    const sourceId = draggingHostIdRef.current ?? ids[0] ?? "";
+    return {
+      kind: "host",
+      hostIds: ids,
+      sourceGroup: hostGroupById.get(sourceId) ?? "",
+      sourceOrderedSection: draggingOrderedSectionRef.current,
+      multi: hasVaultDragType(dataTransfer, VAULT_HOST_DRAG_IDS) || ids.length > 1,
+    };
+  }, [draggingHostIds, hostGroupById]);
+
   const resetHostDragState = React.useCallback(() => {
     draggingHostIdRef.current = null;
+    draggingOrderedSectionRef.current = false;
     setDraggingHostIds(null);
     lastPreviewReorderRef.current = null;
     setDragOverDropTarget(null);
@@ -321,6 +401,9 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
       return;
     }
     draggingHostIdRef.current = hostId;
+    draggingOrderedSectionRef.current = isVaultOrderedSectionKey(
+      (e.currentTarget as HTMLElement).dataset?.vaultGridItem,
+    );
     setDraggingHostIds(new Set(ids));
     lastPreviewReorderRef.current = null;
 
@@ -389,16 +472,36 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
           onPointerDown={onMarqueePointerDown}
           onDragOverCapture={(e) => {
             const target = (e.target as Element | null)?.closest("[data-host-id], [data-group-path]");
-            if (hasVaultDragType(e.dataTransfer, VAULT_HOST_DRAG_IDS)) {
-              const groupTarget = target instanceof HTMLElement && target.hasAttribute("data-group-path");
-              if (!groupTarget) return;
+
+            // No row under the cursor: in the tree the empty area below the rows
+            // is the root drop zone that takes a host back out of its group.
+            if (!(target instanceof HTMLElement)) {
+              const draggingHost = Boolean(draggingHostIdRef.current)
+                || hasVaultDragType(e.dataTransfer, "host-id");
+              if (
+                viewMode === "tree"
+                && draggingHost
+                && !hasVaultDragType(e.dataTransfer, "group-path")
+              ) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                clearVaultDropIndicator();
+              }
+              return;
             }
-            if (target) e.preventDefault();
-            if (!(target instanceof HTMLElement)) return;
-            const draggedGroupPath = e.dataTransfer.getData("group-path");
-            const isDraggingGroup = hasVaultDragType(e.dataTransfer, "group-path");
+
             const targetGroupPath = target.getAttribute("data-group-path");
-            if (isDraggingGroup && targetGroupPath && draggedGroupPath !== targetGroupPath) {
+            if (targetGroupPath) {
+              // Group rows own their highlight: a host dropped here enters the
+              // group, so a before/after insertion line would promise a reorder
+              // the drop never performs.
+              if (!hasVaultDragType(e.dataTransfer, "group-path")) {
+                clearVaultDropIndicator();
+                return;
+              }
+              e.preventDefault();
+              const draggedGroupPath = e.dataTransfer.getData("group-path");
+              if (!draggedGroupPath || draggedGroupPath === targetGroupPath) return;
               const intent = getVaultDropIntent(target, e.clientX, e.clientY, viewMode === "grid");
               if (intent === "inside") {
                 clearVaultDropIndicator();
@@ -407,82 +510,127 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
               markVaultDropIndicator(target, intent, viewMode === "grid" ? "x" : "y");
               return;
             }
-            if (viewMode !== "grid") {
-              markVaultDropIndicator(target, getVaultDropPosition(target, e.clientX, e.clientY));
+
+            const targetHostId = target.getAttribute("data-host-id");
+            if (!targetHostId) return;
+
+            const position = getVaultDropPosition(
+              target,
+              e.clientX,
+              e.clientY,
+              viewMode === "grid",
+            );
+            const plan = resolveVaultHostDropPlan({
+              payload: buildHostDragPayload(e.dataTransfer),
+              target: {
+                kind: "host",
+                hostId: targetHostId,
+                group: hostGroupById.get(targetHostId) ?? "",
+                orderedSection: isVaultOrderedSectionKey(target.dataset.vaultGridItem),
+              },
+              position,
+            });
+            if (plan.kind === "none") {
+              clearVaultDropIndicator();
               return;
             }
 
-            const draggedHostId = draggingHostIdRef.current || e.dataTransfer.getData("host-id");
-            const targetHostId = target.getAttribute("data-host-id");
-            if (!draggedHostId || !targetHostId || draggedHostId === targetHostId) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
 
-            const position = getVaultDropPosition(target, e.clientX, e.clientY, true);
-            const previewKey = `${draggedHostId}:${targetHostId}:${position}`;
+            if (plan.kind === "move") {
+              markVaultInsideDropIndicator(target);
+              return;
+            }
+
+            if (viewMode !== "grid") {
+              markVaultDropIndicator(target, position);
+              return;
+            }
+
+            const previewKey = `${plan.hostId}:${plan.targetHostId}:${plan.position}`;
             if (lastPreviewReorderRef.current === previewKey) return;
 
             prepareGridLayoutAnimation();
             lastPreviewReorderRef.current = previewKey;
-            reorderHost(draggedHostId, targetHostId, position);
-          }}
-          onDragOver={(e) => {
-            const target = (e.target as Element | null)?.closest("[data-host-id], [data-group-path]");
-            if (hasVaultDragType(e.dataTransfer, VAULT_HOST_DRAG_IDS)) {
-              const groupTarget = target instanceof HTMLElement && target.hasAttribute("data-group-path");
-              if (!groupTarget) return;
-            }
-            if (!(target instanceof HTMLElement) || viewMode === "grid") return;
-            const draggedGroupPath = e.dataTransfer.getData("group-path");
-            const isDraggingGroup = hasVaultDragType(e.dataTransfer, "group-path");
-            const targetGroupPath = target.getAttribute("data-group-path");
-            if (isDraggingGroup && targetGroupPath && draggedGroupPath !== targetGroupPath) {
-              const intent = getVaultDropIntent(target, e.clientX, e.clientY, false);
-              if (intent === "inside") {
-                clearVaultDropIndicator();
-                return;
-              }
-              markVaultDropIndicator(target, intent);
-              return;
-            }
-            markVaultDropIndicator(target, getVaultDropPosition(target, e.clientX, e.clientY));
+            reorderHost(plan.hostId, plan.targetHostId, plan.position);
           }}
           onDropCapture={(e) => {
             clearVaultDropIndicator();
-            const draggedHostId = e.dataTransfer.getData("host-id");
+            const dropHostIds = readVaultDraggedHostIds((type) => e.dataTransfer.getData(type));
             const draggedGroupPath = e.dataTransfer.getData("group-path");
+            // The plan needs the drag state captured at dragstart, so snapshot it
+            // before the reset below clears the refs.
+            const sourceOrderedSection = draggingOrderedSectionRef.current;
             const target = (e.target as Element | null)?.closest("[data-host-id], [data-group-path]");
             // Always clear the dimmed drag styling: in grid view the live preview
             // reorder can leave the dragged card itself under the cursor, which
             // used to fall through every branch below without resetting.
-            if (draggedHostId) resetHostDragState();
-            if (!(target instanceof HTMLElement)) return;
-            const targetHostId = target.getAttribute("data-host-id");
-            const targetGroupPath = target.getAttribute("data-group-path");
-            if (
-              draggedHostId
-              && targetHostId
-              && draggedHostId !== targetHostId
-              && !hasVaultDragType(e.dataTransfer, VAULT_HOST_DRAG_IDS)
-            ) {
+            if (dropHostIds.length > 0) resetHostDragState();
+
+            if (target instanceof HTMLElement) {
+              const targetGroupPath = target.getAttribute("data-group-path");
+              if (targetGroupPath) {
+                // Group rows keep their own drop handlers: enter the group, or
+                // reorder sibling groups at the row edges.
+                if (draggedGroupPath && draggedGroupPath !== targetGroupPath) {
+                  const intent = getVaultDropIntent(target, e.clientX, e.clientY, viewMode === "grid");
+                  if (intent === "inside") return;
+                  prepareGridLayoutAnimation();
+                  const handled = reorderGroup(draggedGroupPath, targetGroupPath, intent);
+                  if (handled) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }
+                }
+                return;
+              }
+
+              const targetHostId = target.getAttribute("data-host-id");
+              if (!targetHostId) return;
+              const position = getVaultDropPosition(
+                target,
+                e.clientX,
+                e.clientY,
+                viewMode === "grid",
+              );
+              const plan = resolveVaultHostDropPlan({
+                payload: {
+                  kind: "host",
+                  hostIds: dropHostIds,
+                  sourceGroup: hostGroupById.get(dropHostIds[0] ?? "") ?? "",
+                  sourceOrderedSection,
+                  multi: dropHostIds.length > 1
+                    || hasVaultDragType(e.dataTransfer, VAULT_HOST_DRAG_IDS),
+                },
+                target: {
+                  kind: "host",
+                  hostId: targetHostId,
+                  group: hostGroupById.get(targetHostId) ?? "",
+                  orderedSection: isVaultOrderedSectionKey(target.dataset.vaultGridItem),
+                },
+                position,
+              });
+              if (plan.kind === "none") return;
               e.preventDefault();
               e.stopPropagation();
-              const position = getVaultDropPosition(target, e.clientX, e.clientY, viewMode === "grid");
-              const previewKey = `${draggedHostId}:${targetHostId}:${position}`;
+              if (plan.kind === "move") {
+                moveHostsIntoGroup(plan.hostIds, plan.groupPath);
+                return;
+              }
+              const previewKey = `${plan.hostId}:${plan.targetHostId}:${plan.position}`;
               if (viewMode !== "grid" || lastPreviewReorderRef.current !== previewKey) {
                 prepareGridLayoutAnimation();
-                reorderHost(draggedHostId, targetHostId, position);
+                reorderHost(plan.hostId, plan.targetHostId, plan.position);
               }
-              resetHostDragState();
               return;
             }
-            if (draggedGroupPath && targetGroupPath && draggedGroupPath !== targetGroupPath) {
-              const intent = getVaultDropIntent(target, e.clientX, e.clientY, viewMode === "grid");
-              if (intent === "inside") return;
-              prepareGridLayoutAnimation();
-              const handled = reorderGroup(draggedGroupPath, targetGroupPath, intent);
-              if (handled) {
-                e.preventDefault();
-                e.stopPropagation();
-              }
+
+            // Tree root drop zone: the empty area takes hosts out of their group.
+            if (viewMode === "tree" && dropHostIds.length > 0 && !draggedGroupPath) {
+              e.preventDefault();
+              e.stopPropagation();
+              moveHostsIntoGroup(dropHostIds, null);
             }
           }}
           onDragEndCapture={() => {

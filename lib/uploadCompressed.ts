@@ -8,6 +8,13 @@ import type { UploadController } from "./uploadController";
 const formatUploadError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/**
+ * Sentinel returned for a folder this host cannot compress (no tar, or a tar
+ * that cannot read or write `.tar.gz`). uploadService turns it into a regular
+ * file-by-file retry of the same folder instead of surfacing a failure.
+ */
+export const COMPRESSED_UPLOAD_FALLBACK_ERROR = "Compressed upload not supported - fallback needed";
+
 export async function uploadFoldersCompressed(
   folderEntries: Array<[string, DropEntry[]]>,
   targetPath: string,
@@ -32,7 +39,7 @@ export async function uploadFoldersCompressed(
     ));
     if (!firstFile) {
       // Empty folder - mark for fallback to regular upload which will create the directory
-      results.push({ fileName: folderName, success: false, error: "Compressed upload not supported - fallback needed" });
+      results.push({ fileName: folderName, success: false, error: COMPRESSED_UPLOAD_FALLBACK_ERROR });
       continue;
     }
 
@@ -105,7 +112,7 @@ export async function uploadFoldersCompressed(
         results.push({
           fileName: folderName,
           success: false,
-          error: "Compressed upload not supported - fallback needed"
+          error: COMPRESSED_UPLOAD_FALLBACK_ERROR
         });
         continue;
       }
@@ -159,6 +166,10 @@ export async function uploadFoldersCompressed(
       
       if (result.success) {
         results.push({ fileName: folderName, success: true });
+      } else if (result.fallback) {
+        // The host turned out to lack usable tar support mid-flight (e.g. tar
+        // exists but cannot handle .tar.gz): retry this folder the regular way.
+        results.push({ fileName: folderName, success: false, error: COMPRESSED_UPLOAD_FALLBACK_ERROR });
       } else if (result.error?.includes('cancelled') || controller?.isCancelled()) {
         // Handle cancellation
         results.push({ fileName: folderName, success: false, cancelled: true });

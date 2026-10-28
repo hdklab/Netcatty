@@ -9,6 +9,9 @@ const test = require("node:test");
 
 const compressUploadBridge = require("./compressUploadBridge.cjs");
 
+// The remote capability probe is a self-test script, not `tar --version`.
+const isRemoteTarProbeCommand = (command) => String(command).includes("netcatty-probe");
+
 test("compressed commits to the same remote folder are serialized", async () => {
   let active = 0;
   let maxActive = 0;
@@ -297,9 +300,9 @@ test("compressed upload holds its SFTP session until remote extraction settles",
     exec(command, callback) {
       const stream = makeStream();
       callback(null, stream);
-      if (command === "tar --version") {
+      if (isRemoteTarProbeCommand(command)) {
         process.nextTick(() => {
-          stream.emit("data", Buffer.from("tar"));
+          stream.emit("data", Buffer.from("netcatty-tar-probe-ok"));
           stream.emit("close", 0);
         });
       } else if (command.includes("tar -xzf")) {
@@ -424,7 +427,7 @@ function createSuccessfulCompressionHarness(t, { onRemoteCommand, onUpload } = {
       stream.destroy = () => {};
       callback(null, stream);
       process.nextTick(() => {
-        if (command === "tar --version") stream.emit("data", Buffer.from("tar"));
+        if (isRemoteTarProbeCommand(command)) stream.emit("data", Buffer.from("netcatty-tar-probe-ok"));
         stream.emit("close", 0);
       });
     },
@@ -454,7 +457,7 @@ test("support preflight is reused by the immediately following compressed start"
   let remoteProbeCalls = 0;
   const harness = createSuccessfulCompressionHarness(t, {
     onRemoteCommand(command) {
-      if (command === "tar --version") remoteProbeCalls += 1;
+      if (isRemoteTarProbeCommand(command)) remoteProbeCalls += 1;
     },
   });
   const support = await harness.handlers.get("netcatty:compress:checkSupport")(
@@ -714,7 +717,239 @@ test("single-channel compressed upload does not extract through the terminal", a
   });
 
   assert.equal(result.success, undefined);
-  assert.match(result.error, /tar command not available on remote server/);
+  assert.equal(result.fallback, true, "single-channel hosts must fall back to the regular upload");
+  assert.match(result.error, /single-channel/i);
   assert.equal(execCalls, 0);
   assert.equal(writes.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Unsupported archive format (tar present, gzip/`-z` missing) must fall back to
+// the regular file-by-file upload instead of failing the folder.
+// ---------------------------------------------------------------------------
+
+function createRemoteTarFailureHarness(t, { failCommand, stderr }) {
+  const handlers = new Map();
+  const events = [];
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-compress-tar-format-"));
+  const folderPath = path.join(root, "folder");
+  fs.mkdirSync(folderPath);
+  fs.writeFileSync(path.join(folderPath, "file.txt"), "payload");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const sshClient = {
+    writable: true,
+    exec(command, callback) {
+      const stream = new EventEmitter();
+      stream.stderr = new EventEmitter();
+      stream.close = () => {};
+      stream.end = () => {};
+      stream.destroy = () => {};
+      callback(null, stream);
+      process.nextTick(() => {
+        if (isRemoteTarProbeCommand(command)) {
+          stream.emit("data", Buffer.from("netcatty-tar-probe-ok"));
+          stream.emit("close", 0);
+          return;
+        }
+        if (failCommand(command)) {
+          stream.stderr.emit("data", Buffer.from(stderr));
+          stream.emit("close", 2);
+          return;
+        }
+        stream.emit("close", 0);
+      });
+    },
+  };
+
+  compressUploadBridge._resetCompressionSupportCacheForTests();
+  compressUploadBridge.init({
+    sftpClients: new Map([["sftp-tar-format", {
+      client: sshClient,
+      __netcattyEndpointKey: "endpoint:tar-format",
+    }]]),
+    transferBridge: {
+      acquireTransferSessionLeases(_leaseId, payload) { return [payload.targetSftpId]; },
+      releaseTransferSessionLeases() {},
+      broadcastGlobalTransferEvent(event) { events.push(event); },
+      async startInternalTransfer() { return { success: true }; },
+      async cancelTransfer() { return { success: true }; },
+    },
+  });
+  compressUploadBridge.registerHandlers({
+    handle(channel, handler) { handlers.set(channel, handler); },
+  });
+  return { handlers, events, folderPath, sender: { id: 1, send() {} } };
+}
+
+test("the remote tar probe requires a working gzip round trip, not just a tar binary", (t) => {
+  if (process.platform === "win32") return t.skip("POSIX shell test");
+  const command = compressUploadBridge._buildRemoteTarProbeCommandForTests();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-tar-probe-path-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  // A real tar satisfies the probe.
+  const ok = require("node:child_process").spawnSync("/bin/sh", ["-c", command], { encoding: "utf8" });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /netcatty-tar-probe-ok/);
+
+  // A tar that exists but cannot handle -z (BusyBox without the gzip applet)
+  // must fail the probe, so the uploader never starts a doomed compression.
+  const fakeBin = path.join(root, "bin");
+  fs.mkdirSync(fakeBin);
+  const fakeTar = path.join(fakeBin, "tar");
+  fs.writeFileSync(
+    fakeTar,
+    "#!/bin/sh\ncase \" $* \" in *\" -z\"*|*\"-czf\"*|*\"-xzf\"*) echo \"tar: invalid option -- 'z'\" >&2; exit 2;; esac\nexec /bin/tar \"$@\"\n",
+    { mode: 0o755 },
+  );
+  const rejected = require("node:child_process").spawnSync("/bin/sh", ["-c", command], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
+  });
+  assert.notEqual(rejected.status, 0);
+  assert.doesNotMatch(rejected.stdout, /netcatty-tar-probe-ok/);
+});
+
+test("an unsupported tar archive format falls back to the regular upload", async (t) => {
+  const harness = createRemoteTarFailureHarness(t, {
+    failCommand: (command) => command.includes("tar -xzf"),
+    stderr: "tar: invalid option -- 'z'\n",
+  });
+
+  const result = await harness.handlers.get("netcatty:compress:start")({ sender: harness.sender }, {
+    compressionId: "format-unsupported",
+    folderPath: harness.folderPath,
+    targetPath: "/srv/target",
+    sftpId: "sftp-tar-format",
+    folderName: "folder",
+    totalBytes: 7,
+  });
+
+  assert.equal(result.success, undefined);
+  assert.equal(result.fallback, true, "the renderer must retry this folder without compression");
+  const terminal = harness.events.at(-1);
+  assert.equal(terminal.type, "failed", "the compressed row must not stay in transferring");
+  assert.match(String(terminal.error), /gzip|invalid option|not supported/i);
+
+  // The verdict is cached so the remaining folders of the same batch skip
+  // compression instead of failing the same way once per folder.
+  const support = await harness.handlers.get("netcatty:compress:checkSupport")(
+    { sender: harness.sender },
+    { sftpId: "sftp-tar-format" },
+  );
+  assert.equal(support.supported, false);
+});
+
+test("a real extraction failure is not reported as an unsupported format", async (t) => {
+  const harness = createRemoteTarFailureHarness(t, {
+    failCommand: (command) => command.includes("tar -xzf"),
+    stderr: "cp: cannot create regular file '/srv/target/x': Permission denied\n",
+  });
+
+  const result = await harness.handlers.get("netcatty:compress:start")({ sender: harness.sender }, {
+    compressionId: "extract-permission-denied",
+    folderPath: harness.folderPath,
+    targetPath: "/srv/target",
+    sftpId: "sftp-tar-format",
+    folderName: "folder",
+    totalBytes: 7,
+  });
+
+  assert.equal(result.fallback, undefined);
+  assert.match(String(result.error), /Permission denied/);
+  // A real failure must not poison the capability cache for later folders.
+  const support = await harness.handlers.get("netcatty:compress:checkSupport")(
+    { sender: harness.sender },
+    { sftpId: "sftp-tar-format" },
+  );
+  assert.equal(support.supported, true);
+});
+
+test("only archive-format failures count as a capability fallback", () => {
+  const isUnsupported = compressUploadBridge._isUnsupportedTarFormatErrorForTests;
+
+  // tar exists but this archive format / these flags are not supported.
+  for (const message of [
+    "Remote extraction failed: tar: invalid option -- 'z'",
+    "Remote extraction failed: tar: unrecognized option '--exclude'",
+    "Remote extraction failed: tar: z: unknown function modifier",
+    "Remote extraction failed: tar: gzip: not found",
+    "Remote extraction failed: sh: gzip: not found",
+    "Remote extraction failed: tar: Cannot exec gzip: No such file or directory",
+    "Remote extraction failed: tar: can't run gzip: No such file or directory",
+    "Remote extraction failed: tar: Unrecognized archive format",
+    "Failed to start tar: spawn tar ENOENT",
+    "Remote extraction failed: tar: invalid tar magic",
+  ]) {
+    assert.equal(isUnsupported(new Error(message)), true, message);
+  }
+
+  // Real transfer problems must stay hard failures.
+  for (const message of [
+    "Remote extraction failed: cp: cannot create regular file '/srv/x': Permission denied",
+    "Remote extraction failed: tar: Cannot open: No space left on device",
+    "Remote extraction failed: tar: Cannot open: Is a directory",
+    "Remote command timed out after 60 seconds",
+    "Remote extraction failed: exit code 1",
+  ]) {
+    assert.equal(isUnsupported(new Error(message)), false, message);
+  }
+});
+
+test("the remote extraction script runs on a BusyBox tar that rejects GNU long options", (t) => {
+  if (process.platform === "win32") return t.skip("POSIX shell test");
+  const { spawnSync } = require("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-extract-busybox-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const source = path.join(root, "src");
+  fs.mkdirSync(path.join(source, "folder", "sub"), { recursive: true });
+  fs.writeFileSync(path.join(source, "folder", "payload.txt"), "payload");
+  fs.writeFileSync(path.join(source, "folder", ".DS_Store"), "junk");
+  fs.writeFileSync(path.join(source, "folder", "sub", "._payload.txt"), "junk");
+
+  const targetDir = path.join(root, "target");
+  fs.mkdirSync(targetDir);
+  const archivePath = path.join(targetDir, "upload.tar.gz");
+  const created = spawnSync("tar", [
+    "-czf", archivePath, "-C", source,
+    "--exclude=._*", "--exclude=.DS_Store", "folder",
+  ], { encoding: "utf8" });
+  assert.equal(created.status, 0, created.stderr);
+
+  const command = compressUploadBridge._buildAtomicRemoteExtractionCommandForTests({
+    compressionId: "abcdef1234567890",
+    archivePath,
+    targetDir,
+    folderName: "folder",
+  });
+  // BusyBox tar answers "tar: unrecognized option '--exclude=._*'" and fails
+  // the whole upload; the archive we send never contains those entries anyway.
+  assert.doesNotMatch(command, /--exclude/);
+
+  // A tar shaped like BusyBox's (long options rejected) must still extract.
+  const fakeBin = path.join(root, "bin");
+  fs.mkdirSync(fakeBin);
+  fs.writeFileSync(path.join(fakeBin, "tar"), [
+    "#!/bin/sh",
+    "for arg in \"$@\"; do",
+    "  case \"$arg\" in",
+    "    --?*) echo \"tar: unrecognized option '$arg'\" >&2; exit 1;;",
+    "  esac",
+    "done",
+    "exec /bin/tar \"$@\"",
+    "",
+  ].join("\n"), { mode: 0o755 });
+
+  const result = spawnSync("/bin/sh", ["-c", command], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
+  });
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  assert.equal(fs.readFileSync(path.join(targetDir, "folder", "payload.txt"), "utf8"), "payload");
+  assert.equal(fs.existsSync(path.join(targetDir, "folder", ".DS_Store")), false);
+  assert.equal(fs.existsSync(path.join(targetDir, "folder", "sub", "._payload.txt")), false);
+  assert.equal(fs.existsSync(path.join(targetDir, ".netcatty-compress-abcdef1234567890.stage")), false);
+  assert.equal(fs.existsSync(archivePath), false, "the uploaded archive is cleaned up");
 });

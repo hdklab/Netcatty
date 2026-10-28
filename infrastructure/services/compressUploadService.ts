@@ -25,15 +25,21 @@ export interface CompressUploadSupport {
   supported: boolean;
   localTar: boolean;
   remoteTar: boolean;
+  /** Why support is missing (human readable); set when `supported` is false. */
+  reason?: string;
   error?: string;
 }
 
 /**
  * Start a compressed folder upload
+ *
+ * `fallback: true` means the host cannot run this archive format at all (tar
+ * missing, or a tar without gzip/`-z` support). Nothing was uploaded for this
+ * folder; the caller should retry it with the regular file-by-file transfer.
  */
 export async function startCompressedUpload(
   options: CompressUploadOptions,
-): Promise<{ compressionId: string; success?: boolean; error?: string }> {
+): Promise<{ compressionId: string; success?: boolean; error?: string; fallback?: boolean }> {
   const bridge = netcattyBridge.get();
   if (!bridge?.startCompressedUpload) {
     throw new Error("Compressed upload not available");

@@ -8,7 +8,7 @@
 
 import { extractDropEntries, DropEntry, getDropEntryLocalPath, getPathForFile } from "./sftpFileUtils";
 import { logger } from "./logger";
-import { uploadFoldersCompressed } from "./uploadCompressed";
+import { uploadFoldersCompressed, COMPRESSED_UPLOAD_FALLBACK_ERROR } from "./uploadCompressed";
 import {
   canReplaceSftpConflict,
   describeSftpExistingKind,
@@ -229,7 +229,7 @@ export async function uploadFromFileList(
 
 type UploadConflictAction = Awaited<ReturnType<NonNullable<UploadConfig["resolveConflict"]>>>;
 
-const compressionFallbackError = "Compressed upload not supported - fallback needed";
+const compressionFallbackError = COMPRESSED_UPLOAD_FALLBACK_ERROR;
 
 const uploadConflictGroupKey = (fileName: string, isDirectory: boolean) => (
   `${isDirectory ? "directory" : "file"}:${fileName}`

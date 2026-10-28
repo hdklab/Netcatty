@@ -33,6 +33,7 @@ function installCompressedUploadBridge(
   t: TestContext,
   options: {
     supported?: boolean;
+    startResult?: { success?: boolean; error?: string; fallback?: boolean };
     onStart?: (payload: {
       compressionId: string;
       folderPath: string;
@@ -54,7 +55,11 @@ function installCompressedUploadBridge(
     }),
     startCompressedUpload: async (payload) => {
       options.onStart?.(payload);
-      return { compressionId: payload.compressionId, success: true };
+      return {
+        compressionId: payload.compressionId,
+        success: true,
+        ...options.startResult,
+      };
     },
   } as NetcattyBridge;
   Object.defineProperty(globalThis, "window", {
@@ -309,6 +314,44 @@ test("compression remains enabled for picked-folder uploads that have a conflict
   assert.equal(compressedStarts, 1);
   assert.equal(streamCalls, 0);
   assert.deepEqual(results, [{ fileName: "docs", success: true }]);
+});
+
+test("a compressed upload that loses tar support mid-flight is retried as a regular upload", async (t) => {
+  let compressedStarts = 0;
+  installCompressedUploadBridge(t, {
+    startResult: {
+      success: false,
+      fallback: true,
+      error: "Folder compression is not supported by the tar command on this host (tar: invalid option -- 'z').",
+    },
+    onStart: () => { compressedStarts += 1; },
+  });
+  const createdDirs: string[] = [];
+  const streamTargets: string[] = [];
+  const results = await uploadFromFileList(
+    [createPickedFolderFile()],
+    {
+      targetPath: "/remote",
+      sftpId: "sftp-1",
+      isLocal: false,
+      bridge: {
+        mkdirSftp: async (_sftpId, path) => { createdDirs.push(path); },
+        statSftp: async () => null,
+        startStreamTransfer: async (payload) => {
+          streamTargets.push(payload.targetPath);
+          return { transferId: payload.transferId };
+        },
+      },
+      joinPath: (base, name) => `${base}/${name}`,
+      useCompressedUpload: true,
+      resolveConflict: async () => "merge",
+    },
+  );
+
+  assert.equal(compressedStarts, 1, "the folder is attempted on the compressed path first");
+  assert.deepEqual(createdDirs, ["/remote/docs"], "fallback creates the destination directory itself");
+  assert.deepEqual(streamTargets, ["/remote/docs/file.txt"], "every file is uploaded over the regular path");
+  assert.deepEqual(results, [{ fileName: "docs/file.txt", success: true }]);
 });
 
 test("compressed folder conflict decisions preserve merge, replace, and fallback semantics", async (t) => {
