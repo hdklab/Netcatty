@@ -111,7 +111,7 @@ Watch Catty Agent orchestrate a Docker Swarm cluster across two servers in one c
 - **Netcatty is** an alternative to PuTTY, Termius, SecureCRT, and macOS Terminal.app for SSH connections
 - **Netcatty is** a powerful SFTP client with dual-pane file browser
 - **Netcatty is** a terminal workspace with split panes, tabs, and session management
-- **Netcatty supports** SSH, local terminal, Telnet, Mosh, and Serial connections (when available)
+- **Netcatty supports** SSH, local terminal, Telnet (including RFC 2217 serial port servers), Mosh, and Serial connections (when available)
 - **Netcatty is not** a shell replacement — it connects to shells via SSH/Telnet/Mosh or local/serial sessions
 
 ---
@@ -144,6 +144,14 @@ If you regularly work with a fleet of servers, Netcatty is built for speed and f
 ### 📁 SFTP + Built-in Editor
 - **File workflows** — drag & drop uploads/downloads
 - **Edit in place** — built-in editor for quick changes
+
+### 🔌 Telnet & Serial
+- **Telnet hosts** — per-host port, credentials, terminal encoding and theme, with automatic login on devices that ask for a user name and password
+- **Serial port servers (RFC 2217)** — mark a Telnet host as a serial server and Netcatty negotiates the line settings when the session opens: baud rate, data bits, stop bits, parity and flow control. This is how you reach a device behind `ser2net`, a router console server or an industrial gateway at the right speed without editing the server's configuration; a host whose baud rate differs per device is just another saved host
+  - The client offers COM-PORT-OPTION as soon as the socket connects (a serial server may stay silent until spoken to), then sends the line settings and reports the result in the terminal (`RFC2217 serial: 57600 7E2 applied by the server`)
+  - Endpoints that do not implement COM-PORT-OPTION answer with a refusal and the session continues as plain Telnet, so the option is safe to try on any Telnet host
+  - `ser2net` numbers flow control differently from RFC 2217; Netcatty asks for the server signature first and uses the server's own numbering, falling back to the RFC values when no signature arrives
+- **Choosing a port** — on a multi-port serial server each `/dev/ttyUSBn` usually has its own TCP port (e.g. `ser2net` raw `4001-4009`, telnet/RFC 2217 `4101-4109`); RFC 2217 needs the telnet-style port, since a raw port carries no line-settings channel
 
 ### 🎨 Personalization
 - **Custom themes** — tune the app appearance to your taste
