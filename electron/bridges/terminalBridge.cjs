@@ -23,6 +23,12 @@ const pty = require("node-pty");
 const { SerialPort } = require("serialport");
 const { createSerialTransport } = require("./serialNamedPipe.cjs");
 const {
+  resolveSerialDeviceIdentity,
+  findSerialSessionOwner,
+  describeSerialPortBusy,
+  isSerialPortBusyError,
+} = require("./serialPortOwnership.cjs");
+const {
   configureTerminalSessionDataEmitter,
   emitTerminalSessionData,
 } = require("./emitTerminalSessionData.cjs");
@@ -1315,6 +1321,20 @@ async function listSerialPorts() {
 }
 
 /**
+ * Report which live session already holds a serial device.
+ *
+ * The renderer asks only after a start failed, so a busy port can be explained
+ * with the owning tab's label instead of the binding's lock error.
+ */
+function findSerialPortOwner(_event, payload) {
+  const portPath = typeof payload?.path === "string" ? payload.path.trim() : "";
+  if (!portPath) return null;
+  const owner = findSerialSessionOwner(sessions, resolveSerialDeviceIdentity(portPath));
+  if (!owner) return null;
+  return { sessionId: owner.sessionId, label: owner.label, path: owner.path };
+}
+
+/**
  * Start a serial port session (supports both hardware serial ports and PTY devices)
  * Note: SerialPort library can open PTY devices directly, they just won't appear in list()
  */
@@ -1329,6 +1349,21 @@ async function startSerialSession(event, options) {
   const flowControl = options.flowControl || 'none';
 
   console.log(`[Serial] Starting connection to ${portPath} at ${baudRate} baud`);
+
+  // The serialport binding only reports a bare lock failure when another
+  // session already holds the device (`Cannot lock port`). Name the owning
+  // session instead, so a second tab on the same port (two hosts pointing at
+  // /dev/ttyUSB0, a same-device symlink, ...) fails with something usable.
+  const deviceIdentity = resolveSerialDeviceIdentity(portPath);
+  const existingOwner = findSerialSessionOwner(sessions, deviceIdentity, {
+    // A reconnect reuses its own sessionId; the worker closes the superseded
+    // boot first, so this session must not count as its own conflict.
+    excludeSessionId: sessionId,
+  });
+  if (existingOwner) {
+    console.log(`[Serial] ${portPath} is already open in session ${existingOwner.sessionId}`);
+    throw new Error(describeSerialPortBusy(portPath, existingOwner));
+  }
 
   return new Promise((resolve, reject) => {
     // Token for the log stream we open on this connection. Captured here so
@@ -1390,7 +1425,11 @@ async function startSerialSession(event, options) {
         }
         if (err) {
           console.error(`[Serial] Failed to open port ${portPath}:`, err.message);
-          settleReject(new Error(`Failed to open serial port: ${err.message}`));
+          settleReject(new Error(isSerialPortBusyError(err)
+            // Another process (minicom, another Netcatty window) holds it, or a
+            // concurrent start won the race after the pre-flight check.
+            ? describeSerialPortBusy(portPath, null)
+            : `Failed to open serial port: ${err.message}`));
           return;
         }
 
@@ -1410,6 +1449,14 @@ async function startSerialSession(event, options) {
           serialEncoding: initialSerialEncoding,
           decoderRef: serialDecoderRef,
           webContentsId: event.sender.id,
+          // Device identity + tab label so a later start of the same port can
+          // report who holds it instead of a bare lock error. `label` is the
+          // session-log directory name, so the tab name has its own field.
+          serialDeviceIdentity: deviceIdentity,
+          serialPath: portPath,
+          label: (typeof options.tabLabel === 'string' && options.tabLabel.trim())
+            || (typeof options.label === 'string' && options.label.trim())
+            || portPath,
         };
         {
           const { claimSessionSlot } = require("./sessionBootEpoch.cjs");
@@ -2601,6 +2648,7 @@ function registerHandlers(ipcMain, options = {}) {
       "netcatty:et:start",
       "netcatty:serial:start",
       "netcatty:serial:list",
+      "netcatty:serial:portOwner",
       "netcatty:serial:ymodem-send",
       "netcatty:serial:ymodem-receive",
       "netcatty:local:defaultShell",
@@ -2676,6 +2724,7 @@ function registerHandlers(ipcMain, options = {}) {
   ipcMain.handle("netcatty:et:start", wrapSessionStart(startEtSession));
   ipcMain.handle("netcatty:serial:start", wrapSessionStart(startSerialSession));
   ipcMain.handle("netcatty:serial:list", listSerialPorts);
+  ipcMain.handle("netcatty:serial:portOwner", findSerialPortOwner);
   ipcMain.handle("netcatty:serial:ymodem-send", sendSerialYmodem);
   ipcMain.handle("netcatty:serial:ymodem-receive", receiveSerialYmodem);
   ipcMain.handle("netcatty:local:defaultShell", getDefaultShell);
@@ -2864,6 +2913,7 @@ module.exports = {
   execOnEtSession,
   bundledEtClient,
   startSerialSession,
+  findSerialPortOwner,
   sendSerialYmodem,
   receiveSerialYmodem,
   listSerialPorts,

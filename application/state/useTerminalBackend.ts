@@ -176,6 +176,12 @@ export const useTerminalBackend = () => {
     return bridge.startSerialSession(options);
   }, []);
 
+  const findSerialPortOwner = useCallback(async (path: string) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.findSerialPortOwner) return null;
+    return bridge.findSerialPortOwner(path);
+  }, []);
+
   const startPluginConnection = useCallback(async (options: PluginConnectionStartOptions) => {
     const bridge = netcattyBridge.get();
     if (!bridge) throw new Error("startPluginConnection unavailable");
@@ -629,6 +635,7 @@ export const useTerminalBackend = () => {
         startEtSession,
         startLocalSession,
         startSerialSession,
+        findSerialPortOwner,
         startPluginConnection,
         cancelPluginExtensionRequest,
         signalPluginConnection,
@@ -718,6 +725,7 @@ export const useTerminalBackend = () => {
       startEtSession,
       startLocalSession,
       startSerialSession,
+      findSerialPortOwner,
       startPluginConnection,
       cancelPluginExtensionRequest,
       signalPluginConnection,

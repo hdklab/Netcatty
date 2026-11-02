@@ -154,8 +154,19 @@ declare global {
       username?: string;
       password?: string;
       charset?: string;
+      /** Tab label, used to name this session when another start collides on the same port. */
+      tabLabel?: string;
       sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
     }): Promise<string>;
+    /**
+     * Which live session already holds a serial device. Queried after a failed
+     * start so a busy port can be explained instead of showing the lock error.
+     */
+    findSerialPortOwner?(path: string): Promise<{
+      sessionId: string;
+      label: string;
+      path: string;
+    } | null>;
     listSerialPorts?(): Promise<Array<{
       path: string;
       manufacturer: string;

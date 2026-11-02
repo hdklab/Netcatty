@@ -420,6 +420,9 @@ function createPreloadApi(ctx) {
   listSerialPorts: async () => {
     return ipcRenderer.invoke("netcatty:serial:list");
   },
+  findSerialPortOwner: async (path) => {
+    return ipcRenderer.invoke("netcatty:serial:portOwner", { path });
+  },
   sendSerialYmodem: async (sessionId, filePath) => {
     return ipcRenderer.invoke("netcatty:serial:ymodem-send", { sessionId, filePath });
   },
