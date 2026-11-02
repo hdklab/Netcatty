@@ -994,7 +994,7 @@ export const zhTWTerminalMessages: Messages = {
   'serial.backspace.default': '預設（DEL，0x7F）',
   'serial.backspace.ctrlH': 'Ctrl+H（BS，0x08）',
   'serial.field.charset': '字元編碼',
-  'serial.connectionError': '連線序列埠失敗',
+  'serial.portInUse': '序列埠 {port} 已被「{label}」工作階段佔用，請先關閉該工作階段。',
   'serial.field.baudRatePlaceholder': '選擇或輸入鮑率...',
   'serial.field.baudRateEmpty': '輸入自訂鮑率',
   'serial.field.customBaudRate': '使用自訂鮑率',

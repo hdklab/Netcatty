@@ -909,7 +909,7 @@ export const enTerminalMessages: Messages = {
   'serial.backspace.default': 'Default (DEL, 0x7F)',
   'serial.backspace.ctrlH': 'Ctrl+H (BS, 0x08)',
   'serial.field.charset': 'Charset',
-  'serial.connectionError': 'Failed to connect to serial port',
+  'serial.portInUse': 'Serial port {port} is already open in the "{label}" session. Close that session first.',
   'serial.field.baudRatePlaceholder': 'Select or enter baud rate...',
   'serial.field.baudRateEmpty': 'Enter a custom baud rate',
   'serial.field.customBaudRate': 'Using custom baud rate',

@@ -994,7 +994,7 @@ export const zhCNTerminalMessages: Messages = {
   'serial.backspace.default': '默认（DEL，0x7F）',
   'serial.backspace.ctrlH': 'Ctrl+H（BS，0x08）',
   'serial.field.charset': '字符编码',
-  'serial.connectionError': '连接串口失败',
+  'serial.portInUse': '串口 {port} 已被「{label}」会话占用，请先关闭该会话。',
   'serial.field.baudRatePlaceholder': '选择或输入波特率...',
   'serial.field.baudRateEmpty': '输入自定义波特率',
   'serial.field.customBaudRate': '使用自定义波特率',

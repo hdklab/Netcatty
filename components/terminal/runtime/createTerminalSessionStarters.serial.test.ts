@@ -489,3 +489,50 @@ test("named pipe sessions preserve the endpoint and omit hardware baud informati
   assert.ok(output.some((line) => line.includes(`[Connected to ${pipePath}]`)));
   assert.ok(output.every((line) => !line.includes('baud')));
 });
+
+test("a port held by another session is reported by name, not as a lock error", async () => {
+  const errors: (string | null)[] = [];
+  const lines: string[] = [];
+  const ipcError = "Error invoking remote method 'netcatty:serial:start': Error: "
+    + 'Serial port /dev/ttyUSB0 is already open in the "zu2cg" session. Close that session first.';
+  const backend = buildBackend({
+    startSerialSession: async () => { throw new Error(ipcError); },
+    findSerialPortOwner: async () => ({ sessionId: "owner-1", label: "zu2cg", path: "/dev/ttyUSB0" }),
+  });
+  const ctx = buildCtx(backend, {
+    setError: (message: string | null) => errors.push(message),
+    t: (key: string, values?: Record<string, string>) => (
+      key === "serial.portInUse"
+        ? `串口 ${values?.port} 已被「${values?.label}」会话占用，请先关闭该会话。`
+        : key
+    ),
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSerial({
+    ...term,
+    write: (line: string, done?: () => void) => { lines.push(line); done?.(); },
+  } as never);
+
+  assert.equal(errors.at(-1), "串口 /dev/ttyUSB0 已被「zu2cg」会话占用，请先关闭该会话。");
+  // The terminal keeps an English line, but never the Electron IPC wrapper.
+  const failureLine = lines.find((line) => line.includes("Failed to connect to serial port"));
+  assert.ok(failureLine);
+  assert.doesNotMatch(failureLine, /Error invoking remote method/);
+  assert.match(failureLine, /already open in the "zu2cg" session/);
+});
+
+test("a serial start failure without a known owner shows the unwrapped backend message", async () => {
+  const errors: (string | null)[] = [];
+  const backend = buildBackend({
+    startSerialSession: async () => {
+      throw new Error("Error invoking remote method 'netcatty:serial:start': Error: Failed to open serial port: No such file or directory");
+    },
+    findSerialPortOwner: async () => null,
+  });
+
+  await createTerminalSessionStarters(buildCtx(backend, {
+    setError: (message: string | null) => errors.push(message),
+  }) as never).startSerial(term as never);
+
+  assert.equal(errors.at(-1), "Failed to open serial port: No such file or directory");
+});

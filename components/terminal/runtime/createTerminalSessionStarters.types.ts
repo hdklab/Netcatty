@@ -36,6 +36,12 @@ export type TerminalBackendApi = {
   startSerialSession: (
     options: Parameters<NonNullable<NetcattyBridge["startSerialSession"]>>[0],
   ) => Promise<string>;
+  /** Which live session already holds this serial device (null when free). */
+  findSerialPortOwner?: (path: string) => Promise<{
+    sessionId: string;
+    label: string;
+    path: string;
+  } | null>;
   startPluginConnection: (options: NetcattyPluginConnectionStartRequest & { signal?: AbortSignal }) => Promise<{
     sessionId: string;
     providerId: string;
@@ -240,7 +246,7 @@ export type TerminalSessionStartersContext = {
   setChainProgress: Dispatch<SetStateAction<ChainProgressState>>;
   setIsConnectionAwaitingUserInput?: Dispatch<SetStateAction<boolean>>;
   setIsConnectionPastTcpDial?: Dispatch<SetStateAction<boolean>>;
-  t?: (key: string) => string;
+  t?: (key: string, values?: Record<string, string | number | boolean | null | undefined>) => string;
 
   onSessionAttached?: (sessionId: string) => void;
   onRestoreCwdIntentConsumed?: (cwd: string) => void;

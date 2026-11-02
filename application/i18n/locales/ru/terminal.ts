@@ -916,7 +916,7 @@ export const ruTerminalMessages: Messages = {
   'serial.backspace.default': 'По умолчанию (DEL, 0x7F)',
   'serial.backspace.ctrlH': 'Ctrl+H (BS, 0x08)',
   'serial.field.charset': 'Кодировка',
-  'serial.connectionError': 'Не удалось подключиться к последовательному порту',
+  'serial.portInUse': 'Последовательный порт {port} уже открыт в сеансе «{label}». Сначала закройте этот сеанс.',
   'serial.field.baudRatePlaceholder': 'Выберите или введите скорость...',
   'serial.field.baudRateEmpty': 'Введите пользовательскую скорость передачи',
   'serial.field.customBaudRate': 'Используется пользовательская скорость передачи',

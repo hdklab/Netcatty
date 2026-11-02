@@ -911,7 +911,7 @@ export const esTerminalMessages: Messages = {
   'serial.backspace.default': 'Predeterminado (DEL, 0x7F)',
   'serial.backspace.ctrlH': 'Ctrl+H (BS, 0x08)',
   'serial.field.charset': 'Codificación de caracteres',
-  'serial.connectionError': 'No se pudo conectar al puerto serial',
+  'serial.portInUse': 'El puerto serie {port} ya está abierto en la sesión «{label}». Cierra esa sesión primero.',
   'serial.field.baudRatePlaceholder': 'Selecciona o ingresa la velocidad de baudios...',
   'serial.field.baudRateEmpty': 'Ingresa una velocidad de baudios personalizada',
   'serial.field.customBaudRate': 'Usando velocidad de baudios personalizada',

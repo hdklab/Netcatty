@@ -1,3 +1,5 @@
+import { stripIpcErrorMessage } from "../../../domain/ipcErrorMessage";
+
 export const isSessionError = (err: unknown): boolean => {
   if (!(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
@@ -18,13 +20,9 @@ export const isSessionError = (err: unknown): boolean => {
   );
 };
 
-const SFTP_IPC_ERROR_PREFIX = /^Error invoking remote method 'netcatty:[^']+':\s*/i;
-
 /** Drop Electron IPC wrapper so dialogs can show the server error. */
 export function unwrapSftpIpcError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err ?? "");
-  const unwrapped = raw.replace(SFTP_IPC_ERROR_PREFIX, "").replace(/^Error:\s*/, "").trim();
-  return unwrapped || raw;
+  return stripIpcErrorMessage(err);
 }
 
 export { isMissingStatError } from "../../../domain/sftpStatError";

@@ -1,4 +1,5 @@
 import { isWindowsNamedPipePath } from '../../../domain/serialEndpoint';
+import { stripIpcErrorMessage } from '../../../domain/ipcErrorMessage';
 import { formatTelnetSerialConfig, resolveTelnetSerialConfig } from '../../../domain/telnetSerial';
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { ProviderValidationIssue } from "@netcatty/plugin-contract";
@@ -199,9 +200,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
   };
   let fallbackDisposeTelnetEchoMode: (() => void) | null = null;
 
-  const tr = (key: string, fallback: string): string => {
-    const translated = ctx.t?.(key);
-    if (!translated || translated === key) return fallback;
+  const tr = (key: string, fallback: string, values?: Record<string, string | number>): string => {
+    const translated = ctx.t?.(key, values);
+    if (!translated || translated === key) {
+      if (!values) return fallback;
+      return fallback.replace(/\{(\w+)\}/g, (match, name: string) => (
+        name in values ? String(values[name]) : match
+      ));
+    }
     return translated;
   };
 
@@ -2194,6 +2200,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         parity: ctx.serialConfig.parity,
         flowControl: ctx.serialConfig.flowControl,
         charset: ctx.host.charset,
+        // Named so a second session on the same device can report who holds it.
+        // Separate from `label` (session-log directory naming) on purpose.
+        tabLabel: ctx.host.label || undefined,
         sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
         bootEpoch,
         ...(hasSerialAutoLoginCredentials
@@ -2257,8 +2266,19 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     } catch (err) {
       cleanupSerialStartupWait();
       if (ignoreStaleAttemptUi()) return;
-      const message = err instanceof Error ? err.message : String(err);
-      ctx.setError(message);
+      const message = stripIpcErrorMessage(err);
+      // A port already held by another Netcatty session is the one predictable
+      // failure here: name the owning tab instead of echoing the lock error.
+      const owner = await ctx.terminalBackend.findSerialPortOwner?.(ctx.serialConfig.path)
+        .catch(() => null);
+      if (ignoreStaleAttemptUi()) return;
+      ctx.setError(owner
+        ? tr(
+          "serial.portInUse",
+          "Serial port {port} is already open in the \"{label}\" session. Close that session first.",
+          { port: ctx.serialConfig.path, label: owner.label },
+        )
+        : message);
       writeTerminalLine(ctx, term, `\r\n[Failed to connect to serial port: ${message}]`);
       ctx.updateStatus("disconnected");
     }
