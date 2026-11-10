@@ -15,6 +15,9 @@ const formatUploadError = (error: unknown): string =>
  */
 export const COMPRESSED_UPLOAD_FALLBACK_ERROR = "Compressed upload not supported - fallback needed";
 
+const isWindowsPlatform = (): boolean =>
+  typeof navigator !== "undefined" && /Win/i.test(navigator.platform);
+
 export async function uploadFoldersCompressed(
   folderEntries: Array<[string, DropEntry[]]>,
   targetPath: string,
@@ -100,6 +103,13 @@ export async function uploadFoldersCompressed(
           }
         }
       }
+    }
+
+    // Windows tar.exe converts argv to the ANSI code page, so a non-ASCII
+    // folder name would be mangled. Upload such folders file by file instead.
+    if (isWindowsPlatform() && /[\u0080-\uffff]/.test(folderName)) {
+      results.push({ fileName: folderName, success: false, error: "Compressed upload not supported - fallback needed" });
+      continue;
     }
 
     let taskId: string | null = null; // Declare taskId outside try block for error handling

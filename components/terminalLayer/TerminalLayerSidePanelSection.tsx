@@ -18,7 +18,6 @@ import {
   reorderTerminalSidePanelTab,
   fitTerminalSidePanelTabs,
   TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER,
-  TERMINAL_SIDE_PANEL_TAB_IDS,
   type TerminalSidePanelTabId,
   useTerminalSidePanelTabOrder,
 } from '../../application/state/terminalSidePanelTabs';
@@ -820,7 +819,11 @@ function TerminalLayerSidePanelInner({ ctx, pluginSidebar }: { ctx: SidePanelCon
     move: moveSidePanelTab,
     resetLayout: resetSidePanelTabLayout,
     partition: partitionSidePanelTabs,
-  } = useTerminalSidePanelTabOrder();
+  } = useTerminalSidePanelTabOrder(pluginSidebar.pages.map((page) => page.tool));
+  const availableSidePanelTabs = useMemo(() => [
+    ...TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER, ...pluginSidebar.pages.map((page) => page.tool),
+  ], [pluginSidebar.pages]);
+  const availableSidePanelTabSet = useMemo(() => new Set<SidePanelTab>(availableSidePanelTabs), [availableSidePanelTabs]);
   const resolvedSidePanelTerminalTheme = useMemo(() => (
     followAppTerminalTheme
       ? terminalTheme
@@ -1018,7 +1021,7 @@ function TerminalLayerSidePanelInner({ ctx, pluginSidebar }: { ctx: SidePanelCon
     const draggedTab = draggedSidePanelTabRef.current ?? transferredTab;
     draggedSidePanelTabRef.current = null;
     setDragOverSidePanelTab(null);
-    if (!TERMINAL_SIDE_PANEL_TAB_IDS.has(draggedTab)) return;
+    if (!availableSidePanelTabSet.has(draggedTab)) return;
 
     const nextOrder = reorderTerminalSidePanelTab(
       sidePanelTabOrder,
@@ -1029,7 +1032,7 @@ function TerminalLayerSidePanelInner({ ctx, pluginSidebar }: { ctx: SidePanelCon
     if (nextOrder !== sidePanelTabOrder) {
       setSidePanelTabOrder(nextOrder);
     }
-  }, [dragOverSidePanelTab, setSidePanelTabOrder, sidePanelTabOrder]);
+  }, [availableSidePanelTabSet, dragOverSidePanelTab, setSidePanelTabOrder, sidePanelTabOrder]);
 
   const handleSidePanelTabDragOver = useCallback((event: React.DragEvent, targetTab: TerminalSidePanelTabId) => {
     if (!Array.from(event.dataTransfer.types).includes(SIDE_PANEL_TAB_DRAG_MIME)) return;
@@ -1160,7 +1163,12 @@ function TerminalLayerSidePanelInner({ ctx, pluginSidebar }: { ctx: SidePanelCon
   }, [focusedPaneHost, handleSplitSidePanelPane]);
 
   const { shown: configuredShownSidePanelTabs, collapsed: configuredCollapsedSidePanelTabs } = useMemo(() => {
-    const parts = partitionSidePanelTabs(TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER);
+    const partition = partitionSidePanelTabs(availableSidePanelTabs);
+    const parts = {
+      shown: partition.shown as SidePanelTab[],
+      collapsed: partition.collapsed as SidePanelTab[],
+      hidden: partition.hidden as SidePanelTab[],
+    };
     // If an external path opens a hidden tab, still show its chip while active.
     if (
       activeSidePanelTab &&
@@ -1174,7 +1182,7 @@ function TerminalLayerSidePanelInner({ ctx, pluginSidebar }: { ctx: SidePanelCon
       };
     }
     return parts;
-  }, [activeSidePanelTab, partitionSidePanelTabs]);
+  }, [activeSidePanelTab, availableSidePanelTabs, partitionSidePanelTabs]);
   // Bottom dock spans the full layer width (below the workspace focus
   // sidebar row), so measure tab overflow against the terminal layer itself.
   const sidePanelTabFitWidth = isBottomDock ? terminalLayerWidth : shellWidth;
@@ -1195,7 +1203,7 @@ function TerminalLayerSidePanelInner({ ctx, pluginSidebar }: { ctx: SidePanelCon
 
   const sidePanelCustomizeItems = useMemo(
     () =>
-      sidePanelTabOrder.map((tabId) => {
+      sidePanelTabOrder.filter((tabId) => availableSidePanelTabSet.has(tabId)).map((tabId) => {
         const item = sidePanelTabItemById.get(tabId);
         return {
           id: tabId,
@@ -1203,7 +1211,7 @@ function TerminalLayerSidePanelInner({ ctx, pluginSidebar }: { ctx: SidePanelCon
           icon: item?.icon,
         };
       }),
-    [sidePanelTabItemById, sidePanelTabOrder],
+    [availableSidePanelTabSet, sidePanelTabItemById, sidePanelTabOrder],
   );
 
   return (
@@ -1285,7 +1293,7 @@ function TerminalLayerSidePanelInner({ ctx, pluginSidebar }: { ctx: SidePanelCon
               const next = setSidePanelTabPlacement(
                 id,
                 placement,
-                TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER,
+                availableSidePanelTabs,
               );
               // Only close when hide actually stuck (not reverted by requireReachable).
               if (activeSidePanelTab === id && (next.placement[id] ?? 'show') === 'hide') {
@@ -1293,7 +1301,7 @@ function TerminalLayerSidePanelInner({ ctx, pluginSidebar }: { ctx: SidePanelCon
               }
             }}
             onMove={(id, direction) =>
-              moveSidePanelTab(id, direction, TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER)
+              moveSidePanelTab(id, direction, availableSidePanelTabs)
             }
             onReset={resetSidePanelTabLayout}
             t={t}
@@ -1468,7 +1476,7 @@ function TerminalLayerSidePanelInner({ ctx, pluginSidebar }: { ctx: SidePanelCon
                   <Btn
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 rounded-md p-0 hover:bg-transparent"
+                    className="h-7 w-7 shrink-0 rounded-md p-0 hover:bg-transparent"
                     style={{ color: sidePanelTheme.mutedFg }}
                     onClick={handleCloseSidePanel}
                   >
@@ -1514,8 +1522,8 @@ function TerminalLayerSidePanelInner({ ctx, pluginSidebar }: { ctx: SidePanelCon
             const sessionId = pluginSidebar.sessionId!;
             return <PersistentSidePanelPortal key={`${activeTabId}:${pane.id}:${sessionId}`} portalKey={`plugin-${pane.id}`} target={target}>
               <PluginTerminalSidebarPageHost page={page} tabId={activeTabId} sessionId={sessionId}
-                focusOnReveal={activeSidePanelLayout?.focusedPaneId === pane.id}
-                adapter={pluginSidebar.contributions} getSession={ctx.getActiveTerminalSessionId}
+                showHeader={activePaneCount === 1}
+                getSession={ctx.getActiveTerminalSessionId}
                 unavailable={() => ctx.handleWithdrawPluginSidebarPane?.(activeTabId, pane.id, page.tool)}
                 focused={() => { if (activeTabStore.getActiveTabId() === activeTabId) ctx.handleFocusSidePanelPane?.(pane.id); }} />
             </PersistentSidePanelPortal>;
@@ -1566,7 +1574,7 @@ function TerminalLayerSidePanelInner({ ctx, pluginSidebar }: { ctx: SidePanelCon
             data-section="pane-magnification-hint"
           >
             {t('terminal.paneMagnification.hint')}: {sidePanelToolLabels.get(magnifiedSidePane.tool) ?? magnifiedSidePane.tool}
-            {paneMagnificationShortcutLabel ? ` · ${paneMagnificationShortcutLabel} / Esc` : ' · Esc'}
+            {paneMagnificationShortcutLabel ? ` · ${paneMagnificationShortcutLabel}` : ''}
           </div>
         )}
       </div>,

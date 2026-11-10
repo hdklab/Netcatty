@@ -12,6 +12,7 @@ import {
   STORAGE_KEY_AI_COMMAND_TIMEOUT,
   STORAGE_KEY_AI_RESPONSE_IDLE_TIMEOUT,
   STORAGE_KEY_AI_MAX_ITERATIONS,
+  STORAGE_KEY_AI_SESSION_MESSAGE_CAP,
   STORAGE_KEY_AI_AGENT_MODEL_MAP,
   STORAGE_KEY_AI_AGENT_PROVIDER_MAP,
   STORAGE_KEY_AI_WEB_SEARCH,
@@ -35,6 +36,10 @@ import {
   normalizeResponseIdleTimeoutSeconds,
 } from '../../infrastructure/ai/types';
 import { removeProviderReferences } from './aiProviderCleanup';
+import {
+  DEFAULT_AI_SESSION_MESSAGE_CAP,
+  normalizeAiSessionMessageCap,
+} from '../../domain/aiSessionMessageCap';
 import { AI_STATE_CHANGED_EVENT, emitAIStateChanged } from './aiStateEvents';
 import { getAIBridge } from './aiStateSnapshots';
 import { useStoredBoolean } from './useStoredBoolean';
@@ -87,6 +92,12 @@ export function useAISettingsState() {
   );
   const [maxIterations, setMaxIterationsRaw] = useState<number>(() =>
     localStorageAdapter.readNumber(STORAGE_KEY_AI_MAX_ITERATIONS) ?? 20
+  );
+  const [aiSessionMessageCap, setAiSessionMessageCapRaw] = useState<number>(() =>
+    normalizeAiSessionMessageCap(
+      localStorageAdapter.readNumber(STORAGE_KEY_AI_SESSION_MESSAGE_CAP)
+        ?? DEFAULT_AI_SESSION_MESSAGE_CAP,
+    )
   );
   const [webSearchConfig, setWebSearchConfigRaw] = useState<WebSearchConfig | null>(() =>
     localStorageAdapter.read<WebSearchConfig>(STORAGE_KEY_AI_WEB_SEARCH) ?? null
@@ -198,6 +209,12 @@ export function useAISettingsState() {
     getAIBridge()?.aiMcpSetMaxIterations?.(value);
   }, []);
 
+  const setAiSessionMessageCap = useCallback((value: number) => {
+    const normalizedValue = normalizeAiSessionMessageCap(value);
+    setAiSessionMessageCapRaw(normalizedValue);
+    localStorageAdapter.writeNumber(STORAGE_KEY_AI_SESSION_MESSAGE_CAP, normalizedValue);
+  }, []);
+
   const setWebSearchConfig = useCallback((config: WebSearchConfig | null) => {
     setWebSearchConfigRaw(config);
     if (config) {
@@ -278,6 +295,14 @@ export function useAISettingsState() {
             getAIBridge()?.aiMcpSetMaxIterations?.(iters);
             break;
           }
+          case STORAGE_KEY_AI_SESSION_MESSAGE_CAP:
+            setAiSessionMessageCapRaw(
+              normalizeAiSessionMessageCap(
+                localStorageAdapter.readNumber(STORAGE_KEY_AI_SESSION_MESSAGE_CAP)
+                  ?? DEFAULT_AI_SESSION_MESSAGE_CAP,
+              ),
+            );
+            break;
           case STORAGE_KEY_AI_WEB_SEARCH:
             setWebSearchConfigRaw(localStorageAdapter.read<WebSearchConfig>(STORAGE_KEY_AI_WEB_SEARCH) ?? null);
             break;
@@ -341,6 +366,8 @@ export function useAISettingsState() {
     setResponseIdleTimeout,
     maxIterations,
     setMaxIterations,
+    aiSessionMessageCap,
+    setAiSessionMessageCap,
     webSearchConfig,
     setWebSearchConfig,
     quickMessages,
@@ -374,6 +401,8 @@ export function useAISettingsState() {
     setResponseIdleTimeout,
     maxIterations,
     setMaxIterations,
+    aiSessionMessageCap,
+    setAiSessionMessageCap,
     webSearchConfig,
     setWebSearchConfig,
     quickMessages,

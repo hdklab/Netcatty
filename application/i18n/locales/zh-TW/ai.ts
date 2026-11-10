@@ -90,6 +90,7 @@ export const zhTWAiMessages: Messages = {
   'ai.providers.advancedParams.hint': '留空則使用供應商預設值。',
   'ai.providers.advancedParams.maxTokens.placeholder': '例如 4096',
   'ai.providers.advancedParams.default': '供應商預設',
+  'ai.providers.advancedParams.reasoningEffort.help': '僅當所選模型支援時才會送出 xhigh 與 max，否則自動收斂到該模型支援的最高檔位。',
 
   // AI Codex
   'ai.codex': 'Codex',
@@ -677,6 +678,10 @@ export const zhTWAiMessages: Messages = {
   'ai.chatShortcuts.title': '聊天快捷入口',
   'ai.chatShortcuts.selectionAction': '選取終端內容時顯示「新增到對話」',
   'ai.chatShortcuts.selectionAction.description': '在終端裡選取文字後顯示 AI 快捷按鈕。',
+  'ai.chatHistory.title': '聊天歷史',
+  'ai.chatHistory.messageCap': '每個會話保留的訊息數',
+  'ai.chatHistory.messageCap.description': '每個會話最多儲存的訊息數（50–2000）。調低後會在下一次寫入時從儲存中捨棄最舊的訊息。數值越大，儲存空間與雲端同步體積也越大。',
+  'ai.chatHistory.messageCap.unit': '則訊息',
 
   // AI Error
   'ai.codex.bridgeError': 'Codex 主程序處理器尚未載入。請完全重新啟動 Netcatty 或重新啟動 Electron 開發程序，然後重試。',
@@ -772,6 +777,8 @@ export const zhTWAiMessages: Messages = {
 
   // 統一終端工作區和頂部標籤的 tooltip 文案 (issue #954)
   'terminal.layer.addTerminal': '新增終端',
+  'terminal.layer.emptyWorkspace': '工作區中還沒有終端',
+  'terminal.layer.emptyWorkspaceHint': '新增本機終端或連線至主機，開始使用這個工作區。',
   'terminal.layer.switchToSplitView': '切換到分割檢視',
   'terminal.layer.sftp': '檔案傳輸',
   'terminal.layer.scripts': '指令碼',

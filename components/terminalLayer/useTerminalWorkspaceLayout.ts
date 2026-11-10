@@ -1,8 +1,9 @@
-import { type DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type DragEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
 import type { TerminalSession, Workspace, WorkspaceNode } from '../../types';
 import type { ResizerHandle, SplitHint, WorkspaceRect } from './TerminalLayerSupport';
+import { isSameSplitHint } from './splitHintEquality';
 import {
   computeSplitSizesFromDelta,
   patchWorkspaceSplitSizes,
@@ -26,10 +27,15 @@ interface UseTerminalWorkspaceLayoutOptions {
   activeSession: TerminalSession | undefined;
   activeWorkspace: Workspace | undefined;
   isFocusMode: boolean;
+  hasMagnifiedPane?: boolean;
   shouldKeepHiddenWorkspaceLaidOut: (workspace: Workspace) => boolean;
   onAddSessionToWorkspace: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
   onCreateWorkspaceFromSessions: (baseSessionId: string, joiningSessionId: string, hint: Exclude<SplitHint, null>) => void;
-  onMoveSessionInWorkspace: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
+  /** Issue #4037: rearrange an existing member pane within its own workspace. */
+  onMoveWorkspacePane: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
+  /** Session currently being dragged, if any. Member panes drag via pointer
+   * events (not HTML5 DnD), so this drives the in-workspace preview + drop. */
+  draggingSession: TerminalSession | null | undefined;
   onSetDraggingSessionId: (id: string | null) => void;
   onUpdateSplitSizes: (workspaceId: string, splitId: string, sizes: number[]) => void;
   sessions: TerminalSession[];
@@ -43,10 +49,12 @@ export function useTerminalWorkspaceLayout({
   activeSession,
   activeWorkspace,
   isFocusMode,
+  hasMagnifiedPane = false,
   shouldKeepHiddenWorkspaceLaidOut,
   onAddSessionToWorkspace,
   onCreateWorkspaceFromSessions,
-  onMoveSessionInWorkspace,
+  onMoveWorkspacePane,
+  draggingSession,
   onSetDraggingSessionId,
   onUpdateSplitSizes,
   sessions,
@@ -275,11 +283,15 @@ export function useTerminalWorkspaceLayout({
     [activeWorkspace, workspaceArea, collectResizers, workspaceForLayout],
   );
   
+  // DragEvent and PointerEvent both satisfy this shape; the hook only reads
+  // coordinates, so member-pane pointer drags (#4037) reuse the same hint
+  // machinery as HTML5 orphan drags.
   const computeSplitHint = useCallback((
     e: { clientX: number; clientY: number },
     options?: { allowCenter?: boolean },
   ): SplitHint => {
-      if (isFocusMode) return null;
+      // The tiled rectangles do not describe the visible magnified surface.
+      if (isFocusMode || hasMagnifiedPane) return null;
       const surface = workspaceOverlayRef.current || workspaceInnerRef.current || workspaceOuterRef.current;
       if (!surface || !workspaceArea.width || !workspaceArea.height) return null;
       const rect = surface.getBoundingClientRect();
@@ -343,7 +355,7 @@ export function useTerminalWorkspaceLayout({
         targetSessionId,
         rect: previewRect,
       };
-    }, [isFocusMode, workspaceArea, activeWorkspaceRects, workspaceOverlayRef, workspaceInnerRef, workspaceOuterRef]);
+    }, [isFocusMode, hasMagnifiedPane, workspaceArea, activeWorkspaceRects, workspaceOverlayRef, workspaceInnerRef, workspaceOuterRef]);
 
   const handleWorkspaceDrop = useCallback((e: DragEvent) => {
       if (isFocusMode) return;
@@ -360,22 +372,28 @@ export function useTerminalWorkspaceLayout({
       setDropHint(null);
       onSetDraggingSessionId(null);
       if (!hint) return;
-  
+      // Dropping a pane on itself cannot rearrange anything.
+      if (hint.targetSessionId === draggedSessionId) return;
+
       if (activeWorkspace) {
-        if (movesWithinWorkspace) {
-          if (hint.targetSessionId === draggedSessionId) return;
-          onMoveSessionInWorkspace(activeWorkspace.id, draggedSessionId, hint);
+        if (!draggedSession) return;
+        if (draggedSession.workspaceId) {
+          // Issue #4037 scope: an existing member pane can only be dropped
+          // back into its own workspace (rearrange). Cross-workspace moves
+          // stay rejected — binding policy (#4098).
+          if (draggedSession.workspaceId === activeWorkspace.id) {
+            onMoveWorkspacePane(activeWorkspace.id, draggedSessionId, hint);
+          }
           return;
         }
-        if (!draggedSession || draggedSession.workspaceId) return;
         onAddSessionToWorkspace(activeWorkspace.id, draggedSessionId, hint);
         return;
       }
-  
+
       if (activeSession) {
         onCreateWorkspaceFromSessions(activeSession.id, draggedSessionId, hint);
       }
-    }, [isFocusMode, computeSplitHint, setDropHint, onSetDraggingSessionId, activeWorkspace, sessions, onAddSessionToWorkspace, onMoveSessionInWorkspace, activeSession, onCreateWorkspaceFromSessions]);
+    }, [isFocusMode, computeSplitHint, setDropHint, onSetDraggingSessionId, activeWorkspace, sessions, onAddSessionToWorkspace, onMoveWorkspacePane, activeSession, onCreateWorkspaceFromSessions]);
 
   /**
    * Pointer-drag drop resolution for panes already in the workspace. Returns
@@ -390,6 +408,46 @@ export function useTerminalWorkspaceLayout({
     return hint;
   }, [computeSplitHint]);
 
+  // All mounted panes share this callback. Keep its identity across tab/layout
+  // changes, but resolve a saved gesture against the latest committed state.
+  const paneDropStateRef = useRef({ isFocusMode, activeWorkspace, sessions, computeSplitHint, onMoveWorkspacePane });
+  useLayoutEffect(() => {
+    paneDropStateRef.current = { isFocusMode, activeWorkspace, sessions, computeSplitHint, onMoveWorkspacePane };
+  }, [isFocusMode, activeWorkspace, sessions, computeSplitHint, onMoveWorkspacePane]);
+
+  // Commit directly from the gesture owner before it clears drag state, even
+  // when the release crosses the threshold without a delivered move.
+  const handleWorkspacePanePointerDrop = useCallback((sessionId: string, point: { clientX: number; clientY: number }) => {
+    setDropHint(null);
+    const current = paneDropStateRef.current;
+    if (current.isFocusMode || !current.activeWorkspace) return;
+    const session = current.sessions.find((candidate) => candidate.id === sessionId);
+    if (session?.workspaceId !== current.activeWorkspace.id) return;
+    const hint = current.computeSplitHint(point, { allowCenter: true });
+    if (!hint || hint.targetSessionId === sessionId) return;
+    current.onMoveWorkspacePane(current.activeWorkspace.id, sessionId, hint);
+  }, []);
+
+  // Pointer movement only updates the visual preview. The gesture owner handles
+  // release/cancellation, so completion does not depend on listener ordering.
+  const isMemberPaneDrag = !!draggingSession?.workspaceId
+    && draggingSession.workspaceId === activeWorkspace?.id
+    && !isFocusMode
+    && !hasMagnifiedPane;
+  useEffect(() => {
+    if (!isMemberPaneDrag || !draggingSession) {
+      setDropHint(null);
+      return;
+    }
+    const onPointerMove = (event: PointerEvent) => {
+      const candidate = computeSplitHint(event, { allowCenter: true });
+      const hint = candidate?.targetSessionId === draggingSession.id ? null : candidate;
+      setDropHint((prev) => (isSameSplitHint(prev, hint) ? prev : hint));
+    };
+    window.addEventListener('pointermove', onPointerMove);
+    return () => window.removeEventListener('pointermove', onPointerMove);
+  }, [isMemberPaneDrag, draggingSession, computeSplitHint]);
+
   return {
     activeResizers,
     computeSplitHint,
@@ -397,6 +455,7 @@ export function useTerminalWorkspaceLayout({
     findSplitNode,
     handleWorkspaceDrop,
     resolveWorkspaceDropHint,
+    handleWorkspacePanePointerDrop,
     resizing,
     setDropHint,
     setResizing,

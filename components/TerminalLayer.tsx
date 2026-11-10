@@ -246,12 +246,14 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onCreateWorkspaceFromSessions,
   onAddSessionToWorkspace,
   onMoveSessionInWorkspace,
+  onMoveWorkspacePane,
   onRequestAddToWorkspace,
   onAppendHostToWorkspace,
   onUpdateSplitSizes,
   onSetDraggingSessionId,
   onToggleWorkspaceViewMode,
   onSetWorkspaceFocusedSession,
+  onSetWorkspaceAnchorChat,
   onReorderWorkspaceSessions,
   onReorderTabs,
   onCopySession,
@@ -2506,6 +2508,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         if (executor) {
           pendingSends.push(Promise.resolve(executor(text, false, {
             broadcast: false,
+            preferBracketedPaste: true,
             // Preserve both prompt snapshots across an asynchronous wake: the
             // peer may clear its prompt classification before the actual write.
             ...(focusedSensitive || recipientSensitive ? { sensitive: true } : {}),
@@ -2545,7 +2548,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           const sensitive = isTerminalSensitiveInputActive(targetId);
           // Explicitly local: an omitted broadcast option falls back to the
           // toolbar switch, which can still be on while compose is active-only.
-          pendingSends.push(Promise.resolve(executor(text, false, { broadcast: false })).then(
+          pendingSends.push(Promise.resolve(executor(text, false, {
+            broadcast: false,
+            preferBracketedPaste: true,
+          })).then(
             (sent) => sent && !sensitive && !isTerminalSensitiveInputActive(targetId),
           ));
         } else {
@@ -2716,6 +2722,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     themeMountedTabIds,
     onAddSessionToWorkspace,
     onMoveSessionInWorkspace,
+    onMoveWorkspacePane,
     onConnectToHost,
     onCreateLocalTerminal,
     onCreateWorkspaceFromSessions,
@@ -2730,6 +2737,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     onSessionData,
     onSetDraggingSessionId,
     onSetWorkspaceFocusedSession,
+    onSetWorkspaceAnchorChat,
     onStartSessionRename,
     onSubmitSessionRename,
     onRemoveSessionFromWorkspace,

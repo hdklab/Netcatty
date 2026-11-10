@@ -5,7 +5,7 @@ const { randomUUID } = require("node:crypto");
 
 const { createDefinitionValidator } = require("./contractValidator.cjs");
 const validateManagedPluginId = createDefinitionValidator("PluginId");
-const validateViewFocus = createDefinitionValidator("PluginViewFocusRequest");
+const validatePluginViewResourceRequest = createDefinitionValidator("PluginViewResourceRequest");
 
 const { raceWithAbort } = require("./rpcRouter.cjs");
 const {
@@ -43,9 +43,13 @@ const CHANNELS = Object.freeze({
   catalog: "netcatty:plugins:catalog",
   catalogChanged: "netcatty:plugins:catalog-changed",
   catalogReadme: "netcatty:plugins:catalog-readme",
+  catalogReadmeImages: "netcatty:plugins:catalog-readme-images",
   author: "netcatty:plugins:author",
   catalogInstall: "netcatty:plugins:catalog-install",
   install: "netcatty:plugins:install",
+  githubPrepare: "netcatty:plugins:github-prepare",
+  githubInstall: "netcatty:plugins:github-install",
+  githubDiscard: "netcatty:plugins:github-discard",
   setEnabled: "netcatty:plugins:set-enabled",
   restart: "netcatty:plugins:restart",
   uninstall: "netcatty:plugins:uninstall",
@@ -94,14 +98,9 @@ const CHANNELS = Object.freeze({
   importerReleaseFile: "netcatty:plugins:importer-release-file",
   importerParseFile: "netcatty:plugins:importer-parse-file",
   importerProgress: "netcatty:plugins:importer-progress",
-  openView: "netcatty:plugins:open-view",
-  closeView: "netcatty:plugins:close-view",
-  focusView: "netcatty:plugins:focus-view",
-  setViewBounds: "netcatty:plugins:set-view-bounds",
-  setViewVisibility: "netcatty:plugins:set-view-visibility",
-  viewMessage: "netcatty:plugins:view-message",
-  viewMessagePosted: "netcatty:plugins:view-message-posted",
-  viewClosed: "netcatty:plugins:view-closed",
+  hostDrawnOpen: "netcatty:plugins:host-ui-open",
+  hostDrawnClose: "netcatty:plugins:host-ui-close",
+  hostDrawnEvent: "netcatty:plugins:host-ui-event",
   getScopeCatalog: "netcatty:plugins:get-scope-catalog",
   setScopeCatalog: "netcatty:plugins:set-scope-catalog",
   scopeCatalogChanged: "netcatty:plugins:scope-catalog-changed",
@@ -213,6 +212,8 @@ function mergePluginScopeCatalogs(catalogs) {
 function createTrustedPluginBridgeSender(options = {}) {
   const devServerOrigin = options.devServerUrl ? new URL(options.devServerUrl).origin : null;
   return (event) => {
+    // The app may embed untrusted frames; a trusted URL alone is not authority.
+    if (event?.sender?.mainFrame && event.senderFrame !== event.sender.mainFrame) return false;
     const senderUrl = event?.senderFrame?.url || event?.sender?.getURL?.() || "";
     try {
       const url = new URL(senderUrl);
@@ -226,6 +227,17 @@ function createTrustedPluginBridgeSender(options = {}) {
 
 function registerPluginBridge(ipcMain, options) {
   const manager = options.manager;
+  let githubService;
+  const githubOwners = new WeakSet();
+  const githubFor = (activeManager, event) => {
+    const { GitHubInstallService } = require("./githubInstallService.cjs");
+    githubService ??= new GitHubInstallService({ manager: activeManager });
+    if (!githubOwners.has(event.sender)) {
+      githubOwners.add(event.sender);
+      event.sender.once?.("destroyed", () => { void githubService.discard(event.sender).catch(() => {}); });
+    }
+    return githubService;
+  };
   const contributionService = options.contributionService;
   const terminalProviderService = options.terminalProviderService;
   const terminalDataPipelineService = options.terminalDataPipelineService;
@@ -240,7 +252,7 @@ function registerPluginBridge(ipcMain, options) {
     : DEFAULT_CONNECTION_STATUS_POLL_MS;
   const getTerminalWorkerManager = options.getTerminalWorkerManager ?? (() => null);
   const selectImporterFile = options.selectImporterFile;
-  const viewHost = options.viewHost;
+  const hostDrawnViewHost = options.hostDrawnViewHost;
   const isTrustedSender = options.isTrustedSender;
   const defaultScopeCatalog = normalizePluginScopeCatalog({ device: [{ id: "device", label: "This device" }] });
   const scopeCatalogs = new Map();
@@ -689,6 +701,10 @@ function registerPluginBridge(ipcMain, options) {
     if (!options.catalogService) throw new Error("Plugin catalog unavailable");
     return options.catalogService.readme(payload?.id, payload?.selectionToken, payload?.sourceId);
   });
+  handle(CHANNELS.catalogReadmeImages, async (_manager, payload) => {
+    if (!options.catalogService) throw new Error("Plugin catalog unavailable");
+    return options.catalogService.readmeImages(payload?.id, payload?.selectionToken, payload?.sourceId);
+  });
   handle(CHANNELS.catalogInstall, async (_manager, payload) => {
     if (!options.catalogService) throw new Error("Plugin catalog unavailable");
     return options.catalogService.install(payload?.id, payload?.selectionToken, payload?.sourceId, payload?.acceptedSourceId);
@@ -775,6 +791,9 @@ function registerPluginBridge(ipcMain, options) {
     payload?.archivePath,
     { enable: typeof payload?.enable === "boolean" ? payload.enable : undefined },
   ));
+  handle(CHANNELS.githubPrepare, (activeManager, payload, event) => githubFor(activeManager, event).prepare(event.sender, payload?.repository));
+  handle(CHANNELS.githubInstall, (activeManager, payload, event) => githubFor(activeManager, event).install(event.sender, payload?.token));
+  handle(CHANNELS.githubDiscard, (activeManager, payload, event) => githubFor(activeManager, event).discard(event.sender, payload?.token));
   handle(CHANNELS.setEnabled, async (activeManager, payload) => activeManager.setEnabled(
     payload?.pluginId,
     payload?.enabled === true,
@@ -830,7 +849,6 @@ function registerPluginBridge(ipcMain, options) {
   handle(CHANNELS.setEnvironment, async (_activeManager, payload) => {
     if (!contributionService) throw new Error("Plugin contributions are unavailable");
     await contributionService.setEnvironment(payload ?? {});
-    viewHost?.setEnvironment?.(payload ?? {});
     return null;
   });
   handlePassive(CHANNELS.terminalProviders, [], async (_activeManager, payload) => {
@@ -1669,35 +1687,22 @@ function registerPluginBridge(ipcMain, options) {
       await handle.close();
     }
   }));
-  handle(CHANNELS.openView, async (_activeManager, payload, event) => {
-    if (!viewHost) throw new Error("Plugin views are unavailable");
-    return viewHost.open(payload, event.sender);
+  handle(CHANNELS.hostDrawnOpen, async (_activeManager, payload, event) => {
+    if (!hostDrawnViewHost) throw new Error("Host-drawn plugin views are unavailable");
+    return hostDrawnViewHost.open(payload, event.sender);
   });
-  handle(CHANNELS.closeView, async (_activeManager, payload, event) => {
-    if (!viewHost) throw new Error("Plugin views are unavailable");
-    await viewHost.close(payload?.instanceId, event.sender);
-    return null;
+  handle(CHANNELS.hostDrawnClose, async (_activeManager, payload, event) => {
+    if (!hostDrawnViewHost) throw new Error("Host-drawn plugin views are unavailable");
+    await hostDrawnViewHost.close(payload?.instanceId, event.sender); return null;
   });
-  handle(CHANNELS.focusView, async (_activeManager, payload, event) => {
-    if (!viewHost) throw new Error("Plugin views are unavailable");
-    if (!validateViewFocus(payload)) throw new TypeError("Plugin view focus request is invalid");
-    viewHost.focus(payload.instanceId, event.sender);
-    return null;
+  handle("netcatty:plugins:host-ui-resource", async (_activeManager, payload, event) => {
+    if (!hostDrawnViewHost) throw new Error("Plugin views unavailable");
+    if (!validatePluginViewResourceRequest(payload)) throw new TypeError("Invalid plugin resource request");
+    return hostDrawnViewHost.resource(payload.instanceId, payload.path, event.sender);
   });
-  handle(CHANNELS.setViewBounds, async (_activeManager, payload, event) => {
-    if (!viewHost) throw new Error("Plugin views are unavailable");
-    viewHost.setBounds(payload?.instanceId, payload?.bounds, event.sender);
-    return null;
-  });
-  handle(CHANNELS.setViewVisibility, async (_activeManager, payload, event) => {
-    if (!viewHost) throw new Error("Plugin views are unavailable");
-    viewHost.setVisible(payload?.instanceId, payload?.visible, event.sender);
-    return null;
-  });
-  handle(CHANNELS.viewMessage, async (_activeManager, payload, event) => {
-    if (!viewHost) throw new Error("Plugin views are unavailable");
-    await viewHost.postMessage(payload?.instanceId, payload?.message, event.sender);
-    return null;
+  handle(CHANNELS.hostDrawnEvent, async (_activeManager, payload, event) => {
+    if (!hostDrawnViewHost) throw new Error("Host-drawn plugin views are unavailable");
+    await hostDrawnViewHost.event(payload?.instanceId, payload?.event, event.sender); return null;
   });
   handlePassive(CHANNELS.getScopeCatalog, () => currentScopeCatalog(), async () => currentScopeCatalog());
   handlePassive(CHANNELS.setScopeCatalog, null, async (_activeManager, payload, event) => {
@@ -1711,8 +1716,7 @@ function registerPluginBridge(ipcMain, options) {
   });
   options.catalogService?.onDidChange?.((event) => options.broadcast?.(CHANNELS.catalogChanged, event));
   contributionService?.onDidChange?.((event) => options.broadcast?.(CHANNELS.contributionsChanged, event));
-  contributionService?.onDidPostViewMessage?.((event) => options.broadcast?.(CHANNELS.viewMessagePosted, event));
-  viewHost?.onDidClose?.((event) => options.broadcast?.(CHANNELS.viewClosed, event));
+
 }
 
 module.exports = {

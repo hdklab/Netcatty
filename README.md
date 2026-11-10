@@ -144,6 +144,7 @@ If you regularly work with a fleet of servers, Netcatty is built for speed and f
 ### 📁 SFTP + Built-in Editor
 - **File workflows** — drag & drop uploads/downloads
 - **Edit in place** — built-in editor for quick changes
+- **Create remote archives** — select files or folders, right-click **Compress...**, and create a named `.tar.gz` or `.zip` archive in the displayed destination directory; the server needs `tar`/`gzip` or `zip` for the chosen format.
 
 ### 🔌 Telnet & Serial
 - **Telnet hosts** — per-host port, credentials, terminal encoding and theme, with automatic login on devices that ask for a user name and password

@@ -93,7 +93,6 @@ test("pointer drag cleanup runs when the pane unmounts without pointerup", async
     pointerDown = useWorkspaceDetachPointerDrag({
       inActiveWorkspace: true,
       session: { id: "session-1", workspaceId: "workspace-1" } as never,
-      workspaceById: new Map(),
       onStartSessionDrag: () => { dragStartCount += 1; },
       onEndSessionDrag: () => { dragEndCount += 1; },
     });
@@ -146,7 +145,6 @@ test("unmount removes an active drag overlay and ends drag state", async () => {
     pointerDown = useWorkspaceDetachPointerDrag({
       inActiveWorkspace: true,
       session: { id: "session-1", workspaceId: "workspace-1" } as never,
-      workspaceById: new Map(),
       onStartSessionDrag: () => { dragStartCount += 1; },
       onEndSessionDrag: () => { dragEndCount += 1; },
     });
@@ -194,7 +192,6 @@ test("all pointer drag exit paths share one idempotent cleanup", async () => {
     pointerDown = useWorkspaceDetachPointerDrag({
       inActiveWorkspace: true,
       session: { id: "session-1", workspaceId: "workspace-1" } as never,
-      workspaceById: new Map(),
       onStartSessionDrag: () => { dragStartCount += 1; },
       onEndSessionDrag: () => { dragEndCount += 1; },
     });
@@ -279,10 +276,9 @@ test("pointer drag over another pane previews and applies the rearrange", async 
     pointerDown = useWorkspaceDetachPointerDrag({
       inActiveWorkspace: true,
       session: { id: "session-1", workspaceId: "workspace-1" } as never,
-      workspaceById: new Map(),
       resolveWorkspaceDropHint: () => hint,
       onWorkspaceDropHint: (next) => published.push(next),
-      onMoveSessionInWorkspace: (...args) => moves.push(args),
+      onDropWorkspacePane: (id: string) => moves.push([id]),
     });
     return null;
   }
@@ -310,7 +306,7 @@ test("pointer drag over another pane previews and applies the rearrange", async 
     dom.dispatchDocument("pointerup", { clientX: 12, clientY: 12 } as PointerEvent);
   });
 
-  assert.deepEqual(moves, [["workspace-1", "session-1", hint]]);
+  assert.deepEqual(moves, [["session-1"]], "release over another pane applies the rearrange");
   assert.equal(published.at(-1), null, "the preview clears when the drag ends");
   assert.equal(dom.appendedElements.size, 0);
   assert.equal(dom.documentListenerCount("pointermove"), 0);
@@ -320,24 +316,21 @@ test("pointer drag over another pane previews and applies the rearrange", async 
   });
 });
 
-test("pointer drag that never leaves its own pane does not rearrange", async () => {
+test("pointer drag that never leaves its own pane publishes no swap/split preview", async () => {
   const dom = createDragDom();
   let pointerDown: ((event: React.PointerEvent<HTMLElement>) => void) | null = null;
   const published: unknown[] = [];
-  const moves: unknown[] = [];
 
   function Harness() {
     pointerDown = useWorkspaceDetachPointerDrag({
       inActiveWorkspace: true,
       session: { id: "session-1", workspaceId: "workspace-1" } as never,
-      workspaceById: new Map(),
       resolveWorkspaceDropHint: () => ({
         direction: "vertical" as const,
         position: "right" as const,
         targetSessionId: "session-1",
       }),
       onWorkspaceDropHint: (next) => published.push(next),
-      onMoveSessionInWorkspace: (...args) => moves.push(args),
     });
     return null;
   }
@@ -363,7 +356,6 @@ test("pointer drag that never leaves its own pane does not rearrange", async () 
   await act(async () => {
     dom.dispatchDocument("pointerup", { clientX: 10, clientY: 10 } as PointerEvent);
   });
-  assert.deepEqual(moves, []);
 
   await act(async () => {
     renderer!.unmount();
@@ -384,14 +376,13 @@ test("tab-bar drop keeps priority over the workspace rearrange", async () => {
     pointerDown = useWorkspaceDetachPointerDrag({
       inActiveWorkspace: true,
       session: { id: "session-1", workspaceId: "workspace-1" } as never,
-      workspaceById: new Map(),
       resolveWorkspaceDropHint: () => ({
         direction: "vertical" as const,
         position: "center" as const,
         targetSessionId: "session-2",
       }),
       onWorkspaceDropHint: () => undefined,
-      onMoveSessionInWorkspace: (...args) => moves.push(args),
+      onDropWorkspacePane: (id: string) => moves.push([id]),
       onRemoveSessionFromWorkspace: () => { detachCount += 1; },
     });
     return null;

@@ -99,6 +99,7 @@ export const zhCNAiMessages: Messages = {
   'ai.providers.advancedParams.hint': '留空则使用提供商默认值。',
   'ai.providers.advancedParams.maxTokens.placeholder': '例如 4096',
   'ai.providers.advancedParams.default': '提供商默认',
+  'ai.providers.advancedParams.reasoningEffort.help': '仅当所选模型支持时才会发送 xhigh 和 max，否则自动收敛到该模型支持的最高档位。',
 
   // AI Codex
   'ai.codex': 'Codex',
@@ -687,6 +688,10 @@ export const zhCNAiMessages: Messages = {
   'ai.chatShortcuts.title': '聊天快捷入口',
   'ai.chatShortcuts.selectionAction': '选中终端内容时显示“添加到对话”',
   'ai.chatShortcuts.selectionAction.description': '在终端里选中文本后显示 AI 快捷按钮。',
+  'ai.chatHistory.title': '聊天历史',
+  'ai.chatHistory.messageCap': '每个会话保留的消息数',
+  'ai.chatHistory.messageCap.description': '每个会话最多存储的消息条数（50–2000）。调低后会在下一次写入时从存储中丢弃最旧的消息。数值越大，存储占用和云同步体积也越大。',
+  'ai.chatHistory.messageCap.unit': '条消息',
 
   // AI Error
   'ai.codex.bridgeError': 'Codex 主进程处理器尚未加载。请完全重启 Netcatty 或重启 Electron 开发进程，然后重试。',
@@ -782,6 +787,8 @@ export const zhCNAiMessages: Messages = {
 
   // 统一终端工作区和顶部标签的 tooltip 文案 (issue #954)
   'terminal.layer.addTerminal': '添加终端',
+  'terminal.layer.emptyWorkspace': '工作区中还没有终端',
+  'terminal.layer.emptyWorkspaceHint': '添加本地终端或连接主机，开始使用这个工作区。',
   'terminal.layer.switchToSplitView': '切换到分屏视图',
   'terminal.layer.sftp': '文件传输',
   'terminal.layer.scripts': '脚本',

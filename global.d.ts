@@ -186,6 +186,8 @@ declare global {
     sourceSessionId?: string;
     /** Require openSftpForSession to use exactly the requested live session. */
     requireExactSourceSession?: boolean;
+    /** Use the named live terminal only; never open a dedicated/fresh login. */
+    reuseExactSessionOnly?: boolean;
     // Skip POSIX process discovery when copying a network-device session.
     skipShellPidDiscovery?: boolean;
     /**
@@ -388,10 +390,21 @@ declare global {
 
   interface NetcattyPluginSource {
     id: string;
-    kind: 'official' | 'third-party' | 'local';
+    kind: 'official' | 'third-party' | 'local' | 'github';
     name: string;
     origin: string | null;
     enabled?: boolean;
+    tag?: string;
+    commit?: string;
+    assetId?: number;
+  }
+  interface NetcattyGitHubPluginPreview {
+    token: string;
+    source: NetcattyPluginSource;
+    manifest: import("@netcatty/plugin-contract").PluginManifest;
+    archiveSha256: string;
+    assetName: string;
+    size: number;
   }
   interface NetcattyInstalledPlugin {
     source?: NetcattyPluginSource;
@@ -496,6 +509,7 @@ declare global {
     getPluginAuthorPresentation?(request: NetcattyPluginAuthorRequest): Promise<NetcattyPluginAuthorPresentation | null>;
     onPluginCatalogChanged?(callback: (event: { sourceId: string }) => void): () => void;
     getPluginCatalogReadme?(id: string, selectionToken?: string, sourceId?: string): Promise<string>;
+    getPluginCatalogReadmeImages?(id: string, selectionToken?: string, sourceId?: string): Promise<Record<string, string>>;
     installCatalogPlugin?(id: string, selectionToken?: string, sourceId?: string, acceptedSourceId?: string): Promise<NetcattyInstalledPlugin>;
     setPluginAIHostReady?(ready: boolean): Promise<boolean>;
     setPluginAgentHostReady?(ready: boolean): Promise<boolean>;
@@ -514,6 +528,9 @@ declare global {
     getPluginPermissions?(pluginId: string): Promise<NetcattyPluginPermissionSnapshot>;
     revokePluginPermissions?(pluginId: string): Promise<NetcattyInstalledPlugin>;
     installPluginPackage?(archivePath: string, options?: { enable?: boolean }): Promise<NetcattyInstalledPlugin>;
+    prepareGitHubPlugin?(repository: string): Promise<NetcattyGitHubPluginPreview>;
+    installGitHubPlugin?(token: string): Promise<NetcattyInstalledPlugin>;
+    discardGitHubPlugin?(token: string): Promise<void>;
     setPluginEnabled?(pluginId: string, enabled: boolean): Promise<NetcattyInstalledPlugin>;
     restartPlugin?(pluginId: string): Promise<NetcattyInstalledPlugin>;
     uninstallPlugin?(pluginId: string): Promise<boolean>;
@@ -644,16 +661,13 @@ declare global {
     onPluginAuthenticationChallenge?(callback: (event: NetcattyPluginAuthenticationChallengeEvent) => void): () => void;
     onPluginConnectionData?(callback: (event: { sessionId: string; data: Uint8Array }) => void): () => void;
     onPluginConnectionClosed?(callback: (event: { sessionId: string; reason: string }) => void): () => void;
-    openPluginView?(payload: NetcattyPluginViewOpenRequest): Promise<{ instanceId: string }>;
-    closePluginView?(instanceId: string): Promise<void>;
-    setPluginViewBounds?(instanceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
-    setPluginViewVisibility?(instanceId: string, visible: boolean): Promise<void>;
-    focusPluginView?(payload: import('@netcatty/plugin-contract').PluginViewFocusRequest): Promise<void>;
-    postPluginViewMessage?(instanceId: string, message: unknown): Promise<void>;
+    getPluginViewResource?(payload: import('@netcatty/plugin-contract').PluginViewResourceRequest): Promise<import('@netcatty/plugin-contract').PluginViewResourceResult>;
+    openHostDrawnPluginView?(payload: NetcattyPluginViewOpenRequest): Promise<{ instanceId: string }>;
+    closeHostDrawnPluginView?(instanceId: string): Promise<void>;
+    sendHostDrawnPluginViewEvent?(instanceId: string, event: import('@netcatty/plugin-contract').HostDrawnViewEvent): Promise<void>;
+    onHostDrawnPluginViewUpdate?(callback: (event: import('@netcatty/plugin-contract').HostDrawnViewMessage & { viewId: string }) => void): () => void;
     onPluginContributionsChanged?(callback: (event: { reason: string; pluginId: string | null; revision: number }) => void): () => void;
-    onPluginViewMessage?(callback: (event: { pluginId: string; viewId: string; message: unknown }) => void): () => void;
     onPluginViewClosed?(callback: (event: NetcattyPluginViewClosedEvent) => void): () => void;
-    onPluginViewFocused?(callback: (event: import('@netcatty/plugin-contract').PluginViewFocusEvent) => void): () => void;
     getPluginScopeCatalog?(): Promise<NetcattyPluginScopeCatalog>;
     setPluginScopeCatalog?(catalog: NetcattyPluginScopeCatalog): Promise<void>;
     onPluginScopeCatalogChanged?(callback: (catalog: NetcattyPluginScopeCatalog) => void): () => void;
@@ -667,6 +681,7 @@ declare global {
   }
 
   interface NetcattyPluginSettingContribution {
+    group?: string;
     id: string;
     label: string;
     description?: string;
@@ -717,7 +732,7 @@ declare global {
         icon?: NetcattyPluginIconReference;
       }>;
       settings: ReadonlyArray<NetcattyPluginSettingContribution>;
-      views: ReadonlyArray<{ id: string; title: string; location: string; entry: string; icon?: NetcattyPluginIconReference; order?: number; visible: boolean; retainContextWhenHidden?: boolean }>;
+      views: ReadonlyArray<{ id: string; title: string; location: string; icon?: NetcattyPluginIconReference; order?: number; visible: boolean }>;
     }>;
   }
 
@@ -831,13 +846,7 @@ declare global {
     error: { code: number; message: string; data?: unknown };
   };
 
-  interface NetcattyPluginViewOpenRequest {
-    viewId: string;
-    instanceId?: string;
-    scopeId: string;
-    bounds?: { x: number; y: number; width: number; height: number };
-    context?: Record<string, unknown>;
-  }
+  type NetcattyPluginViewOpenRequest = import('@netcatty/plugin-contract').HostDrawnViewOpenRequest;
 
   interface NetcattyPluginViewClosedEvent {
     instanceId: string;

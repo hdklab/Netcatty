@@ -1,10 +1,10 @@
 import { streamText, isStepCount, tool, type ModelMessage } from 'ai';
 import { z } from 'zod';
 import type { LanguageModelV4 } from '@ai-sdk/provider';
-import { classifyError } from '../../errorClassifier';
-import { isRequestTooLargeError } from '../../errorClassifier';
+import { classifyError, isInvalidAnthropicThinkingSignatureError, isRequestTooLargeError } from '../../errorClassifier';
 import { isSdkStreamStateError } from '../../shared/streamStateErrors';
 import {
+  createCattyAnthropicSignatureRetryError,
   createCattyRequestTooLargeRetryError,
   hadToolProgressBeforeRequestTooLarge,
 } from '../../cattyRequestTooLargeRetry';
@@ -204,6 +204,10 @@ export async function processCattyStream(input: ProcessCattyStreamInput): Promis
   } = input;
 
   let runtimeContext = initialRuntimeContext;
+  if (!Array.isArray(sdkMessages) || sdkMessages.length === 0) {
+    throw new Error('Invalid prompt: Catty refused an empty messages array (#4102).');
+  }
+
   const parentTools = toolsBundle.tools;
   const parentToolsContext = toolsBundle.toolsContext;
   const sharedToolContext = Object.values(parentToolsContext)[0];
@@ -463,6 +467,9 @@ export async function processCattyStream(input: ProcessCattyStreamInput): Promis
         if (isRequestTooLargeError(readErr)) {
           throw createCattyRequestTooLargeRetryError(readErr, hadToolProgress);
         }
+        if (isInvalidAnthropicThinkingSignatureError(readErr)) {
+          throw createCattyAnthropicSignatureRetryError(readErr, hadToolProgress);
+        }
         throw readErr;
       }
       const { done, value } = readResult;
@@ -626,6 +633,16 @@ export async function processCattyStream(input: ProcessCattyStreamInput): Promis
             cancelPendingFlush();
             flushText();
             throw createCattyRequestTooLargeRetryError(
+              typedChunk.error,
+              hadToolProgress,
+            );
+          }
+          if (isInvalidAnthropicThinkingSignatureError(typedChunk.error)) {
+            // Propagate to turn-driver strip-and-retry (#4074 P1); do not consume
+            // as a terminal error message the way other stream errors are.
+            cancelPendingFlush();
+            flushText();
+            throw createCattyAnthropicSignatureRetryError(
               typedChunk.error,
               hadToolProgress,
             );

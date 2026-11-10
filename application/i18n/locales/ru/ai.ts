@@ -71,6 +71,7 @@ export const ruAiMessages: Messages = {
   'ai.providers.advancedParams.hint': 'Оставьте пустым, чтобы использовать настройки провайдера по умолчанию.',
   'ai.providers.advancedParams.maxTokens.placeholder': 'например, 4096',
   'ai.providers.advancedParams.default': 'По умолчанию у провайдера',
+  'ai.providers.advancedParams.reasoningEffort.help': 'xhigh и max отправляются только если выбранная модель их поддерживает; иначе значение понижается до максимального поддерживаемого уровня.',
 
   // AI Codex
   'ai.codex': 'Codex',
@@ -626,6 +627,10 @@ export const ruAiMessages: Messages = {
   'ai.chatShortcuts.title': 'Быстрые действия чата',
   'ai.chatShortcuts.selectionAction': 'Показывать «Добавить в чат» при выделении в терминале',
   'ai.chatShortcuts.selectionAction.description': 'Показывать небольшую кнопку AI рядом с выделенным текстом терминала.',
+  'ai.chatHistory.title': 'История чата',
+  'ai.chatHistory.messageCap': 'Сообщений, сохраняемых в чате',
+  'ai.chatHistory.messageCap.description': 'Максимальное число сообщений, хранимых для одного чата (50–2000). При уменьшении самые старые сообщения удаляются из хранилища при следующей записи. Большие значения увеличивают объём хранилища и синхронизации с облаком.',
+  'ai.chatHistory.messageCap.unit': 'сообщений',
 
   // AI Error
   'ai.codex.bridgeError': 'Обработчики главного процесса Codex ещё не загружены. Полностью перезапустите Netcatty или dev-процесс Electron и попробуйте снова.',
@@ -721,6 +726,8 @@ export const ruAiMessages: Messages = {
 
   // Unified tooltips for terminal workspace and top tabs (issue #954)
   'terminal.layer.addTerminal': 'Добавить терминал',
+  'terminal.layer.emptyWorkspace': 'В этом рабочем пространстве пока нет терминалов',
+  'terminal.layer.emptyWorkspaceHint': 'Добавьте локальный терминал или подключитесь к хосту, чтобы начать.',
   'terminal.layer.switchToSplitView': 'Переключить в режим разделения',
   'terminal.layer.sftp': 'Передача файлов',
   'terminal.layer.scripts': 'Скрипты',

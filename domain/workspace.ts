@@ -24,6 +24,20 @@ export const invertSplitPosition = (position: SplitPosition): SplitPosition => {
   }
 };
 
+/**
+ * Root placeholder for a workspace whose member sessions have all closed.
+ * Issue #4098 phase 2 keeps the workspace entity (and its id) alive at zero
+ * members so restore re-links its AI chats; this empty split renders as a
+ * workspace tab with no panes until a session joins again.
+ */
+export const createEmptyWorkspaceRoot = (): WorkspaceNode => ({
+  id: crypto.randomUUID(),
+  type: 'split',
+  direction: 'vertical',
+  children: [],
+  sizes: [],
+});
+
 
 export const pruneWorkspaceNode = (node: WorkspaceNode, targetSessionId: string): WorkspaceNode | null => {
   if (node.type === 'pane') {
@@ -83,6 +97,7 @@ export const appendPaneToWorkspaceRoot = (
   if (collectSessionIds(root).includes(sessionId)) return root;
 
   const newPane: WorkspaceNode = { id: crypto.randomUUID(), type: 'pane', sessionId };
+  if (collectSessionIds(root).length === 0) return newPane;
 
   if (root.type === 'split' && root.direction === direction) {
     const nextChildren = [...root.children, newPane];
@@ -126,6 +141,7 @@ export const insertPaneIntoWorkspace = (
   if (collectSessionIds(root).includes(sessionId)) return root;
 
   const pane: WorkspaceNode = { id: crypto.randomUUID(), type: 'pane', sessionId };
+  if (collectSessionIds(root).length === 0) return pane;
 
   if (!hint.targetSessionId) {
     const children = (hint.position === 'left' || hint.position === 'top') ? [pane, root] : [root, pane];
@@ -386,6 +402,23 @@ export const cloneWorkspaceTree = (
 /**
  * Collect all session IDs from a workspace node tree.
  */
+/**
+ * Point a workspace's focus at `sessionId`. Returns the same array when the
+ * workspace is missing or already focused there, so React state setters can
+ * bail out instead of re-rendering the whole shell on every pane click/focus.
+ */
+export const setWorkspaceFocusedSessionId = (
+  workspaces: Workspace[],
+  workspaceId: string,
+  sessionId: string,
+): Workspace[] => {
+  const index = workspaces.findIndex((ws) => ws.id === workspaceId);
+  if (index < 0 || workspaces[index].focusedSessionId === sessionId) return workspaces;
+  const next = workspaces.slice();
+  next[index] = { ...workspaces[index], focusedSessionId: sessionId };
+  return next;
+};
+
 export const collectSessionIds = (node: WorkspaceNode): string[] => {
   if (node.type === 'pane') {
     return [node.sessionId];

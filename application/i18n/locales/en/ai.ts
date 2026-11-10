@@ -99,6 +99,7 @@ export const enAiMessages: Messages = {
   'ai.providers.advancedParams.hint': 'Leave blank to use provider defaults.',
   'ai.providers.advancedParams.maxTokens.placeholder': 'e.g. 4096',
   'ai.providers.advancedParams.default': 'Provider default',
+  'ai.providers.advancedParams.reasoningEffort.help': 'xhigh and max are only sent when the selected model supports them; otherwise they are clamped to the deepest supported level.',
 
   // AI Codex
   'ai.codex': 'Codex',
@@ -687,6 +688,10 @@ export const enAiMessages: Messages = {
   'ai.chatShortcuts.title': 'Chat Shortcuts',
   'ai.chatShortcuts.selectionAction': 'Show Add to Conversation when selecting terminal text',
   'ai.chatShortcuts.selectionAction.description': 'Show a small AI button next to selected terminal text.',
+  'ai.chatHistory.title': 'Chat History',
+  'ai.chatHistory.messageCap': 'Messages kept per chat',
+  'ai.chatHistory.messageCap.description': 'Maximum number of messages stored per chat (50–2000). Lowering it drops the oldest messages from storage on the next write. Larger values increase storage and cloud-sync size.',
+  'ai.chatHistory.messageCap.unit': 'messages',
 
   // AI Error
   'ai.codex.bridgeError': 'Codex main-process handlers are not loaded yet. Fully restart Netcatty, or restart the Electron dev process, then try again.',
@@ -782,6 +787,8 @@ export const enAiMessages: Messages = {
 
   // Unified tooltips for terminal workspace and top tabs (issue #954)
   'terminal.layer.addTerminal': 'Add Terminal',
+  'terminal.layer.emptyWorkspace': 'No terminals in this workspace',
+  'terminal.layer.emptyWorkspaceHint': 'Add a local terminal or connect to a host to get started.',
   'terminal.layer.switchToSplitView': 'Switch to Split View',
   'terminal.layer.sftp': 'File Transfer',
   'terminal.layer.scripts': 'Scripts',
