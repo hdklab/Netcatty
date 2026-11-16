@@ -240,6 +240,7 @@ const {
 } = require("./main/appLockLifecycle.cjs");
 const ptyProcessTree = require("./bridges/ptyProcessTree.cjs");
 const { queryDirtyEditors } = require("./bridges/dirtyEditorGuard.cjs");
+const { finalizeSessionLogs } = require("./bridges/sessionLogShutdown.cjs");
 
 // GPU settings
 // NOTE: Do not disable Chromium sandbox by default.
@@ -1686,7 +1687,17 @@ if (!gotLock) {
     }
     getWindowManager().setIsQuitting(true);
     quitGuardChannelBusy = true;
-    void runPluginShutdown()
+    void (async () => {
+      try {
+        await Promise.all(getWindowManager().getAppContentWindows().map((win) => (
+          finalizeSessionLogs(win.webContents, { ipcMain: electronModule.ipcMain })
+        )));
+        await sessionLogStreamManager.cleanupAll();
+      } catch (error) {
+        console.warn("[SessionLogs] Shutdown failed; continuing app quit:", error);
+      }
+      return runPluginShutdown();
+    })()
       .then(({ timedOut }) => {
         if (timedOut) console.warn("[Plugins] Shutdown deadline elapsed; continuing app quit");
       })
@@ -1748,11 +1759,6 @@ if (!gotLock) {
 
   // Cleanup all PTY sessions and port forwarding tunnels before quitting
   app.on("will-quit", () => {
-    try {
-      sessionLogStreamManager.cleanupAll();
-    } catch (err) {
-      console.warn("Error during session log stream cleanup:", err);
-    }
     try {
       terminalBridge.cleanupAllSessions();
     } catch (err) {
